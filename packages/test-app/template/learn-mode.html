@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Simple App Example</title>
+        <style>
+            body {
+                font-family:
+                    system-ui,
+                    -apple-system,
+                    sans-serif;
+                max-width: 800px;
+                margin: 0 auto;
+                padding: 20px;
+                line-height: 1.6;
+            }
+            .logo {
+                width: 64px;
+                height: 64px;
+                margin: 20px 0;
+            }
+            .security-status {
+                background: #f0f8ff;
+                border: 1px solid #007acc;
+                border-radius: 8px;
+                padding: 15px;
+                margin: 20px 0;
+            }
+            button {
+                background: #007acc;
+                color: white;
+                border: none;
+                padding: 10px 20px;
+                border-radius: 4px;
+                cursor: pointer;
+                margin: 5px;
+            }
+            button:hover {
+                background: #005a99;
+            }
+            .footer {
+                margin-top: 40px;
+                padding-top: 20px;
+                border-top: 1px solid #eee;
+                color: #666;
+            }
+        </style>
+
+        <!-- Load DappFence client-side protection -->
+        <script src="dappfence.js"></script>
+        <!-- some random CDN js for testing -->
+        <script
+            src="https://code.jquery.com/jquery-3.7.1.min.js"
+            integrity="sha256-/JqT3SQfawRcv/BIHPThkBvs0OEvtFFmqPF/lYI/Cxo="
+            crossorigin="anonymous"
+        ></script>
+    </head>
+    <body>
+        <header>
+            <h1>🔒 DappFence Protected App</h1>
+            <p>This is a simple example demonstrating DappFence security framework.</p>
+        </header>
+
+        <main>
+            <h2>Demo Features</h2>
+            <div id="app-content">
+                <p>Loading app content...</p>
+            </div>
+
+            <details style="margin: 20px 0">
+                <summary style="cursor: pointer; color: #666; font-size: 0.9em">
+                    📱 Demo App Functions (optional)
+                </summary>
+                <div
+                    style="margin-top: 10px; padding: 10px; background: #f8f9fa; border-radius: 4px"
+                >
+                    <button id="test-btn" style="font-size: 0.85em">Test Button</button>
+                    <button onclick="showAlert()" style="font-size: 0.85em">Show Alert</button>
+                    <button onclick="loadContent()" style="font-size: 0.85em">
+                        Load New Content
+                    </button>
+                    <p style="font-size: 0.8em; color: #666; margin-top: 8px">
+                        These are sample app functions to show that the application works normally
+                        under DappFence protection.
+                    </p>
+                </div>
+            </details>
+
+            <div style="margin-top: 20px; padding: 15px; background: #f8f9fa; border-radius: 4px">
+                <h4>🔍 Trusted Manifest Controls</h4>
+                <div style="margin: 10px 0">
+                    <button onclick="checkManifestStatus()">Check Status</button>
+                </div>
+                <p style="font-size: 0.9em; color: #666; margin-top: 10px">
+                    Use these controls to test the trusted manifest system. Check the browser
+                    console for detailed logs.
+                </p>
+            </div>
+
+            <div id="output"></div>
+        </main>
+
+        <footer class="footer">
+            <p><strong>DappFence Framework</strong> - Secure web application protection</p>
+            <p>Open the browser console to see security monitoring in action.</p>
+        </footer>
+
+        <!-- Load app-specific JavaScript -->
+        <script type="module" src="../assets/app.js"></script>
+
+        <!-- Register the service worker (will be intercepted by DappFence) -->
+        <script>
+            if ('serviceWorker' in navigator) {
+                navigator.serviceWorker
+                    .register('sw_app.js', {
+                        updateViaCache: 'none',
+                    })
+                    .then((reg) => {
+                        console.log('[App] Service worker registered:', reg);
+                    })
+                    .catch((err) => {
+                        console.error('[App] Service worker registration failed:', err);
+                    });
+            }
+        </script>
+    </body>
+</html>

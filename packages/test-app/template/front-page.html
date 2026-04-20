@@ -1,0 +1,112 @@
+<!-- This page ensures that dappfence.js is loaded and the service worker is activated before redirecting to the main application -->
+<!doctype html>
+<!-- {{TARGET_VERSION}} -->
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>DappFence - Front Page - Manifest Mode Example</title>
+
+        <!-- DappFence with Manifest Mode Configuration -->
+        <!-- #IF USE_APP_SW -->
+        <script
+            src="/dappfence.js"
+            data-manifest="{{MANIFEST_FILE}}"
+            data-manifest-signature-identity="{{MANIFEST_SIGNATURE_IDENTITY}}"
+            data-manifest-signature-type="{{MANIFEST_SIGNATURE_TYPE}}"
+            data-mode="manifest"
+            data-app-sw="sw_app.js"
+        ></script>
+        <!-- #ELSE -->
+        <script
+            src="/dappfence.js"
+            data-manifest="{{MANIFEST_FILE}}"
+            data-manifest-signature-identity="{{MANIFEST_SIGNATURE_IDENTITY}}"
+            data-manifest-signature-type="{{MANIFEST_SIGNATURE_TYPE}}"
+            data-mode="manifest"
+        ></script>
+        <!-- /IF -->
+        <!-- #IF USE_APP -->
+        <script type="module" src="/app.js"></script>
+        <!-- /IF -->
+        <!-- #IF USE_SW_REGISTER -->
+        <script src="/sw_register.js"></script>
+        <!-- /IF -->
+
+        <script>
+            async function waitForDappfence() {
+                if (!navigator.serviceWorker) {
+                    throw new Error('Service Worker not supported, cannot use DappFence');
+                }
+                const registration = await navigator.serviceWorker.ready;
+                while (true) {
+                    if (!registration.active) {
+                        console.log(
+                            'Waiting for service worker to activate',
+                            'active',
+                            registration.active && registration.active.scriptURL,
+                            'installing',
+                            registration.installing && registration.installing.scriptURL,
+                            'waiting',
+                            registration.waiting && registration.waiting.scriptURL
+                        );
+                    } else {
+                        const state = registration.active.state;
+                        const scriptUrl = registration.active.scriptURL;
+                        if (state === 'activated' && scriptUrl.includes('/dappfence.js')) {
+                            break;
+                        }
+                        console.log('Waiting for DappFence to load', state, scriptUrl);
+                    }
+                    await new Promise((resolve) => setTimeout(resolve, 100));
+                }
+                window.location.href = '/';
+            }
+
+            waitForDappfence().catch(console.error);
+        </script>
+    </head>
+    <body>
+        <div
+            style="
+                font-family:
+                    system-ui,
+                    -apple-system,
+                    sans-serif;
+                max-width: 600px;
+                margin: 50px auto;
+                padding: 20px;
+                text-align: center;
+            "
+        >
+            <h1>Loading DappFence...</h1>
+            <p>Please wait while the security layer is being initialized.</p>
+            <div style="margin: 30px 0">
+                <div
+                    style="
+                        display: inline-block;
+                        width: 50px;
+                        height: 50px;
+                        border: 5px solid #f3f3f3;
+                        border-top: 5px solid #3498db;
+                        border-radius: 50%;
+                        animation: spin 1s linear infinite;
+                    "
+                ></div>
+            </div>
+            <p style="color: #666; font-size: 14px">
+                You will be redirected automatically once the service worker is activated.
+            </p>
+        </div>
+        <style>
+            @keyframes spin {
+                0% {
+                    transform: rotate(0deg);
+                }
+                100% {
+                    transform: rotate(360deg);
+                }
+            }
+        </style>
+    </body>
+</html>

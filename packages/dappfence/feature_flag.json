@@ -1,0 +1,10 @@
+{
+    "development": {
+        "learning_mode": false,
+        "auto_confirm_site_lock": true
+    },
+    "production": {
+        "learning_mode": false,
+        "auto_confirm_site_lock": false
+    }
+}

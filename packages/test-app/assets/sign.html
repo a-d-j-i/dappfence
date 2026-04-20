@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Personal Message Signing</title>
+        <style>
+            body {
+                font-family: Arial, sans-serif;
+                max-width: 800px;
+                margin: 20px auto;
+                padding: 20px;
+            }
+
+            button {
+                padding: 10px 20px;
+                margin: 5px;
+                cursor: pointer;
+                background-color: #4caf50;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                font-size: 16px;
+            }
+
+            #status {
+                margin: 10px 0;
+                padding: 10px;
+                border-radius: 4px;
+            }
+
+            .success {
+                background-color: #dff0d8;
+                color: #3c763d;
+            }
+
+            .error {
+                background-color: #f2dede;
+                color: #a94442;
+            }
+
+            .input-field {
+                padding: 12px;
+                font-size: 16px;
+                width: 300px;
+                margin: 10px 0;
+                border: 2px solid #ccc;
+                border-radius: 4px;
+            }
+
+            .copy-button {
+                padding: 8px 16px;
+                margin-left: 10px;
+                cursor: pointer;
+                display: inline-block;
+                background-color: #4caf50;
+                color: white;
+                border: none;
+                border-radius: 4px;
+            }
+        </style>
+    </head>
+    <body>
+        <h1>Personal Message Signing Demo</h1>
+        <div id="status"></div>
+        <button id="connectButton" style="display: none">Connect Wallet</button>
+        <div id="accountInfo" style="display: none">
+            <p>Connected Account: <span id="accountDisplay"></span></p>
+            <input
+                type="text"
+                id="messageInput"
+                placeholder="Enter message to sign"
+                class="input-field"
+            />
+            <button id="signButton">Sign Message</button>
+            <div id="signature"></div>
+        </div>
+
+        <script>
+            let currentAccount = null;
+
+            async function connectWallet() {
+                try {
+                    if (typeof window.ethereum === 'undefined') {
+                        throw new Error('Compatible wallet is not installed');
+                    }
+
+                    const accounts = await window.ethereum.request({
+                        method: 'eth_requestAccounts',
+                    });
+                    handleAccountsChanged(accounts);
+
+                    window.ethereum.on('accountsChanged', handleAccountsChanged);
+                } catch (error) {
+                    handleAccountsChanged([]);
+                    showStatus(error.message, true);
+                }
+            }
+
+            function handleAccountsChanged(accounts) {
+                if (accounts.length === 0) {
+                    showStatus('Please connect your wallet', true);
+                    document.getElementById('accountInfo').style.display = 'none';
+                    document.getElementById('connectButton').style.display = 'block';
+                    currentAccount = null;
+                } else {
+                    currentAccount = accounts[0];
+                    document.getElementById('accountDisplay').textContent = currentAccount;
+                    document.getElementById('accountInfo').style.display = 'block';
+                    document.getElementById('connectButton').style.display = 'none';
+                    showStatus('Successfully connected to wallet!', false);
+                }
+            }
+
+            async function signMessage() {
+                try {
+                    const message = document.getElementById('messageInput').value;
+                    if (!message) {
+                        throw new Error('Please enter a message to sign');
+                    }
+                    showStatus('Please approve the signing request in your wallet', false);
+                    const signature = await window.ethereum.request({
+                        method: 'personal_sign',
+                        params: [message, currentAccount],
+                    });
+                    document.getElementById('messageInput').value = '';
+                    document.getElementById('signature').innerHTML = '';
+
+                    const r = signature.slice(2, 66);
+                    const s = signature.slice(66, 130);
+                    const v = signature.slice(130, 132);
+                    const curveSignature = (v === '1c' ? '01' : '00') + r + s;
+
+                    document.getElementById('signature').innerHTML = `
+                    Message:<p>${message}</p>
+                    Signature Components:
+                    <p>r: <span id="signatureR">${'0x' + r}</span></p>
+                    <p>s: <span id="signatureS">${'0x' + s}</span></p>
+                    <p>v: <span id="signatureV">${'0x' + v}</span></p>
+                    <p>Full Signature: <span id="signatureContent">${'0x' + curveSignature}</span></p>
+                    <button class="copy-button" onclick="copySignature()">Copy Signature</button>
+                `;
+                    showStatus(
+                        'Message signed successfully, signature copied to clipboard!',
+                        false
+                    );
+                    const tempInput = document.createElement('input');
+                    tempInput.value = curveSignature;
+                    document.body.appendChild(tempInput);
+                    tempInput.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(tempInput);
+                } catch (error) {
+                    showStatus(error.message, true);
+                }
+            }
+
+            function copySignature() {
+                const signatureDiv = document.getElementById('signatureContent');
+                if (signatureDiv) {
+                    navigator.clipboard
+                        .writeText(signatureDiv.innerText)
+                        .then(() => {
+                            showStatus('Signature copied to clipboard!', false);
+                        })
+                        .catch(() => {
+                            showStatus('Failed to copy signature', true);
+                        });
+                }
+            }
+
+            function showStatus(message, isError) {
+                const statusElement = document.getElementById('status');
+                statusElement.textContent = message;
+                statusElement.className = isError ? 'error' : 'success';
+            }
+
+            document.getElementById('connectButton').addEventListener('click', connectWallet);
+            document.getElementById('signButton').addEventListener('click', signMessage);
+
+            window.addEventListener('load', connectWallet);
+        </script>
+    </body>
+</html>

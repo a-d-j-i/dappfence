@@ -1,0 +1,30 @@
+{
+    "name": "dappfence",
+    "private": true,
+    "type": "module",
+    "scripts": {
+        "dev": "npm run build && npm run dev -w @dappfence/test-app",
+        "test": "npm run build && npm test --ws --if-present",
+        "build": "npm run build --ws --if-present",
+        "build:prod": "npm run build:prod -w @dappfence/core",
+        "build:watch": "npm run build:watch -w @dappfence/core & npm run build:watch -w @dappfence/test-app",
+        "clean": "npm run clean --ws --if-present",
+        "lint": "eslint packages/ --fix",
+        "check": "eslint packages/ && prettier --check packages/ *.md",
+        "format": "prettier --write packages/ *.md",
+        "publish:core": "npm run check && npm run build:prod && npm publish -w @dappfence/core --access public",
+        "prepare": "npm run check && npm run build:prod"
+    },
+    "devDependencies": {
+        "eslint": "9.39.4",
+        "eslint-config-prettier": "10.1.8",
+        "prettier": "3.2.5",
+        "typescript-eslint": "8.58.2"
+    },
+    "workspaces": [
+        "packages/*"
+    ],
+    "engines": {
+        "node": ">=16.0.0"
+    }
+}

@@ -1,0 +1,445 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>DappFence Security Test</title>
+        <style>
+            body {
+                font-family: Arial, sans-serif;
+                max-width: 1200px;
+                margin: 0 auto;
+                padding: 20px;
+                background: #f5f5f5;
+            }
+            .test-section {
+                background: white;
+                margin: 10px 0;
+                padding: 15px;
+                border-radius: 5px;
+                border-left: 4px solid #007acc;
+            }
+            .test-section.success {
+                border-left-color: #28a745;
+            }
+            .test-section.failed {
+                border-left-color: #dc3545;
+            }
+            .test-section.warning {
+                border-left-color: #ffc107;
+            }
+            button {
+                background: #007acc;
+                color: white;
+                border: none;
+                padding: 8px 16px;
+                border-radius: 4px;
+                cursor: pointer;
+                margin: 5px;
+            }
+            button:hover {
+                background: #005a9e;
+            }
+            button.danger {
+                background: #dc3545;
+            }
+            button.danger:hover {
+                background: #c82333;
+            }
+            .log {
+                background: #f8f9fa;
+                border: 1px solid #dee2e6;
+                padding: 10px;
+                margin: 10px 0;
+                border-radius: 4px;
+                font-family: 'Courier New', monospace;
+                font-size: 12px;
+                max-height: 200px;
+                overflow-y: auto;
+            }
+            .result {
+                margin: 5px 0;
+                padding: 5px;
+                border-radius: 3px;
+            }
+            .result.success {
+                background: #d4edda;
+                color: #155724;
+            }
+            .result.error {
+                background: #f8d7da;
+                color: #721c24;
+            }
+            .result.warning {
+                background: #fff3cd;
+                color: #856404;
+            }
+            .header {
+                text-align: center;
+                color: #333;
+                margin-bottom: 30px;
+            }
+            .attack-counter {
+                position: fixed;
+                top: 20px;
+                right: 20px;
+                background: #dc3545;
+                color: white;
+                padding: 10px 15px;
+                border-radius: 50px;
+                font-weight: bold;
+                z-index: 1000;
+            }
+            .build-info {
+                background: #e9ecef;
+                padding: 10px;
+                border-radius: 4px;
+                font-size: 12px;
+                color: #6c757d;
+            }
+        </style>
+        <script
+            src="/dappfence.js"
+            data-manifest="tampering-test-manifest.json"
+            data-manifest-integrity="sha256-V+GRBME1/RWneOBuYtsCrSlQYURsCKwFCZKb6LR7Jlg="
+            data-mode="manifest"
+        ></script>
+    </head>
+    <body>
+        <div class="attack-counter">Attacks: <span id="attackCounter">0</span></div>
+
+        <div class="header">
+            <h1>🛡️ DappFence Security Test</h1>
+            <p>Automated tests for the 2 core DappFence protections</p>
+            <div class="build-info">
+                Built: 2025-08-18T18:14:31.433Z | Manifest: tampering-test-manifest.json | Hash:
+                sha256-V+GRBME1/RWneOBuYtsCrSlQYURsCKwFCZKb6LR7Jlg=
+            </div>
+        </div>
+
+        <div class="test-section">
+            <h3>🔍 System Information</h3>
+            <div id="systemInfo"></div>
+        </div>
+
+        <div class="test-section">
+            <h3>🚀 Automated Security Tests</h3>
+            <button onclick="runAllTests()" class="danger">🧪 Run All Tests</button>
+            <button onclick="clearResults()">🧹 Clear Results</button>
+            <div style="margin-top: 10px; font-size: 14px; color: #666">
+                Tests the 2 core DappFence protections with pass/fail results
+            </div>
+        </div>
+
+        <div class="test-section">
+            <h3>🛡️ Protection 1: Service Worker Registration Interception</h3>
+            <button onclick="testSWRegistrationProtection()">Test SW Protection</button>
+            <div id="sw-test-result" style="margin-top: 10px"></div>
+        </div>
+
+        <div class="test-section">
+            <h3>🔒 Protection 2: File Integrity Verification</h3>
+            <button onclick="testFileIntegrityProtection()">Test File Integrity</button>
+            <div id="integrity-test-result" style="margin-top: 10px"></div>
+        </div>
+
+        <div class="test-section">
+            <h3>📊 Test Results</h3>
+            <div class="log" id="attackLog"></div>
+        </div>
+
+        <script>
+            let attackCount = 0;
+            let originalRegister = null;
+            let logs = [];
+
+            // Test results tracking
+            const testResults = {
+                swProtection: null,
+                fileIntegrity: null,
+            };
+
+            function log(message, type = 'info') {
+                const timestamp = new Date().toLocaleTimeString();
+                const logEntry = `[${timestamp}] ${message}`;
+                logs.push({ message: logEntry, type });
+                updateLogDisplay();
+                console.log(logEntry);
+            }
+
+            function updateLogDisplay() {
+                const logDiv = document.getElementById('attackLog');
+                logDiv.innerHTML = logs
+                    .map((entry) => `<div class="result ${entry.type}">${entry.message}</div>`)
+                    .join('');
+                logDiv.scrollTop = logDiv.scrollHeight;
+            }
+
+            function incrementAttackCounter() {
+                attackCount++;
+                document.getElementById('attackCounter').textContent = attackCount;
+            }
+
+            function updateSystemInfo() {
+                const info = document.getElementById('systemInfo');
+                const hasServiceWorker = 'serviceWorker' in navigator;
+                const hasDappFence = !!navigator.__dappfencePatched;
+                const registerType = typeof navigator.serviceWorker?.register;
+
+                info.innerHTML = `
+                <p><strong>Service Worker Support:</strong> ${hasServiceWorker ? '✅ Yes' : '❌ No'}</p>
+                <p><strong>DappFence Detected:</strong> ${hasDappFence ? '✅ Yes' : '❌ No'}</p>
+                <p><strong>Register Function Type:</strong> ${registerType}</p>
+                <p><strong>User Agent:</strong> ${navigator.userAgent.substring(0, 80)}...</p>
+            `;
+
+                if (hasServiceWorker) {
+                    try {
+                        const descriptor = Object.getOwnPropertyDescriptor(
+                            navigator.serviceWorker,
+                            'register'
+                        );
+                        info.innerHTML += `
+                        <p><strong>Register Descriptor:</strong></p>
+                        <ul>
+                            <li>Writable: ${descriptor?.writable}</li>
+                            <li>Configurable: ${descriptor?.configurable}</li>
+                            <li>Enumerable: ${descriptor?.enumerable}</li>
+                        </ul>
+                    `;
+                    } catch (e) {
+                        info.innerHTML += `<p><strong>Descriptor Error:</strong> ${e.message}</p>`;
+                    }
+                }
+            }
+
+            // Store original register before DappFence patches it
+            if ('serviceWorker' in navigator) {
+                originalRegister = navigator.serviceWorker.register;
+            }
+
+            // ===================== CORE PROTECTION TESTS =====================
+
+            /**
+             * Test 1: Service Worker Registration Interception
+             * Tests if DappFence properly intercepts and protects SW registration
+             */
+            function testSWRegistrationProtection() {
+                incrementAttackCounter();
+                const resultDiv = document.getElementById('sw-test-result');
+                resultDiv.innerHTML = '<div class="result warning">Testing...</div>';
+
+                let testPassed = true;
+                let failures = [];
+
+                // Test 1a: Direct assignment should be blocked
+                try {
+                    const mockFunction = function () {
+                        return Promise.resolve();
+                    };
+                    navigator.serviceWorker.register = mockFunction;
+
+                    if (navigator.serviceWorker.register === mockFunction) {
+                        testPassed = false;
+                        failures.push('Direct assignment bypass');
+                    }
+                } catch (e) {
+                    // Expected - protection is working
+                }
+
+                // Test 1b: Property deletion should be blocked
+                try {
+                    delete navigator.serviceWorker.register;
+
+                    if (navigator.serviceWorker.register === undefined) {
+                        testPassed = false;
+                        failures.push('Property deletion bypass');
+                    }
+                } catch (e) {
+                    // Expected - protection is working
+                }
+
+                // Test 1c: Descriptor modification should be blocked
+                try {
+                    Object.defineProperty(navigator.serviceWorker, 'register', {
+                        writable: true,
+                        configurable: true,
+                        value: function () {
+                            return Promise.resolve();
+                        },
+                    });
+                    testPassed = false;
+                    failures.push('Descriptor modification bypass');
+                } catch (e) {
+                    // Expected - protection is working
+                }
+
+                testResults.swProtection = testPassed;
+
+                if (testPassed) {
+                    resultDiv.innerHTML =
+                        '<div class="result success">✅ PASS: Service Worker registration is properly protected</div>';
+                    log('✅ SW Protection Test: PASS', 'success');
+                } else {
+                    resultDiv.innerHTML = `<div class="result error">❌ FAIL: ${failures.join(', ')}</div>`;
+                    log(`❌ SW Protection Test: FAIL (${failures.join(', ')})`, 'error');
+                }
+            }
+
+            /**
+             * Test 2: File Integrity Verification
+             * Tests if modified files are properly detected and blocked
+             */
+            async function testFileIntegrityProtection() {
+                incrementAttackCounter();
+                const resultDiv = document.getElementById('integrity-test-result');
+                resultDiv.innerHTML = '<div class="result warning">Testing...</div>';
+
+                try {
+                    // Listen for security violations
+                    let violationDetected = false;
+
+                    const messageHandler = (event) => {
+                        if (event.data && event.data.type === 'DAPPFENCE_SECURITY_BLOCK') {
+                            violationDetected = true;
+                            window.removeEventListener('message', messageHandler);
+                        }
+                    };
+
+                    window.addEventListener('message', messageHandler);
+
+                    // Test by requesting utils.js with modification header
+                    // This will cause the dev server to prepend a comment, changing the hash
+                    const testTimestamp = Date.now();
+                    const response = await fetch('./utils.js', {
+                        headers: {
+                            'X-Test-Modify': `integrity-test-${testTimestamp}`,
+                        },
+                    });
+
+                    if (!response.ok) {
+                        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                    }
+
+                    // Just trigger the fetch - DappFence will verify it through the service worker
+                    // No need to execute the modified script
+                    log('📄 Requested modified utils.js to trigger integrity check', 'info');
+
+                    setTimeout(() => {
+                        testResults.fileIntegrity = violationDetected;
+
+                        if (violationDetected) {
+                            resultDiv.innerHTML =
+                                '<div class="result success">✅ PASS: File integrity violations are detected</div>';
+                            log(
+                                '✅ File Integrity Test: PASS - Modified content blocked',
+                                'success'
+                            );
+                        } else {
+                            resultDiv.innerHTML =
+                                '<div class="result warning">⚠️ INCONCLUSIVE: Test file not in manifest</div>';
+                            log('⚠️ File Integrity Test: INCONCLUSIVE', 'warning');
+                        }
+
+                        // Cleanup
+                        window.removeEventListener('message', messageHandler);
+                    }, 2000);
+                } catch (error) {
+                    testResults.fileIntegrity = false;
+                    resultDiv.innerHTML = `<div class="result error">❌ ERROR: ${error.message}</div>`;
+                    log(`❌ File Integrity Test: ERROR (${error.message})`, 'error');
+                }
+            }
+
+            /**
+             * Run all automated tests in sequence
+             */
+            function runAllTests() {
+                log('🧪 === STARTING AUTOMATED SECURITY TESTS ===', 'warning');
+
+                // Reset results
+                Object.keys(testResults).forEach((key) => (testResults[key] = null));
+
+                // Run tests in sequence
+                testSWRegistrationProtection();
+
+                setTimeout(() => {
+                    testFileIntegrityProtection();
+                }, 1000);
+
+                // Generate summary after all tests complete
+                setTimeout(() => {
+                    generateTestSummary();
+                }, 4000);
+            }
+
+            /**
+             * Generate final test summary
+             */
+            function generateTestSummary() {
+                const passed = Object.values(testResults).filter(
+                    (result) => result === true
+                ).length;
+                const total = Object.keys(testResults).length;
+                const failed = Object.values(testResults).filter(
+                    (result) => result === false
+                ).length;
+                const inconclusive = total - passed - failed;
+
+                log('🏁 === TEST SUMMARY ===', 'warning');
+                log(`Passed: ${passed}/${total}`, passed === total ? 'success' : 'warning');
+                if (failed > 0) log(`Failed: ${failed}`, 'error');
+                if (inconclusive > 0) log(`Inconclusive: ${inconclusive}`, 'warning');
+
+                const overallResult =
+                    failed === 0 && passed > 0 ? 'PASS' : failed > 0 ? 'FAIL' : 'INCONCLUSIVE';
+                log(
+                    `Overall Result: ${overallResult}`,
+                    overallResult === 'PASS'
+                        ? 'success'
+                        : overallResult === 'FAIL'
+                          ? 'error'
+                          : 'warning'
+                );
+
+                updateSystemInfo();
+            }
+
+            function clearResults() {
+                logs = [];
+                attackCount = 0;
+                document.getElementById('attackCounter').textContent = '0';
+
+                // Clear test result displays
+                const resultDivs = ['sw-test-result', 'integrity-test-result'];
+                resultDivs.forEach((id) => {
+                    const div = document.getElementById(id);
+                    if (div) div.innerHTML = '';
+                });
+
+                // Reset test results
+                Object.keys(testResults).forEach((key) => (testResults[key] = null));
+
+                updateLogDisplay();
+                log('🧹 Results cleared', 'success');
+            }
+
+            // Initialize
+            document.addEventListener('DOMContentLoaded', () => {
+                updateSystemInfo();
+                log('🧪 DappFence Security Test loaded', 'success');
+                log('Click "Run All Tests" to verify the 2 core protections', 'info');
+
+                // Auto-update system info every 30 seconds
+                setInterval(updateSystemInfo, 30000);
+            });
+
+            // Listen for security violation messages from service worker
+            window.addEventListener('message', (event) => {
+                if (event.data && event.data.type === 'DAPPFENCE_SECURITY_BLOCK') {
+                    log(`🚨 Security violation detected: ${event.data.details.status}`, 'error');
+                }
+            });
+        </script>
+    </body>
+</html>

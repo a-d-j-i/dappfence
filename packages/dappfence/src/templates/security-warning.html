@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Security Warning - Content Blocked</title>
+        <!-- API_TOKEN_PLACEHOLDER -->
+        <style id="dappfence-security-styles">
+            /* CSS will be injected here during build */
+        </style>
+    </head>
+    <body>
+        <div class="security-overlay">
+            <div class="security-container">
+                <div class="security-header">
+                    <div class="security-icon">⚠️</div>
+                    <h1 class="security-title">Security Warning</h1>
+                </div>
+
+                <div class="security-content">
+                    <h2 class="security-subtitle">Potentially Malicious Content Blocked</h2>
+                    <p class="security-message">
+                        DappFence has detected that content on this page has been modified and may
+                        be unsafe. This protection prevents potentially malicious code from running
+                        in your browser.
+                    </p>
+
+                    <div class="security-details">
+                        <h3>What happened?</h3>
+                        <ul>
+                            <li>File integrity verification failed</li>
+                            <li>Content hash mismatch detected</li>
+                            <li>Page loading was blocked for your safety</li>
+                        </ul>
+                    </div>
+                    <div
+                        class="security-advanced"
+                        id="security-advanced-error"
+                        style="display: none"
+                    >
+                        <h3>Technical Details</h3>
+                        <div class="security-info">
+                            <div class="info-row">
+                                <span id="security-advanced-error-message">Loading...</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div
+                        class="security-advanced"
+                        id="security-advanced-success"
+                        style="display: none"
+                    >
+                        <h3>Active Blocks (<span id="block-count">0</span>)</h3>
+                        <div id="block-list"></div>
+                    </div>
+                    <div class="security-warning-box">
+                        <strong>🔓 Remove Site Lock</strong>
+                        <p>
+                            Clearing the lock removes <em>all</em> active blocks. Only proceed if
+                            you understand the security implications and trust the site.
+                        </p>
+                        <button class="btn-danger" id="site-unblock">🔓 Remove Site Lock</button>
+                    </div>
+                </div>
+
+                <div class="security-footer">
+                    <p class="security-branding">Protected by <strong>DappFence</strong></p>
+                    <p class="security-timestamp" id="security-timestamp"></p>
+                </div>
+            </div>
+        </div>
+
+        <script>
+            function getFeatureFlag(name) {
+                const trueValues = {
+                    /* JavaScript values will be injected here during build */
+                };
+                return trueValues[name] || false;
+            }
+
+            // Redirect to the home page after unblocking
+            function redirect() {
+                window.location.href = '/';
+            }
+
+            // Security warning page functionality
+            (function () {
+                // Get API token from meta tag
+                const tokenMeta = document.querySelector('meta[name="dappfence-token"]');
+                const apiToken = tokenMeta ? tokenMeta.getAttribute('content') : null;
+
+                // Initialize timestamp
+                document.getElementById('security-timestamp').textContent =
+                    'Blocked at ' + new Date().toLocaleString();
+
+                document.addEventListener('DOMContentLoaded', function () {
+                    loadActiveBlocks();
+                });
+
+                // Site unblock button — clears ALL active blocks at once
+                document.getElementById('site-unblock').addEventListener('click', function () {
+                    if (
+                        getFeatureFlag('auto_confirm_site_lock') ||
+                        confirm(
+                            'Are you sure you want to remove the site lock? This will clear all active blocks and allow the site to load normally. Only proceed if you trust this site.'
+                        )
+                    ) {
+                        if (!apiToken) {
+                            alert('Cannot unblock - API token not available');
+                            return;
+                        }
+
+                        fetch('/sw-api/site-unblock', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'X-DappFence-Token': apiToken,
+                            },
+                        })
+                            .then((response) => {
+                                if (response.ok) {
+                                    console.log('[DappFence] Site lock removed');
+                                    if (!getFeatureFlag('auto_confirm_site_lock')) {
+                                        alert(
+                                            'Site lock has been removed. Redirecting to home page...'
+                                        );
+                                    }
+                                    redirect();
+                                } else {
+                                    console.error('[DappFence] Unblock failed:', response.status);
+                                    alert('Failed to remove site lock. Check console for details.');
+                                }
+                            })
+                            .catch((error) => {
+                                console.error('[DappFence] Unblock error:', error);
+                                alert('Failed to remove site lock: ' + error.message);
+                            });
+                    }
+                });
+
+                async function loadActiveBlocks() {
+                    if (!apiToken) {
+                        setLoadingError('API token not available - cannot load details');
+                        return;
+                    }
+
+                    try {
+                        const response = await fetch('/sw-api/active-blocks', {
+                            method: 'GET',
+                            headers: {
+                                'X-DappFence-Token': apiToken,
+                            },
+                        });
+                        if (!response.ok) {
+                            if (response.status === 401) {
+                                throw new Error('Authentication failed - invalid token');
+                            }
+                            throw new Error(`API error: ${response.status} ${response.statusText}`);
+                        }
+
+                        const blocks = await response.json();
+                        renderBlocks(blocks);
+                    } catch (error) {
+                        console.error('[DappFence] Failed to load active blocks:', error);
+                        setLoadingError('Failed to load security details: ' + error.message);
+                    }
+                }
+
+                function renderBlocks(blocks) {
+                    document.getElementById('block-count').textContent = blocks.length;
+                    const listEl = document.getElementById('block-list');
+                    listEl.innerHTML = '';
+                    for (const block of blocks) {
+                        const card = document.createElement('div');
+                        card.className = 'security-info';
+                        card.appendChild(infoRow('Blocked File', block.fileKey || 'Unknown'));
+                        card.appendChild(
+                            infoRow('Expected Hash', block.expectedHash || 'Not available', 'hash')
+                        );
+                        card.appendChild(
+                            infoRow('Actual Hash', block.actualHash || 'Not available', 'hash')
+                        );
+                        card.appendChild(
+                            infoRow('First Seen', block.formattedTimestamp || 'Unknown')
+                        );
+                        const count = block.occurrenceCount || 1;
+                        card.appendChild(
+                            infoRow('Occurrences', `${count} time${count > 1 ? 's' : ''}`)
+                        );
+                        listEl.appendChild(card);
+                    }
+                    document.getElementById('security-advanced-success').style.display = 'block';
+                }
+
+                function infoRow(label, value, extraValueClass) {
+                    const row = document.createElement('div');
+                    row.className = 'info-row';
+                    const labelEl = document.createElement('span');
+                    labelEl.className = 'info-label';
+                    labelEl.textContent = label + ':';
+                    const valueEl = document.createElement('span');
+                    valueEl.className =
+                        'info-value' + (extraValueClass ? ' ' + extraValueClass : '');
+                    valueEl.textContent = value;
+                    row.appendChild(labelEl);
+                    row.appendChild(valueEl);
+                    return row;
+                }
+
+                function setLoadingError(message) {
+                    const advanced = document.getElementById('security-advanced-error');
+                    advanced.style.display = 'block';
+                    const element = document.getElementById('security-advanced-error-message');
+                    if (element) {
+                        element.textContent = message;
+                        element.style.color = '#dc3545';
+                    }
+                }
+            })();
+        </script>
+    </body>
+</html>

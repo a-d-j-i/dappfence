@@ -1,0 +1,98 @@
+<!doctype html>
+<!-- {{TARGET_VERSION}} -->
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Without dappfence example</title>
+        <style>
+            body {
+                font-family:
+                    system-ui,
+                    -apple-system,
+                    sans-serif;
+                max-width: 800px;
+                margin: 0 auto;
+                padding: 20px;
+                line-height: 1.6;
+            }
+
+            .config-info {
+                background: #e8f4fd;
+                border: 1px solid #007acc;
+                border-radius: 8px;
+                padding: 15px;
+                margin: 20px 0;
+            }
+
+            .hash-display {
+                font-family: 'Courier New', monospace;
+                font-size: 0.9em;
+                background: #f5f5f5;
+                padding: 5px 8px;
+                border-radius: 4px;
+                word-break: break-all;
+            }
+
+            button {
+                background: #007acc;
+                color: white;
+                border: none;
+                padding: 10px 20px;
+                border-radius: 4px;
+                cursor: pointer;
+                margin: 5px;
+            }
+
+            button:hover {
+                background: #005a99;
+            }
+        </style>
+        <!-- Load our test service worker so it can be replaced later by dappfence -->
+        <script src="/sw_register.js" data-id="withoutDappfence"></script>
+
+        <!-- External JS for testing (with known SRI hash) -->
+        <script
+            src="http://code.jquery.com/jquery-3.7.1.min.js"
+            integrity="sha256-/JqT3SQfawRcv/BIHPThkBvs0OEvtFFmqPF/lYI/Cxo="
+            crossorigin="anonymous"
+        ></script>
+    </head>
+    <body>
+        <header>
+            <h1>🔒 DappFence - Manifest Mode Example</h1>
+            <p>This example demonstrates DappFence with a predefined integrity manifest.</p>
+        </header>
+
+        <main>
+            <div class="config-info">
+                <h3>🔧 Configuration</h3>
+                <p><strong>Mode:</strong> <code>manifest</code> (predefined integrity hashes)</p>
+                <p><strong>Manifest URL:</strong> <code>/integrity-manifest.json</code></p>
+                <p><strong>Manifest SRI Hash:</strong></p>
+                <div class="hash-display">{{MANIFEST_SIGNATURE_IDENTITY}}</div>
+                <p><strong>Built:</strong> {{BUILD_DATE}}</p>
+            </div>
+
+            <h2>Demo Features</h2>
+            <div id="app-content">
+                <p>App content loaded. Check browser console for DappFence security logs.</p>
+            </div>
+
+            <div style="margin-top: 20px; padding: 15px; background: #f8f9fa; border-radius: 4px">
+                <h4>🔍 Manifest Controls</h4>
+                <div style="margin: 10px 0">
+                    <button onclick="checkManifestStatus()">Check Status</button>
+                </div>
+            </div>
+            <div id="output"></div>
+        </main>
+
+        <footer
+            style="margin-top: 40px; padding-top: 20px; border-top: 1px solid #eee; color: #666"
+        >
+            <p><strong>DappFence Framework</strong> - Manifest Mode Demo</p>
+            <p>Open browser console to see integrity verification in action.</p>
+        </footer>
+    </body>
+</html>

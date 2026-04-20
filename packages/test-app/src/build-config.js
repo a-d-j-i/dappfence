@@ -1,0 +1,54 @@
+const path = require('path');
+const { getPublicKey, hexToBytes } = require('@dappfence/signer/crypto');
+
+const ROOT_DIR = path.resolve(__dirname, '..');
+const directories = {
+    assetDir: path.resolve(ROOT_DIR, 'assets'),
+    templateDir: path.resolve(ROOT_DIR, 'template'),
+    dappfencePath: require.resolve('@dappfence/core'),
+};
+
+// This key is used for TESTING only
+const secretKey = hexToBytes('46c88fcabce00eced90f15ceb9325fd879e44b43c623b174416a219a6103e05d');
+const publicKey = getPublicKey(secretKey);
+const keys = { publicKey, secretKey };
+
+const simpleAppBase = {
+    ...directories,
+    manifestFile: 'integrity-manifest.json',
+    htmlOutput: 'index.html',
+    description: 'Simple App Example',
+    exclude: ['/test-excluded'],
+    indexCopies: ['index_copy.html', path.join('some_subdirectory', 'index_copy.html')],
+    versions: ['1.0.1'],
+    htmlTemplates: { 'simple-app.html': 'index.html', 'front-page.html': 'front-page.html' },
+};
+
+const BUILD_TARGETS = {
+    'simple-app': {
+        ...simpleAppBase,
+        templateFlags: { USE_APP_SW: false, USE_APP: true },
+    },
+    'simple-app-sw-fixed': {
+        ...simpleAppBase,
+        templateFlags: { USE_APP_SW: true, USE_APP: true },
+    },
+    'simple-app-sw-capture': {
+        ...simpleAppBase,
+        templateFlags: { USE_SW_REGISTER: true, USE_APP: false },
+    },
+    'tampering-test': {
+        ...directories,
+        manifestFile: 'tampering-test-manifest.json',
+        htmlTemplates: { 'tampering-test.html': 'index.html' },
+        htmlOutput: 'tampering-test.html',
+        description: 'Tampering Security Test',
+    },
+};
+
+const OUT_DIR = path.join(ROOT_DIR, 'dist');
+Object.keys(BUILD_TARGETS).forEach((name) => {
+    BUILD_TARGETS[name].outDir = path.join(OUT_DIR, name);
+});
+
+module.exports = { OUT_DIR, BUILD_TARGETS, keys };

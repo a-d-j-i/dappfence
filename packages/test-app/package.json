@@ -1,0 +1,28 @@
+{
+    "name": "@dappfence/test-app",
+    "version": "0.1.0",
+    "private": true,
+    "description": "Development server and e2e tests for DappFence",
+    "type": "commonjs",
+    "main": "src/dev-server.js",
+    "scripts": {
+        "clean": "rm -rf dist test-results",
+        "build": "node src/build.js --quiet",
+        "build:manifest": "node src/build.js",
+        "dev": "node src/dev-server.js --with-browser -d simple-app_latest",
+        "dev:http": "node src/dev-server.js",
+        "build:manifest:test": "node src/build.js tampering-test",
+        "build:watch": "node src/watch.js",
+        "test": "playwright test --config playwright.config.ts",
+        "test:headed": "playwright test --config playwright.config.ts --headed",
+        "test:debug": "playwright test --config playwright.config.ts --debug"
+    },
+    "dependencies": {
+        "@dappfence/core": "*",
+        "@dappfence/signer": "*"
+    },
+    "devDependencies": {
+        "@playwright/test": "1.58.2",
+        "@types/node": "25.2.3"
+    }
+}

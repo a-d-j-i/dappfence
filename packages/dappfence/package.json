@@ -1,0 +1,48 @@
+{
+    "name": "@dappfence/core",
+    "version": "0.1.0",
+    "description": "Security framework for web applications using service worker content verification",
+    "license": "MIT",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/coinspect/dappfence.git",
+        "directory": "packages/dappfence"
+    },
+    "keywords": [
+        "security",
+        "service-worker",
+        "integrity",
+        "dapp",
+        "web-security",
+        "content-verification"
+    ],
+    "type": "module",
+    "main": "dist/dappfence.js",
+    "exports": {
+        ".": "./dist/dappfence.js"
+    },
+    "files": [
+        "dist"
+    ],
+    "engines": {
+        "node": ">=16.0.0"
+    },
+    "scripts": {
+        "build": "vite build --mode development",
+        "build:prod": "vite build --mode production",
+        "build:watch": "vite build --mode development --watch",
+        "clean": "rm -rf dist coverage",
+        "test": "vitest run",
+        "test:coverage": "vitest run --coverage"
+    },
+    "devDependencies": {
+        "@noble/hashes": "2.0.1",
+        "@noble/secp256k1": "3.0.0",
+        "@vitest/coverage-v8": "4.1.4",
+        "javascript-obfuscator": "4.1.1",
+        "terser": "5.24.0",
+        "vite": "7.3.2",
+        "vite-plugin-bundle-obfuscator": "1.8.0",
+        "vitest": "4.1.4"
+    }
+}
