@@ -14,6 +14,7 @@
             <div class="security-container">
                 <div class="security-header">
                     <div class="security-icon">⚠️</div>
+                    <span class="severity-chip">Blocked</span>
                     <h1 class="security-title">Security Warning</h1>
                 </div>
 
@@ -24,15 +25,6 @@
                         be unsafe. This protection prevents potentially malicious code from running
                         in your browser.
                     </p>
-
-                    <div class="security-details">
-                        <h3>What happened?</h3>
-                        <ul>
-                            <li>File integrity verification failed</li>
-                            <li>Content hash mismatch detected</li>
-                            <li>Page loading was blocked for your safety</li>
-                        </ul>
-                    </div>
                     <div
                         class="security-advanced"
                         id="security-advanced-error"
@@ -50,7 +42,7 @@
                         id="security-advanced-success"
                         style="display: none"
                     >
-                        <h3>Active Blocks (<span id="block-count">0</span>)</h3>
+                        <h3>Active Blocks<span class="count-badge" id="block-count">0</span></h3>
                         <div id="block-list"></div>
                     </div>
                     <div class="security-warning-box">
@@ -170,25 +162,46 @@
                     document.getElementById('block-count').textContent = blocks.length;
                     const listEl = document.getElementById('block-list');
                     listEl.innerHTML = '';
-                    for (const block of blocks) {
-                        const card = document.createElement('div');
+                    blocks.forEach((block, index) => {
+                        const card = document.createElement('details');
                         card.className = 'security-info';
-                        card.appendChild(infoRow('Blocked File', block.fileKey || 'Unknown'));
-                        card.appendChild(
-                            infoRow('Expected Hash', block.expectedHash || 'Not available', 'hash')
-                        );
-                        card.appendChild(
-                            infoRow('Actual Hash', block.actualHash || 'Not available', 'hash')
-                        );
-                        card.appendChild(
-                            infoRow('First Seen', block.formattedTimestamp || 'Unknown')
-                        );
+                        if (index === 0) {
+                            card.open = true;
+                        }
+
+                        const summary = document.createElement('summary');
+                        summary.className = 'block-summary';
+
+                        const name = document.createElement('span');
+                        name.className = 'block-name';
+                        name.textContent = block.fileKey || 'Unknown';
+                        name.title = block.fileKey || 'Unknown';
+                        summary.appendChild(name);
+
                         const count = block.occurrenceCount || 1;
-                        card.appendChild(
-                            infoRow('Occurrences', `${count} time${count > 1 ? 's' : ''}`)
+                        const badge = document.createElement('span');
+                        badge.className = 'occurrence-badge';
+                        badge.textContent = `${count}×`;
+                        badge.title = `${count} occurrence${count > 1 ? 's' : ''}`;
+                        summary.appendChild(badge);
+
+                        card.appendChild(summary);
+
+                        const body = document.createElement('div');
+                        body.className = 'block-body';
+                        body.appendChild(
+                            infoRow('Expected hash', block.expectedHash || 'Not available', 'hash')
                         );
+                        body.appendChild(
+                            infoRow('Actual hash', block.actualHash || 'Not available', 'hash')
+                        );
+                        body.appendChild(
+                            infoRow('First seen', block.formattedTimestamp || 'Unknown')
+                        );
+                        card.appendChild(body);
+
                         listEl.appendChild(card);
-                    }
+                    });
                     document.getElementById('security-advanced-success').style.display = 'block';
                 }
 
