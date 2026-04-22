@@ -75,36 +75,67 @@
                             'Are you sure you want to remove the site lock? This will clear all active blocks and allow the site to load normally. Only proceed if you trust this site.'
                         )
                     ) {
-                        if (!apiToken) {
-                            alert('Cannot unblock - API token not available');
-                            return;
-                        }
+                        unlockSite();
+                    }
+                });
 
-                        fetch('/sw-api/site-unblock', {
-                            method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/json',
-                                'X-DappFence-Token': apiToken,
-                            },
-                        })
-                            .then((response) => {
-                                if (response.ok) {
-                                    console.log('[DappFence] Site lock removed');
+                function unlockSite() {
+                    if (!apiToken) {
+                        alert('Cannot unblock - API token not available');
+                        return;
+                    }
+
+                    fetch('/sw-api/site-unblock', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'X-DappFence-Token': apiToken,
+                        },
+                    })
+                        .then((response) => {
+                            if (response.ok) {
+                                console.log('[DappFence] Site lock removed');
                                     if (!autoConfirmSiteLock) {
-                                        alert(
-                                            'Site lock has been removed. Redirecting to home page...'
-                                        );
-                                    }
-                                    window.location.replace('/');
-                                } else {
-                                    console.error('[DappFence] Unblock failed:', response.status);
-                                    alert('Failed to remove site lock. Check console for details.');
+                                    alert(
+                                        'Site lock has been removed. Redirecting to home page...'
+                                    );
                                 }
-                            })
-                            .catch((error) => {
-                                console.error('[DappFence] Unblock error:', error);
-                                alert('Failed to remove site lock: ' + error.message);
-                            });
+                                    window.location.replace('/');
+                            } else {
+                                console.error('[DappFence] Unblock failed:', response.status);
+                                alert('Failed to remove site lock. Check console for details.');
+                            }
+                        })
+                        .catch((error) => {
+                            console.error('[DappFence] Unblock error:', error);
+                            alert('Failed to remove site lock: ' + error.message);
+                        });
+                }
+
+                // Intercept hard-reload key combos (Ctrl+F5, Shift+F5, Ctrl+Shift+R,
+                // Cmd+Shift+R). A hard reload would bypass the SW and hit the
+                // server with /sw-api/security-warning — which 404s because
+                // the SW only serves the warning page.
+                window.addEventListener('keydown', function (event) {
+                    const k = event.key;
+                    // Windows/Linux: Ctrl+F5, Shift+F5 or Ctrl+Shift+R. Mac: Cmd+Shift+R.
+                    const isHardReload =
+                        (k === 'F5' && (event.ctrlKey || event.shiftKey)) ||
+                        ((k === 'r' || k === 'R') &&
+                            event.shiftKey &&
+                            (event.ctrlKey || event.metaKey));
+                    if (!isHardReload) {
+                        return;
+                    }
+                    // Block the hard reload regardless of the user's answer, the
+                    // 404 paths are never the right outcome. Our only choice is
+                    // "stay on warning" or "unlock and go home".
+                    event.preventDefault();
+                    const proceed = confirm(
+                        'Reloading past this warning will remove DappFence protection for this site. The underlying page may contain tampered or unsafe content — that is exactly why this warning is here.\n\nClick Cancel to stay on the warning. Click OK to remove the site lock and continue to the home page.'
+                    );
+                    if (proceed) {
+                        unlockSite();
                     }
                 });
 
