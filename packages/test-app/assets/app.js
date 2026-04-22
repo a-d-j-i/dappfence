@@ -135,45 +135,6 @@ async function waitForServiceWorkerReady(timeoutMs = 10000) {
 // Wait for DOM to be ready
 document.addEventListener('DOMContentLoaded', () => {
     log('DOM loaded, initializing app');
-
-    // Update app content with demo-focused messaging
-    const appContent = document.getElementById('app-content');
-    if (appContent) {
-        appContent.innerHTML = `
-            <div style="background: #e8f5e8; padding: 15px; border-radius: 8px; margin: 10px 0;">
-                <h3>🛡️ DappFence Security Demo</h3>
-                <p><strong>What you're seeing:</strong></p>
-                <ul style="margin: 8px 0;">
-                    <li>📄 Local files: <code>app.js</code>, <code>utils.js</code></li>
-                    <li>🌐 External files: jQuery from CDN</li>
-                    <li>⚡ Real-time integrity monitoring</li>
-                </ul>
-                <p style="margin-top: 10px;"><em>The status below updates automatically.</em></p>
-            </div>
-        `;
-    }
-
-    // Automatically show status when page loads (key for demo)
-    // Add loading indicator
-    const output = document.getElementById('output');
-    if (output) {
-        output.innerHTML = `
-            <div style="background: #f0f8ff; padding: 15px; border-radius: 4px; margin: 10px 0; text-align: center;">
-                <h4>🔄 Initializing DappFence Security Status...</h4>
-                <p style="color: #666;">Waiting for service worker to become ready...</p>
-                <div style="margin: 10px 0;">
-                    <div style="display: inline-block; width: 20px; height: 20px; border: 2px solid #007acc; border-radius: 50%; border-top: 2px solid transparent; animation: spin 1s linear infinite;"></div>
-                </div>
-            </div>
-            <style>
-                @keyframes spin {
-                    0% { transform: rotate(0deg); }
-                    100% { transform: rotate(360deg); }
-                }
-            </style>
-        `;
-    }
-
     // Wait for a service worker to be ready before trying to fetch status
     waitForServiceWorkerReady()
         .then(() => {
@@ -185,10 +146,12 @@ document.addEventListener('DOMContentLoaded', () => {
             const output = document.getElementById('output');
             if (output) {
                 output.innerHTML = `
-                <div style="background: #fff3cd; padding: 15px; border-radius: 4px; margin: 10px 0;">
-                    <h4>⚠️ Service Worker Not Ready</h4>
-                    <p>DappFence service worker is not active yet. Try refreshing the page or check the browser console for errors.</p>
-                    <button onclick="window.checkManifestStatus()" style="margin-top: 10px;">Retry</button>
+                <div class="alert alert--warn">
+                    <div class="alert__body">
+                        <h4>⚠️ Service Worker is not ready</h4>
+                        <p>DappFence service worker is not active yet. Try refreshing the page or check the browser console for errors.</p>
+                        <button class="btn btn--secondary" onclick="window.checkManifestStatus()">Retry</button>
+                    </div>
                 </div>
             `;
             }
@@ -203,13 +166,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
             // Just show a small notification instead of taking over the output area
             const notification = document.createElement('div');
-            notification.style.cssText = `
-                position: fixed; top: 20px; right: 20px; 
-                background: #4CAF50; color: white; padding: 10px 15px; 
-                border-radius: 4px; z-index: 1000;
-                animation: slideIn 0.3s ease-out;
-            `;
-            notification.innerHTML = `✅ ${greeting}`;
+            notification.className = 'toast';
+            notification.textContent = `✅ ${greeting}`;
             document.body.appendChild(notification);
 
             setTimeout(() => {
@@ -227,11 +185,13 @@ window.showAlert = function () {
 window.loadContent = function () {
     const output = document.getElementById('output');
     output.innerHTML = `
-        <div style="background: #e8f5e8; padding: 15px; border-radius: 4px; margin: 10px 0;">
-            <h4>📊 Security Monitoring Active</h4>
-            <p>DappFence is monitoring all network requests and content changes.</p>
-            <p>Check the browser console to see security logs.</p>
-            <p><small>Timestamp: ${new Date().toISOString()}</small></p>
+        <div class="alert alert--info">
+            <div class="alert__body">
+                <h4>📊 Security monitoring active</h4>
+                <p>DappFence is monitoring all network requests and content changes.</p>
+                <p>Check the browser console to see security logs.</p>
+                <p><small>Timestamp: ${new Date().toISOString()}</small></p>
+            </div>
         </div>
     `;
 };
@@ -261,27 +221,25 @@ window.checkManifestStatus = async function () {
         const status = await response.json();
         log('Manifest Status:', status);
 
-        // Create a nice file list visualization
+        const statusVariant = (status) =>
+            status === 'MATCH' ? 'match' : status === 'MISMATCH' ? 'mismatch' : 'unknown';
+        const statusLabel = (status) =>
+            status === 'MATCH' ? 'MATCH' : status === 'MISMATCH' ? 'MISMATCH' : 'UNKNOWN';
+
         const createFileList = (manifest, isVerificationResults = false) => {
             if (isVerificationResults) {
                 if (!manifest || manifest.length === 0) {
-                    return `<p><em>No verification results yet</em></p>`;
+                    return `<p class="empty">No verification results yet.</p>`;
                 }
 
-                // Sort by timestamp (latest first) and check for recent verifications
                 const now = new Date();
                 const sortedManifest = [...manifest].sort(
                     (a, b) => new Date(b.timestamp) - new Date(a.timestamp)
                 );
 
-                let html = '<div style="margin: 10px 0;">';
+                let html = '<div class="file-list">';
                 sortedManifest.forEach((result) => {
-                    const statusIcon =
-                        result.status === 'MATCH'
-                            ? '✅'
-                            : result.status === 'MISMATCH'
-                              ? '❌'
-                              : '⚠️';
+                    const variant = statusVariant(result.status);
                     const typeIcon = result.isExternal ? '🌐' : '📄';
                     let fileName;
                     if (result.isExternal) {
@@ -290,43 +248,33 @@ window.checkManifestStatus = async function () {
                             const urlObj = new URL(urlStr);
                             fileName = urlObj.hostname + urlObj.pathname;
                         } catch (e) {
-                            // Fallback for invalid URLs
                             fileName = result.fileKey;
                         }
                     } else {
                         fileName = result.fileKey;
                     }
 
-                    // Check if this verification is recent (last 30 seconds)
                     const verificationTime = new Date(result.timestamp);
-                    const timeDiff = now - verificationTime;
-                    const isRecent = timeDiff < 30000; // 30 seconds
-
-                    const backgroundColor =
-                        result.status === 'MATCH'
-                            ? isRecent
-                                ? '#e8f5e8'
-                                : '#f0fff0'
-                            : result.status === 'MISMATCH'
-                              ? isRecent
-                                  ? '#ffe6e6'
-                                  : '#fff0f0'
-                              : isRecent
-                                ? '#fff8e1'
-                                : '#fffaf0';
+                    const isRecent = now - verificationTime < 30000;
+                    const recentClass = isRecent ? ' file-row--recent' : '';
+                    const hash = result.actualHash ? result.actualHash : 'No hash';
+                    const expected =
+                        result.status === 'MISMATCH'
+                            ? `<span class="file-row__expected">expected ${result.expectedHash}</span>`
+                            : '';
 
                     html += `
-                        <div style="display: flex; align-items: center; padding: 6px; border: 1px solid ${isRecent ? '#007acc' : '#ddd'}; margin: 2px 0; border-radius: 4px; background: ${backgroundColor}; ${isRecent ? 'border-width: 2px;' : ''}">
-                            <span style="margin-right: 8px; font-size: 16px;">${statusIcon}${typeIcon}${isRecent ? '🆕' : ''}</span>
-                            <div style="flex: 1;">
-                                <strong>${fileName}</strong>${isRecent ? ' <span style="color: #007acc; font-size: 0.8em; font-weight: normal;">(just verified)</span>' : ''}<br>
-                                <small style="color: #666; font-family: monospace;">
-                                    ${result.actualHash ? result.actualHash : 'No hash'}
-                                    ${result.status === 'MISMATCH' ? ` (expected: ${result.expectedHash})` : ''}
-                                </small><br>
-                                <small style="color: #888; font-size: 0.75em;">
-                                    🕒 ${formatTimestamp(verificationTime)}
-                                </small>
+                        <div class="file-row file-row--${variant}${recentClass}">
+                            <span class="file-row__icon" aria-hidden="true">${typeIcon}</span>
+                            <div class="file-row__body">
+                                <div class="file-row__name" title="${fileName}">${fileName}</div>
+                                <small class="file-row__hash" title="${hash}">${hash}</small>
+                                ${expected}
+                                <small class="file-row__time">🕒 ${formatTimestamp(verificationTime)}</small>
+                            </div>
+                            <div class="file-row__aside">
+                                ${isRecent ? '<span class="badge badge--info">just verified</span>' : ''}
+                                <span class="badge badge--${variant}">${statusLabel(result.status)}</span>
                             </div>
                         </div>
                     `;
@@ -335,17 +283,13 @@ window.checkManifestStatus = async function () {
                 return html;
             }
 
-            // Handle both direct and wrapped formats
             const manifestFiles = manifest.files || manifest;
             if (!manifestFiles || Object.keys(manifestFiles).length === 0) {
-                return `<p><em>No files yet</em></p>`;
+                return `<p class="empty">No files yet.</p>`;
             }
 
-            let html = '<div style="margin: 10px 0;">';
-            // Handle both direct manifest format and wrapped .files format
-            const fileEntries = manifest.files || manifest;
-
-            Object.entries(fileEntries).forEach(([fileKey, fileData]) => {
+            let html = '<div class="file-list">';
+            Object.entries(manifestFiles).forEach(([fileKey, fileData]) => {
                 const isExternal = !fileKey.startsWith('/');
                 const typeIcon = isExternal ? '🌐' : '📄';
                 let fileName;
@@ -354,23 +298,22 @@ window.checkManifestStatus = async function () {
                         const urlObj = new URL(fileKey);
                         fileName = urlObj.hostname + urlObj.pathname;
                     } catch (e) {
-                        // Fallback for invalid URLs
                         fileName = fileKey;
                     }
                 } else {
                     fileName = fileKey;
                 }
-                const hash = typeof fileData === 'string' ? fileData : fileData.hash || 'unknown'; // Handle both formats for compatibility
-                const domain = ''; // No domain metadata in simplified format
+                const hash = typeof fileData === 'string' ? fileData : fileData.hash || 'unknown';
 
                 html += `
-                    <div style="display: flex; align-items: center; padding: 8px; border: 1px solid #ddd; margin: 3px 0; border-radius: 4px; background: #fafafa;">
-                        <span style="margin-right: 10px; font-size: 18px;">${typeIcon}</span>
-                        <div style="flex: 1;">
-                            <strong>${fileName}</strong>${domain}<br>
-                            <small style="color: #666; font-family: monospace;">
-                                Hash: ${typeof hash === 'string' && hash ? hash : 'unknown'}...
-                            </small>
+                    <div class="file-row">
+                        <span class="file-row__icon" aria-hidden="true">${typeIcon}</span>
+                        <div class="file-row__body">
+                            <div class="file-row__name" title="${fileName}">${fileName}</div>
+                            <small class="file-row__hash" title="${hash}">${hash}</small>
+                        </div>
+                        <div class="file-row__aside">
+                            <span class="badge badge--muted">${isExternal ? 'external' : 'local'}</span>
                         </div>
                     </div>
                 `;
@@ -384,45 +327,68 @@ window.checkManifestStatus = async function () {
             (r) => r.status === 'MISMATCH' || r.status === 'NOT_IN_MANIFEST'
         ).length;
 
+        const matchCount = status.verificationResults.filter((r) => r.status === 'MATCH').length;
+        const mismatchCount = status.verificationResults.filter(
+            (r) => r.status === 'MISMATCH'
+        ).length;
+        const unknownCount = status.verificationResults.filter(
+            (r) => r.status === 'NOT_IN_MANIFEST'
+        ).length;
+
         const output = document.getElementById('output');
         output.innerHTML = `
-            <div style="background: #f0f8ff; padding: 15px; border-radius: 4px; margin: 10px 0;">
-                <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap;">
-                    <h4 style="margin: 0;">📋 Trusted Manifest Status</h4>
-                    <button onclick="checkManifestStatus()">Refresh Status</button>
+            <div class="card">
+                <div class="card__header">
+                    <h4 class="card__title">📋 Trusted manifest status</h4>
+                    <button class="btn btn--secondary" onclick="checkManifestStatus()">Refresh</button>
                 </div>
-                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin: 15px 0;">
-                    <div><strong>App Version:</strong> <code style="font-size: 0.85em;">${status.appVersion ? status.appVersion : 'Not set'}</code></div>
-                    <div><strong>Trusted Files:</strong> <span style="color: #28a745;">${status.stats.trustedFiles}</span></div>
-                    <div><strong>Total Verifications:</strong> <span style="color: #007acc;">${status.stats.totalVerifications}</span></div>
-                    <div><strong>Failed Verifications:</strong> <span style="color: ${failedVerifications > 0 ? '#dc3545' : '#28a745'};">${failedVerifications}</span></div>
+                <div class="stats-grid">
+                    <div class="stat stat--brand">
+                        <span class="stat__label">App version</span>
+                        <span class="stat__value"><code>${status.appVersion ? status.appVersion : 'Not set'}</code></span>
+                    </div>
+                    <div class="stat stat--success">
+                        <span class="stat__label">Trusted files</span>
+                        <span class="stat__value">${status.stats.trustedFiles}</span>
+                    </div>
+                    <div class="stat stat--brand">
+                        <span class="stat__label">Total verifications</span>
+                        <span class="stat__value">${status.stats.totalVerifications}</span>
+                    </div>
+                    <div class="stat ${failedVerifications > 0 ? 'stat--danger' : 'stat--success'}">
+                        <span class="stat__label">Failed verifications</span>
+                        <span class="stat__value">${failedVerifications}</span>
+                    </div>
                 </div>
                 ${
                     status.stats.trustedFiles > 0
                         ? `
-                    <details style="margin-top: 15px;">
-                        <summary style="cursor: pointer; font-weight: bold;">🔒 Trusted Files (${status.stats.trustedFiles})</summary>
+                    <details class="collapsible">
+                        <summary>
+                            🔒 Trusted files
+                            <span class="summary-meta"><span class="badge badge--muted">${status.stats.trustedFiles}</span></span>
+                        </summary>
                         ${createFileList(status.trustedManifest)}
                     </details>
                 `
                         : ''
                 }
-                
+
                 ${
                     status.verificationResults && status.verificationResults.length > 0
                         ? `
-                    <details style="margin-top: 15px;">
-                        <summary style="cursor: pointer; font-weight: bold;">
-                            🔍 All Verifications (${status.verificationResults.length})
-                            <span style="font-weight: normal; color: #666; margin-left: 8px;">
-                                | ✅ ${status.verificationResults.filter((r) => r.status === 'MATCH').length} 
-                                | ❌ ${status.verificationResults.filter((r) => r.status === 'MISMATCH').length}
-                                | ⚠️ ${status.verificationResults.filter((r) => r.status === 'NOT_IN_MANIFEST').length}
+                    <details class="collapsible">
+                        <summary>
+                            🔍 Verifications
+                            <span class="summary-meta">
+                                <span class="badge badge--match">${matchCount} match</span>
+                                <span class="badge badge--mismatch">${mismatchCount} mismatch</span>
+                                <span class="badge badge--unknown">${unknownCount} unknown</span>
                             </span>
                         </summary>
                         ${
                             status.verificationResults.length > 20
-                                ? '<p style="color: #666; font-size: 0.9em; margin: 10px 0;"><em>💡 Showing latest first. Recent verifications (last 30s) are highlighted with blue borders.</em></p>'
+                                ? '<p class="empty">Showing latest first. Recent verifications (last 30s) are highlighted.</p>'
                                 : ''
                         }
                         ${createFileList(status.verificationResults, true)}
@@ -430,10 +396,10 @@ window.checkManifestStatus = async function () {
                 `
                         : ''
                 }
-                
-                <details style="margin-top: 15px;">
-                    <summary style="cursor: pointer; color: #666;">🔧 Raw JSON Data</summary>
-                    <pre style="background: #f5f5f5; padding: 10px; overflow: auto; max-height: 300px; font-size: 11px;">${JSON.stringify(status, null, 2)}</pre>
+
+                <details class="collapsible">
+                    <summary>🔧 Raw JSON</summary>
+                    <pre class="pre-json">${JSON.stringify(status, null, 2)}</pre>
                 </details>
             </div>
         `;
@@ -443,13 +409,15 @@ window.checkManifestStatus = async function () {
         const output = document.getElementById('output');
         if (output) {
             output.innerHTML = `
-                <div style="background: #f8d7da; padding: 15px; border-radius: 4px; margin: 10px 0;">
-                    <h4>❌ Error Loading Status</h4>
-                    <p><strong>Error:</strong> ${error.message}</p>
-                    <p>This usually means the DappFence service worker is not ready yet.</p>
-                    <div style="margin-top: 10px;">
-                        <button onclick="window.checkManifestStatus()" style="margin-right: 10px;">Retry</button>
-                        <button onclick="location.reload()">Refresh Page</button>
+                <div class="alert alert--error">
+                    <div class="alert__body">
+                        <h4>❌ Error loading status</h4>
+                        <p><strong>Error:</strong> ${error.message}</p>
+                        <p>This usually means the DappFence service worker is not ready yet.</p>
+                        <div class="btn-row">
+                            <button class="btn" onclick="window.checkManifestStatus()">Retry</button>
+                            <button class="btn btn--secondary" onclick="location.reload()">Refresh page</button>
+                        </div>
                     </div>
                 </div>
             `;
