@@ -344,17 +344,6 @@ details.security-info[open] > summary.block-summary {
     word-break: break-all;
 }
 
-/* Inline error state for advanced section */
-#security-advanced-error .security-info {
-    background: var(--sw-red-soft);
-    border-color: var(--sw-red-500);
-    padding: 12px 14px;
-}
-#security-advanced-error .info-value {
-    color: var(--sw-red-700);
-    font-size: 13px;
-}
-
 /* Danger zone — "Remove Site Lock" */
 .security-warning-box {
     background: var(--sw-amber-soft);

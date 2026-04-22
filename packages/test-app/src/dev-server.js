@@ -115,8 +115,8 @@ const testParameters = {
 };
 function getExtraResponseHeaders(testParams) {
     const params = testParameters[testParams.testKey];
-    if (params) {
-        if (params.responseHeaders) {
+    if (params || process.argv.includes('--no-cache')) {
+        if (params && params.responseHeaders) {
             const rulesByTest = params.responseHeaders;
             if (rulesByTest && Array.isArray(rulesByTest)) {
                 for (const rule of rulesByTest) {

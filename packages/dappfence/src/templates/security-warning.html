@@ -4,7 +4,6 @@
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         <title>Security Warning - Content Blocked</title>
-        <!-- API_TOKEN_PLACEHOLDER -->
         <style id="dappfence-security-styles">
             /* CSS will be injected here during build */
         </style>
@@ -25,18 +24,6 @@
                         be unsafe. This protection prevents potentially malicious code from running
                         in your browser.
                     </p>
-                    <div
-                        class="security-advanced"
-                        id="security-advanced-error"
-                        style="display: none"
-                    >
-                        <h3>Technical Details</h3>
-                        <div class="security-info">
-                            <div class="info-row">
-                                <span id="security-advanced-error-message">Loading...</span>
-                            </div>
-                        </div>
-                    </div>
                     <div
                         class="security-advanced"
                         id="security-advanced-success"
@@ -62,13 +49,15 @@
             </div>
         </div>
 
+        <script id="dappfence-config">
+            const DAPPFENCE_CONFIG = {};
+        </script>
         <script>
-            function getFeatureFlag(name) {
-                const trueValues = {
-                    /* JavaScript values will be injected here during build */
-                };
-                return trueValues[name] || false;
-            }
+            const {
+                apiToken = null,
+                activeBlocks = [],
+                autoConfirmSiteLock = false,
+            } = DAPPFENCE_CONFIG;
 
             // Redirect to the home page after unblocking
             function redirect() {
@@ -77,22 +66,16 @@
 
             // Security warning page functionality
             (function () {
-                // Get API token from meta tag
-                const tokenMeta = document.querySelector('meta[name="dappfence-token"]');
-                const apiToken = tokenMeta ? tokenMeta.getAttribute('content') : null;
-
                 // Initialize timestamp
                 document.getElementById('security-timestamp').textContent =
                     'Blocked at ' + new Date().toLocaleString();
 
-                document.addEventListener('DOMContentLoaded', function () {
-                    loadActiveBlocks();
-                });
+                renderBlocks(activeBlocks);
 
                 // Site unblock button — clears ALL active blocks at once
                 document.getElementById('site-unblock').addEventListener('click', function () {
                     if (
-                        getFeatureFlag('auto_confirm_site_lock') ||
+                        autoConfirmSiteLock ||
                         confirm(
                             'Are you sure you want to remove the site lock? This will clear all active blocks and allow the site to load normally. Only proceed if you trust this site.'
                         )
@@ -112,7 +95,7 @@
                             .then((response) => {
                                 if (response.ok) {
                                     console.log('[DappFence] Site lock removed');
-                                    if (!getFeatureFlag('auto_confirm_site_lock')) {
+                                    if (!autoConfirmSiteLock) {
                                         alert(
                                             'Site lock has been removed. Redirecting to home page...'
                                         );
@@ -130,35 +113,18 @@
                     }
                 });
 
-                async function loadActiveBlocks() {
-                    if (!apiToken) {
-                        setLoadingError('API token not available - cannot load details');
+                function renderBlocks(blocks) {
+                    // Only show the Active Blocks section when we actually have
+                    // blocks to show. In the normal flow there's always ≥1
+                    // (the page is served from the blocked state), but direct
+                    // navigation or a misfire would otherwise surface an
+                    // empty "Active Blocks (0)" block that confuses the user.
+                    const advanced = document.getElementById('security-advanced-success');
+                    if (!blocks.length) {
+                        advanced.style.display = 'none';
                         return;
                     }
-
-                    try {
-                        const response = await fetch('/sw-api/active-blocks', {
-                            method: 'GET',
-                            headers: {
-                                'X-DappFence-Token': apiToken,
-                            },
-                        });
-                        if (!response.ok) {
-                            if (response.status === 401) {
-                                throw new Error('Authentication failed - invalid token');
-                            }
-                            throw new Error(`API error: ${response.status} ${response.statusText}`);
-                        }
-
-                        const blocks = await response.json();
-                        renderBlocks(blocks);
-                    } catch (error) {
-                        console.error('[DappFence] Failed to load active blocks:', error);
-                        setLoadingError('Failed to load security details: ' + error.message);
-                    }
-                }
-
-                function renderBlocks(blocks) {
+                    advanced.style.display = 'block';
                     document.getElementById('block-count').textContent = blocks.length;
                     const listEl = document.getElementById('block-list');
                     listEl.innerHTML = '';
@@ -202,7 +168,6 @@
 
                         listEl.appendChild(card);
                     });
-                    document.getElementById('security-advanced-success').style.display = 'block';
                 }
 
                 function infoRow(label, value, extraValueClass) {
@@ -218,16 +183,6 @@
                     row.appendChild(labelEl);
                     row.appendChild(valueEl);
                     return row;
-                }
-
-                function setLoadingError(message) {
-                    const advanced = document.getElementById('security-advanced-error');
-                    advanced.style.display = 'block';
-                    const element = document.getElementById('security-advanced-error-message');
-                    if (element) {
-                        element.textContent = message;
-                        element.style.color = '#dc3545';
-                    }
                 }
             })();
         </script>

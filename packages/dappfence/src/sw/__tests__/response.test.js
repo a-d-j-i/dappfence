@@ -1,4 +1,13 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+
+// `isFeatureEnabled` reads the Vite-injected `__FEATURES__` define, which
+// isn't populated in the vitest runtime — stub it so `response.js`'s
+// module-load evaluation of the feature flag doesn't throw.
+vi.mock('../../core/utils.js', () => ({
+    isFeatureEnabled: vi.fn(() => false),
+}));
+
+import securityWarningHtml from '../../templates/security-warning.html?raw';
 import { createBlockResponse, createNavigationWarningResponse } from '../response.js';
 
 describe('createBlockResponse', () => {
@@ -46,6 +55,16 @@ describe('createNavigationWarningResponse', () => {
         const response = createNavigationWarningResponse();
         expect(response.status).toBe(302);
         expect(response.headers.get('Location')).toBe('/sw-api/security-warning');
+    });
+});
+
+describe('security-warning template', () => {
+    // `response.js` pre-slices the bundled template around this tag at module
+    // load. A rename or removal of the id would make `createSecurityPageResponse`
+    // render a warning page with an empty `DAPPFENCE_CONFIG` — this test fails
+    // fast at dev time instead.
+    it('contains the <script id="dappfence-config"> placeholder', () => {
+        expect(securityWarningHtml).toMatch(/<script id="dappfence-config">[\s\S]*?<\/script>/);
     });
 });
 

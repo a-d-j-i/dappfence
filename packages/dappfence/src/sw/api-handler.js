@@ -2,12 +2,8 @@
  * Service Worker API Handler Module
  * Handles internal API endpoints for trusted manifest control
  */
-// Import security warning templates using Vite's raw imports
-import securityWarningHtml from '../templates/security-warning.html?raw';
-import securityWarningCss from '../templates/security-warning.css?raw';
 import { createLogger } from '../core/logger.js';
-import { isFeatureEnabled } from '../core/utils.js';
-import { createRedirectResponse } from './response.js';
+import { createRedirectResponse, createSecurityPageResponse } from './response.js';
 import { API } from '../core/constants.js';
 
 const logger = createLogger();
@@ -32,24 +28,6 @@ export function createApiHandler({ onSecurityViolation, appStore }) {
             request.headers.get('X-DappFence-Token') ||
             new URL(request.url).searchParams.get('token');
         return providedToken === token;
-    }
-
-    /**
-     * Renders the security warning page by combining HTML template with CSS styles
-     * and injecting dynamic values like API token and feature flags.
-     * @returns {string} Complete HTML document with injected styles and configuration
-     */
-    function renderSecurityPage(tokenId) {
-        return securityWarningHtml
-            .replace('/* CSS will be injected here during build */', securityWarningCss)
-            .replace(
-                '<!-- API_TOKEN_PLACEHOLDER -->',
-                `<meta name="dappfence-token" content="${tokenId}">`
-            )
-            .replace(
-                '/* JavaScript values will be injected here during build */',
-                `"auto_confirm_site_lock": ${isFeatureEnabled('auto_confirm_site_lock')},`
-            );
     }
 
     async function handleStatus(_request) {
@@ -92,36 +70,11 @@ export function createApiHandler({ onSecurityViolation, appStore }) {
         }
         logger.log(`fetch api Broadcasting active block condition`);
         await onSecurityViolation();
-        const htmlWithStyles = renderSecurityPage(await apiTokenStore.getApiToken());
-        return new Response(htmlWithStyles, {
-            status: 200,
-            statusText: 'Security Warning',
-            headers: {
-                'Content-Type': 'text/html; charset=utf-8',
-                'Cache-Control': 'no-cache, no-store, must-revalidate',
-                'X-Frame-Options': 'DENY',
-                'Content-Security-Policy':
-                    "default-src 'unsafe-inline' 'self'; object-src 'none'; base-uri 'self';",
-            },
-        });
-    }
-
-    async function handleActiveBlocks(_request) {
-        const blocks = await activeBlocksStore.getActiveBlocks();
-        const responseData = blocks.map((block) => ({
-            ...block,
-            expectedHash: block.expectedHash || 'N/A',
-            actualHash: block.actualHash || 'N/A',
-            occurrenceCount: block.occurrenceCount || 1,
-            formattedTimestamp: new Date(block.timestamp).toLocaleString(),
-        }));
-        return new Response(JSON.stringify(responseData, null, 2), {
-            status: 200,
-            headers: {
-                'Content-Type': 'application/json',
-                'Cache-Control': 'no-cache, no-store, must-revalidate',
-            },
-        });
+        const [apiToken, activeBlocks] = await Promise.all([
+            apiTokenStore.getApiToken(),
+            activeBlocksStore.getActiveBlocks(),
+        ]);
+        return createSecurityPageResponse(apiToken, activeBlocks);
     }
 
     async function handleSiteUnblock(_request) {
@@ -149,7 +102,6 @@ export function createApiHandler({ onSecurityViolation, appStore }) {
         GET: {
             [API.STATUS]: { public: true, handler: handleStatus },
             [API.SECURITY_WARNING]: { public: true, handler: handleSecurityWarning },
-            [API.ACTIVE_BLOCKS]: { handler: handleActiveBlocks },
         },
         POST: {
             [API.SITE_UNBLOCK]: { handler: handleSiteUnblock },
