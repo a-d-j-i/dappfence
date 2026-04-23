@@ -60,7 +60,7 @@
                     }
                     await new Promise((resolve) => setTimeout(resolve, 100));
                 }
-                window.location.href = '/';
+                window.location.replace('/');
             }
 
             waitForDappfence().catch(console.error);

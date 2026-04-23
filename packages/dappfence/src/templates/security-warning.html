@@ -70,11 +70,6 @@
                 return trueValues[name] || false;
             }
 
-            // Redirect to the home page after unblocking
-            function redirect() {
-                window.location.href = '/';
-            }
-
             // Security warning page functionality
             (function () {
                 // Get API token from meta tag
@@ -117,7 +112,7 @@
                                             'Site lock has been removed. Redirecting to home page...'
                                         );
                                     }
-                                    redirect();
+                                    window.location.replace('/');
                                 } else {
                                     console.error('[DappFence] Unblock failed:', response.status);
                                     alert('Failed to remove site lock. Check console for details.');

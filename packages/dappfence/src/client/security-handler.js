@@ -10,37 +10,20 @@ export function setupSecurityMessageListener() {
 
 let redirectAttempted = false;
 /**
- * Handle security messages from a service worker
+ * Handle security messages from a service worker.
+ *
+ * Uses `location.replace` (not `location.href`) so the blocked URL is NOT
+ * added to history — pressing Back after dismissing the warning should not
+ * return the user to the tampered page.
  */
 function handleSecurityMessage(event) {
     const { data } = event;
-    if (data.type === MSG.SECURITY_BLOCK && !redirectAttempted) {
-        logger.error('Security violation detected');
-        redirectAttempted = true;
-        redirectToSecurityWarning(data.warningUrl).catch((error) => {
-            logger.error('Redirect failed:', error);
-        });
+    if (data?.type !== MSG.SECURITY_BLOCK || redirectAttempted) {
+        return;
     }
-}
-
-/**
- * Redirect to security warning page
- */
-async function redirectToSecurityWarning(warningUrl) {
-    try {
-        logger.log('Redirecting to security warning:', warningUrl);
-        window.location.href = warningUrl;
-    } catch (error) {
-        logger.error('Failed to redirect to security warning:', error);
-
-        // Fallback: try to open in a new tab
-        try {
-            window.open(warningUrl, '_blank');
-        } catch (fallbackError) {
-            logger.error('Fallback redirect also failed:', fallbackError);
-            alert('Security violation detected. Please navigate to: ' + warningUrl);
-        }
-    }
+    logger.error('Security violation detected');
+    redirectAttempted = true;
+    window.location.replace(data.warningUrl);
 }
 
 /**
