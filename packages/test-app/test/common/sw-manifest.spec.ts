@@ -21,3 +21,14 @@ test('should block navigation when integrity-manifest.json is tampered', async (
     await page.getByRole('button', { name: 'Remove Site Lock' }).click();
     await expect(page).toHaveTitle('DappFence - Manifest Mode Example');
 });
+
+test('should block navigation when integrity-manifest.json is tampered and empty', async ({
+    page,
+    swHelper,
+}) => {
+    // if the manifest is not a valid json we will throw, we need to capture that.
+    await swHelper.interceptAndModifyPageContent('**/integrity-manifest.json', 'empty');
+    // We found a bug, so we have this test to confirm and avoid regresions
+    await page.goto('');
+    await page.waitForURL(/.*\/sw-api/);
+});

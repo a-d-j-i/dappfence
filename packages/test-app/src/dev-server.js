@@ -63,6 +63,9 @@ const INTERCEPT_FORMULAS = {
         }
         return ' ' + data;
     },
+    empty: () => {
+        return '';
+    },
     replace: (data, testParams, filePath, pattern, args) => {
         const replacement = path.join(PROJECT_ROOT, testParams.app, args);
         if (fs.existsSync(replacement) && fs.statSync(replacement).isFile()) {
