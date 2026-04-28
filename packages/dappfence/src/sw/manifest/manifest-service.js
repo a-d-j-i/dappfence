@@ -44,44 +44,56 @@ export const createManifestService = ({ swContext, appStore, config }) => {
     const loadManifestFromUrl = async () => {
         const { manifestUrl, manifestSignatureType, manifestSignatureIdentity } = config;
         logger.log(`Loading manifest from ${manifestUrl}`);
+        try {
+            const response = await swContext.fetch(manifestUrl, {
+                cache: 'no-cache',
+                headers: { 'x-dappfence': 'manifest-load' },
+            });
 
-        const response = await swContext.fetch(manifestUrl, {
-            cache: 'no-cache',
-            headers: { 'x-dappfence': 'manifest-load' },
-        });
+            if (!response.ok) {
+                logger.error(
+                    `Failed to load manifest: ${response?.status} ${response?.statusText}`
+                );
+                return {
+                    status: VERIFICATION_STATUS.ERROR,
+                    fileKey: getFileKey(manifestUrl, swContext.getLocationHref()),
+                    url: manifestUrl,
+                    actualHash: 'N/A',
+                    expectedHash: 'N/A',
+                };
+            }
 
-        if (!response.ok) {
-            logger.error(`Failed to load manifest: ${response?.status} ${response?.statusText}`);
-            return {
-                status: VERIFICATION_STATUS.ERROR,
-                fileKey: getFileKey(manifestUrl, swContext.getLocationHref()),
-                url: manifestUrl,
-                actualHash: 'N/A',
-                expectedHash: 'N/A',
-            };
+            const json = await response.json();
+            const signatureResult = verifyManifestSignature(
+                manifestSignatureType,
+                manifestSignatureIdentity,
+                json
+            );
+            if (signatureResult.status !== VERIFICATION_STATUS.MATCH) {
+                return {
+                    ...signatureResult,
+                    assetType: ASSET_TYPE.MANIFEST,
+                    fileKey: getFileKey(manifestUrl, swContext.getLocationHref()),
+                    url: manifestUrl,
+                    actualHash: signatureResult.actualHash || 'N/A',
+                    expectedHash: signatureResult.expectedHash || 'ERROR',
+                };
+            }
+
+            const manifest = normalizeManifestData(signatureResult.payload);
+            logger.log(`Loaded manifest with ${Object.keys(manifest.files).length} entries`);
+            const appVersion = await setTrustedManifestFromData(manifest);
+            return { status: VERIFICATION_STATUS.MATCH, manifest, appVersion };
+        } catch (error) {
+            logger.error('Error loading manifest:', error);
         }
-
-        const json = await response.json();
-        const signatureResult = verifyManifestSignature(
-            manifestSignatureType,
-            manifestSignatureIdentity,
-            json
-        );
-        if (signatureResult.status !== VERIFICATION_STATUS.MATCH) {
-            return {
-                ...signatureResult,
-                assetType: ASSET_TYPE.MANIFEST,
-                fileKey: getFileKey(manifestUrl, swContext.getLocationHref()),
-                url: manifestUrl,
-                actualHash: signatureResult.actualHash || 'N/A',
-                expectedHash: signatureResult.expectedHash || 'ERROR',
-            };
-        }
-
-        const manifest = normalizeManifestData(signatureResult.payload);
-        logger.log(`Loaded manifest with ${Object.keys(manifest.files).length} entries`);
-        const appVersion = await setTrustedManifestFromData(manifest);
-        return { status: VERIFICATION_STATUS.MATCH, manifest, appVersion };
+        return {
+            status: VERIFICATION_STATUS.ERROR,
+            fileKey: getFileKey(manifestUrl, swContext.getLocationHref()),
+            url: manifestUrl,
+            actualHash: 'N/A',
+            expectedHash: 'N/A',
+        };
     };
 
     const fetchAndStoreManifest = () => singleFlight(loadManifestFromUrl);

@@ -36,7 +36,8 @@ export type ServiceWorkerWithClose = {
 };
 export type InterceptPattern =
     | { pattern: string; formula?: 'default'; args?: never }
-    | { pattern: string; formula: 'replace'; args: string };
+    | { pattern: string; formula: 'replace'; args: string }
+    | { pattern: string; formula: 'empty'; args: string };
 
 export type ServerTestParameters = {
     appName?: string;
@@ -66,7 +67,7 @@ export type SWHelper = {
     waitForServiceWorkerMessage: (msg: string) => Promise<Worker>;
     interceptAndModifyPageContent: (
         pattern: string | InterceptPattern | InterceptPattern[],
-        formula?: 'default' | 'replace',
+        formula?: 'default' | 'replace' | 'empty',
         args?: string
     ) => Promise<void>;
     clearIntercept(): Promise<void>;
@@ -323,12 +324,12 @@ async function swHelper(
         },
         interceptAndModifyPageContent: async (
             pattern: string | InterceptPattern | InterceptPattern[],
-            formula?: 'default' | 'replace',
+            formula?: 'default' | 'replace' | 'empty',
             args?: string
         ) => {
             const intercept: InterceptPattern | InterceptPattern[] =
                 typeof pattern === 'string'
-                    ? formula === 'replace'
+                    ? formula === 'replace' || formula === 'empty'
                         ? { pattern, formula, args: args! }
                         : { pattern, formula }
                     : pattern;
