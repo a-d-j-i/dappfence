@@ -95,12 +95,12 @@
                         .then((response) => {
                             if (response.ok) {
                                 console.log('[DappFence] Site lock removed');
-                                    if (!autoConfirmSiteLock) {
+                                if (!autoConfirmSiteLock) {
                                     alert(
                                         'Site lock has been removed. Redirecting to home page...'
                                     );
                                 }
-                                    window.location.replace('/');
+                                window.location.replace('/');
                             } else {
                                 console.error('[DappFence] Unblock failed:', response.status);
                                 alert('Failed to remove site lock. Check console for details.');
