@@ -6,6 +6,7 @@
 import { calculateHash } from '../../core/crypto.js';
 import {
     ASSET_TYPE,
+    DEFAULT_SECURITY_CONTENT_TYPES,
     DEFAULT_SECURITY_EXTENSIONS,
     MODE,
     VERIFICATION_STATUS,
@@ -102,15 +103,15 @@ export const createManifestService = ({ swContext, appStore, config }) => {
      * clients running different apps could verify against each other's
      * manifest — fine for single-app deploys, wrong once pinning is on.
      */
-    const verifyFileWithContext = async (url, isNavigation, response, extensions) => {
+    const verifyFileWithContext = async (url, isNavigation, response, extensions, contentTypes) => {
         const fileKey = getFileKey(url, swContext.getLocationHref());
         // Skip-or-verify decision lives here, not at the caller — the caller
         // would have to make the same call with the same inputs (URL +
         // navigation flag + response headers) plus the manifest's extension
-        // list, which it doesn't have direct access to. Pass the resolved
-        // fileKey rather than the raw URL: importScripts hands us relative
-        // URLs that `new URL(url)` can't parse standalone.
-        if (!shouldVerifyAsset(fileKey, isNavigation, response, extensions)) {
+        // and content-type lists, which it doesn't have direct access to.
+        // Pass the resolved fileKey rather than the raw URL: importScripts
+        // hands us relative URLs that `new URL(url)` can't parse standalone.
+        if (!shouldVerifyAsset(fileKey, isNavigation, response, extensions, contentTypes)) {
             logger.log(`⏭️  Skipping verification: ${fileKey}`);
             return { status: VERIFICATION_STATUS.SKIPPED, fileKey };
         }
@@ -149,8 +150,8 @@ export const createManifestService = ({ swContext, appStore, config }) => {
      * Loads the current trusted manifest once and returns a view with
      * `mode` and `verifyFile` so downstream consumers don't each re-read
      * IndexedDB. The skip-or-verify decision is folded into `verifyFile`
-     * (returns SKIPPED for non-applicable assets) so the caller doesn't
-     * carry per-asset policy.
+     * (returns SKIPPED for non-applicable assets), so the caller doesn't
+     * carry a per-asset policy.
      *
      * `clientId` and `isNavigation` are accepted for forward compatibility
      * with per-client manifest pinning — the current implementation still
@@ -179,13 +180,15 @@ export const createManifestService = ({ swContext, appStore, config }) => {
             (isFeatureEnabled('default-to-protected-mode') ? MODE.PROTECTED : MODE.REPORTING);
         const extensions =
             latestManifest?.manifest?.metadata?.extensions || DEFAULT_SECURITY_EXTENSIONS;
+        const contentTypes =
+            latestManifest?.manifest?.metadata?.contentTypes || DEFAULT_SECURITY_CONTENT_TYPES;
         logger.log(
-            `Resolved manifest ${latestManifest?.appVersion} with mode ${mode} and extensions ${extensions.join(', ')}`
+            `Resolved manifest ${latestManifest?.appVersion} with mode ${mode}, extensions [${extensions.join(', ')}], content-types [${contentTypes.join(', ')}]`
         );
         return {
             mode,
             verifyFile: (url, response) =>
-                verifyFileWithContext(url, isNavigation, response, extensions),
+                verifyFileWithContext(url, isNavigation, response, extensions, contentTypes),
         };
     };
 

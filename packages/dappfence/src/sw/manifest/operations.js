@@ -153,28 +153,40 @@ export const getFileKey = (url, baseUrl) => {
  * callers reach this function with already-resolved keys (importScripts may
  * pass relative URLs that `new URL(url)` couldn't parse standalone).
  *
- * `response` is accepted so future content-type / MIME policy can branch
- * here (e.g. skip non-text bodies, or require a specific MIME for `.js`).
- * Today it is unused — the predicate is path/extension-based only.
+ * Verification triggers if EITHER the file extension matches the manifest's
+ * extension allowlist OR the response Content-Type matches the manifest's
+ * MIME allowlist. The OR catches extensionless URLs that still serve
+ * security-critical content (e.g. `/api/config` returning JSON).
  *
  * @param {string} fileKey - Resolved manifest key (pathname or absolute URL)
  * @param {boolean} isNavigation - Whether this is a navigation request
- * @param {Response} response - The fetched response (headers reachable via response.headers)
+ * @param {Response} response - The fetched response (Content-Type read from headers)
  * @param {string[]} extensions - the manifest metadata extensions or default extensions
+ * @param {string[]} contentTypes - the manifest metadata content types or default content types
  * @returns {boolean} true if the asset should be verified against the manifest
  */
-
-export const shouldVerifyAsset = (fileKey, isNavigation, response, extensions) => {
+export const shouldVerifyAsset = (fileKey, isNavigation, response, extensions, contentTypes) => {
     if (isNavigation) {
         logger.log(`Asset check for ${fileKey}: Navigation request`);
         return true;
     }
     const lowerKey = fileKey.toLowerCase();
-    const ret = extensions.some((ext) => lowerKey.endsWith(ext.toLowerCase()));
+    if (extensions.some((ext) => lowerKey.endsWith(ext.toLowerCase()))) {
+        logger.log(`Asset check for ${fileKey}: extension match`);
+        return true;
+    }
+    // Strip parameters off the Content-Type (e.g. `; charset=utf-8`) before
+    // matching — the manifest list stores bare MIME types.
+    const rawType = response?.headers?.get?.('content-type') || '';
+    const mime = rawType.split(';')[0].trim().toLowerCase();
+    if (mime && contentTypes.some((ct) => ct.toLowerCase() === mime)) {
+        logger.log(`Asset check for ${fileKey}: content-type match (${mime})`);
+        return true;
+    }
     logger.log(
-        `Asset check for ${fileKey}, ${ret ? 'found' : 'not found'} in extensions ${extensions}`
+        `Asset check for ${fileKey}: no extension or content-type match (mime=${mime || 'none'})`
     );
-    return ret;
+    return false;
 };
 
 /**
@@ -182,7 +194,7 @@ export const shouldVerifyAsset = (fileKey, isNavigation, response, extensions) =
  * @param {string} manifestSignatureType - Signature algorithm identifier
  * @param {string} manifestSignatureIdentity - Expected signer address
  * @param {object} manifestData - Manifest with .pay (payload) and .sig (signature)
- * @returns {{ status: string, payload?: object, expectedHash?: string, actualHash?: string }}
+ * @returns {{ status: Readonly<{description: string, isViolation: boolean}>, payload?: object, expectedHash?: string, actualHash?: string }}
  */
 export const verifyManifestSignature = (
     manifestSignatureType,

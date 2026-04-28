@@ -1,8 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import { shouldVerifyAsset } from '../manifest/operations.js';
-import { DEFAULT_SECURITY_EXTENSIONS, VERIFICATION_STATUS } from '../../core/constants.js';
+import {
+    DEFAULT_SECURITY_CONTENT_TYPES,
+    DEFAULT_SECURITY_EXTENSIONS,
+    VERIFICATION_STATUS,
+} from '../../core/constants.js';
 
-const RESPONSE = new Response('');
+const EMPTY_RESPONSE = new Response('');
+const responseWithType = (mime) => new Response('', { headers: { 'content-type': mime } });
 
 describe('VERIFICATION_STATUS', () => {
     it('exposes a description and isViolation flag for each verdict', () => {
@@ -24,8 +29,9 @@ describe('shouldVerifyAsset', () => {
             shouldVerifyAsset(
                 'https://example.com/image.png',
                 true,
-                RESPONSE,
-                DEFAULT_SECURITY_EXTENSIONS
+                EMPTY_RESPONSE,
+                DEFAULT_SECURITY_EXTENSIONS,
+                DEFAULT_SECURITY_CONTENT_TYPES
             )
         ).toBe(true);
     });
@@ -35,8 +41,9 @@ describe('shouldVerifyAsset', () => {
             shouldVerifyAsset(
                 'https://example.com/app.js',
                 false,
-                RESPONSE,
-                DEFAULT_SECURITY_EXTENSIONS
+                EMPTY_RESPONSE,
+                DEFAULT_SECURITY_EXTENSIONS,
+                DEFAULT_SECURITY_CONTENT_TYPES
             )
         ).toBe(true);
     });
@@ -46,8 +53,9 @@ describe('shouldVerifyAsset', () => {
             shouldVerifyAsset(
                 'https://example.com/style.css',
                 false,
-                RESPONSE,
-                DEFAULT_SECURITY_EXTENSIONS
+                EMPTY_RESPONSE,
+                DEFAULT_SECURITY_EXTENSIONS,
+                DEFAULT_SECURITY_CONTENT_TYPES
             )
         ).toBe(true);
     });
@@ -57,44 +65,59 @@ describe('shouldVerifyAsset', () => {
             shouldVerifyAsset(
                 'https://example.com/page.html',
                 false,
-                RESPONSE,
-                DEFAULT_SECURITY_EXTENSIONS
+                EMPTY_RESPONSE,
+                DEFAULT_SECURITY_EXTENSIONS,
+                DEFAULT_SECURITY_CONTENT_TYPES
             )
         ).toBe(true);
     });
 
-    it('does not verify images with default extensions', () => {
+    it('does not verify images with default extensions and a non-text content-type', () => {
         expect(
             shouldVerifyAsset(
                 'https://example.com/logo.png',
                 false,
-                RESPONSE,
-                DEFAULT_SECURITY_EXTENSIONS
+                responseWithType('image/png'),
+                DEFAULT_SECURITY_EXTENSIONS,
+                DEFAULT_SECURITY_CONTENT_TYPES
             )
         ).toBe(false);
     });
 
-    it('does not verify fonts with default extensions', () => {
+    it('does not verify fonts with default extensions and a non-text content-type', () => {
         expect(
             shouldVerifyAsset(
                 'https://example.com/font.woff2',
                 false,
-                RESPONSE,
-                DEFAULT_SECURITY_EXTENSIONS
+                responseWithType('font/woff2'),
+                DEFAULT_SECURITY_EXTENSIONS,
+                DEFAULT_SECURITY_CONTENT_TYPES
             )
         ).toBe(false);
     });
 
     it('matches files against the provided extensions list', () => {
         expect(
-            shouldVerifyAsset('https://example.com/module.wasm', false, RESPONSE, ['.wasm', '.js'])
+            shouldVerifyAsset(
+                'https://example.com/module.wasm',
+                false,
+                EMPTY_RESPONSE,
+                ['.wasm', '.js'],
+                []
+            )
         ).toBe(true);
     });
 
-    it('rejects files not in the provided extensions list', () => {
-        expect(shouldVerifyAsset('https://example.com/app.js', false, RESPONSE, ['.wasm'])).toBe(
-            false
-        );
+    it('rejects files not in the provided extensions or content-type lists', () => {
+        expect(
+            shouldVerifyAsset(
+                'https://example.com/app.js',
+                false,
+                EMPTY_RESPONSE,
+                ['.wasm'],
+                ['image/png']
+            )
+        ).toBe(false);
     });
 
     it('verifies .json with default extensions', () => {
@@ -102,9 +125,70 @@ describe('shouldVerifyAsset', () => {
             shouldVerifyAsset(
                 'https://example.com/app.json',
                 false,
-                RESPONSE,
-                DEFAULT_SECURITY_EXTENSIONS
+                EMPTY_RESPONSE,
+                DEFAULT_SECURITY_EXTENSIONS,
+                DEFAULT_SECURITY_CONTENT_TYPES
             )
         ).toBe(true);
+    });
+
+    it('verifies extensionless URLs when content-type is in the list', () => {
+        expect(
+            shouldVerifyAsset(
+                'https://example.com/api/config',
+                false,
+                responseWithType('application/json'),
+                [],
+                ['application/json']
+            )
+        ).toBe(true);
+    });
+
+    it('strips charset parameters from content-type before matching', () => {
+        expect(
+            shouldVerifyAsset(
+                'https://example.com/api/config',
+                false,
+                responseWithType('application/json; charset=utf-8'),
+                [],
+                ['application/json']
+            )
+        ).toBe(true);
+    });
+
+    it('matches content-type case-insensitively', () => {
+        expect(
+            shouldVerifyAsset(
+                'https://example.com/api/config',
+                false,
+                responseWithType('Application/JSON'),
+                [],
+                ['application/json']
+            )
+        ).toBe(true);
+    });
+
+    it('does not verify when neither extension nor content-type matches', () => {
+        expect(
+            shouldVerifyAsset(
+                'https://example.com/data.bin',
+                false,
+                responseWithType('application/octet-stream'),
+                DEFAULT_SECURITY_EXTENSIONS,
+                DEFAULT_SECURITY_CONTENT_TYPES
+            )
+        ).toBe(false);
+    });
+
+    it('falls through when content-type header is missing', () => {
+        expect(
+            shouldVerifyAsset(
+                'https://example.com/extensionless',
+                false,
+                EMPTY_RESPONSE,
+                ['.js'],
+                ['application/json']
+            )
+        ).toBe(false);
     });
 });
