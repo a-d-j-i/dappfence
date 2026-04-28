@@ -41,7 +41,20 @@ import { expect, test } from '../sw-fixtures';
 
         test('should block navigation when index.html is tampered', async ({ page, swHelper }) => {
             await swHelper.interceptAndModifyPageContent('**/');
+            await page.goto('about:blank');
             await page.goto('');
+            await page.waitForURL(/.*\/sw-api/);
+        });
+
+        test('should block fast when index.html is tampered with client already loaded', async ({
+            page,
+            swHelper,
+            baseURL,
+        }) => {
+            await swHelper.interceptAndModifyPageContent('**/');
+            await expect(page.goto('')).rejects.toThrow(
+                'page.goto: net::ERR_ABORTED at ' + baseURL
+            );
             await page.waitForURL(/.*\/sw-api/);
         });
 

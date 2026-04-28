@@ -1,6 +1,7 @@
 import { ASSET_TYPE, VERIFICATION_STATUS } from './verification-helpers.js';
 import { recoverEthereumAddress, recoverPersonalSign, sriToHex } from '../../core/crypto.js';
 import { createLogger } from '../../core/logger.js';
+import { isFeatureEnabled } from '../../core/utils.js';
 
 const logger = createLogger();
 
@@ -17,55 +18,36 @@ const MANIFEST_SIGNATURE_TYPES = {
  * @param {object} trustedManifest - Manifest with a .files map of fileKey → hash
  * @param {string} fileKey - The file key to look up
  * @param {string} actualHash - The hash of the file content
- * @param {boolean} searchByHash - If true, also search by hash value across all files
  * @returns {object} Verification result with status, fileKey, expectedHash, actualHash
  */
-export const verifyFileHash = (trustedManifest, fileKey, actualHash, searchByHash) => {
-    logger.log(
-        `verifyFileHash, file: ${fileKey}, hash: ${actualHash}, searchByHash: ${searchByHash}`
-    );
-    if (searchByHash) {
-        // TODO: Build the right structure in trustedManifest to avoid iterating over all files
-        for (const hash of Object.values(trustedManifest.files)) {
-            if (hash === actualHash) {
-                logger.log(
-                    `verifyFileHash, file: ${fileKey}, hash: ${actualHash} matched hash for navigation request`
-                );
-                return {
-                    status: VERIFICATION_STATUS.MATCH,
-                    fileKey,
-                    expectedHash: hash,
-                    actualHash,
-                    timestamp: new Date().toISOString(),
-                };
-            }
+export const verifyFileHash = (trustedManifest, fileKey, actualHash) => {
+    logger.log(`verifyFileHash, file: ${fileKey}, hash: ${actualHash}`);
+    // TODO: Build the right structure in trustedManifest to avoid iterating over all files
+    for (const hash of Object.values(trustedManifest.files)) {
+        if (hash === actualHash) {
+            return {
+                status: VERIFICATION_STATUS.MATCH,
+                fileKey,
+                expectedHash: hash,
+                actualHash,
+                timestamp: new Date().toISOString(),
+            };
         }
     }
-    const trustedEntry = trustedManifest.files[fileKey];
-    if (!trustedEntry) {
-        logger.log(
-            `verifyFileHash, file: ${fileKey}, hash: ${actualHash} not found in trusted manifest`
-        );
-        return {
-            status: VERIFICATION_STATUS.NOT_FOUND_IN_MANIFEST,
-            fileKey,
-            expectedHash: null,
-            actualHash,
-            timestamp: new Date().toISOString(),
-        };
-    }
-
-    const expectedHash = trustedEntry; // Always a string now
-    const status =
-        actualHash === expectedHash ? VERIFICATION_STATUS.MATCH : VERIFICATION_STATUS.MISMATCH;
-
+    // No content match anywhere in the manifest. Discriminate "known URL,
+    // hash diverged" (MISMATCH) from "URL we've never seen" (NOT_FOUND) so
+    // telemetry can tell tampering apart from unknown content.
+    const expectedHash = trustedManifest.files[fileKey];
+    const status = expectedHash
+        ? VERIFICATION_STATUS.MISMATCH
+        : VERIFICATION_STATUS.NOT_FOUND_IN_MANIFEST;
     logger.log(
-        `verifyFileHash, file: ${fileKey}, hash: ${actualHash}, expectedHash: ${expectedHash}, status: ${status}`
+        `verifyFileHash, file: ${fileKey}, hash: ${actualHash}, expectedHash: ${expectedHash ?? 'N/A'}, status: ${status}`
     );
     return {
-        status: status,
+        status,
         fileKey,
-        expectedHash,
+        expectedHash: expectedHash ?? null,
         actualHash,
         timestamp: new Date().toISOString(),
     };
@@ -244,24 +226,31 @@ export const verifyManifestSignature = (
  * @param {object} deps.swContext
  * @param {object} deps.manifestService
  * @param {string} url
- * @param {boolean} searchByHash
  * @returns {Promise<object>} Result with status, fileKey, expectedHash, actualHash, timestamp
  */
-export async function verifyLocation({ swContext, manifestService }, url, searchByHash) {
-    const response = await swContext.fetch(url, {
-        headers: { 'x-dappfence': 'sw-verification' },
-    });
-    if (!response.ok) {
-        logger.error(`Failed to fetch ${url}: ${response.status} ${response.statusText}`);
-        return {
-            status: VERIFICATION_STATUS.ERROR,
+export async function verifyLocation({ swContext, manifestService }, url) {
+    try {
+        const response = await swContext.fetch(
             url,
-            expectedHash: null,
-            actualHash: null,
-            timestamp: new Date().toISOString(),
-        };
+            isFeatureEnabled('mark_request')
+                ? { headers: { 'x-dappfence': 'sw-verification' } }
+                : {}
+        );
+        if (response && response.ok) {
+            const ctx = await manifestService.resolveManifest();
+            return await ctx.verifyFile(url, await response.text());
+        }
+        logger.error(`Failed to fetch ${url}: ${response.status} ${response.statusText}`);
+    } catch (error) {
+        logger.error(`Error verifying ${url}:`, error);
     }
-    return await manifestService.verifyFile(url, await response.text(), searchByHash);
+    return {
+        status: VERIFICATION_STATUS.ERROR,
+        url,
+        expectedHash: null,
+        actualHash: null,
+        timestamp: new Date().toISOString(),
+    };
 }
 
 /**
@@ -273,7 +262,7 @@ export async function verifyLocation({ swContext, manifestService }, url, search
  * @param {string} scriptPath
  */
 export async function verifyImportedScript(deps, scriptPath) {
-    const verificationResult = await verifyLocation(deps, scriptPath, false);
+    const verificationResult = await verifyLocation(deps, scriptPath);
     if (verificationResult.status !== VERIFICATION_STATUS.MATCH) {
         await deps.appStore.recordSecurityViolation({
             ...verificationResult,

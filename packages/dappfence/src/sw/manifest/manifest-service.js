@@ -4,6 +4,7 @@
  */
 
 import { calculateHash } from '../../core/crypto.js';
+import { MODE } from '../../core/constants.js';
 import { createSingleFlight, hasConfigManifest } from '../../core/utils.js';
 import {
     getFileKey,
@@ -15,6 +16,7 @@ import {
 import {
     ASSET_TYPE,
     createSyntheticAppVersion,
+    shouldVerifyAsset,
     VERIFICATION_STATUS,
 } from './verification-helpers.js';
 import { createLogger } from '../../core/logger.js';
@@ -140,42 +142,46 @@ export const createManifestService = ({ swContext, appStore, config }) => {
         return await identifyAppFromFile(trustedManifestStore, fileKey, fileHash);
     };
 
-    const verifyFile = async (url, content, searchByHash) => {
+    /**
+     * Verify a file against a (possibly pre-resolved) manifest. When
+     * `manifest` is undefined, runs the cold-start path: identify the app
+     * from a stored manifest by file hash, or fetch a fresh one. Once a
+     * manifest is in hand, hashes the content and checks against it; on
+     * mismatch, refetches once in case an in-flight manifest update has
+     * landed (skipped if we just fetched a fresh manifest above).
+     */
+
+    const verifyFileWithContext = async ({ appVersion, manifest }, url, isNavigation, content) => {
         const fileKey = getFileKey(url, swContext.getLocationHref());
         const fileHash = await calculateHash(new TextEncoder().encode(content));
         logger.log(`Verifying file: ${fileKey} (${fileHash.substring(0, 12)}...)`);
 
-        let latestManifest;
-        let appVersion = await getAppVersion();
-        if (!appVersion) {
+        let freshlyFetched = false;
+        if (!manifest) {
             appVersion = await tryIdentifyApp(fileKey, fileHash);
-
             if (appVersion) {
                 await setAppVersion(appVersion);
+                manifest = await trustedManifestStore.get(appVersion);
                 logger.log(`Identified existing app from file: ${appVersion}`);
             } else {
                 const violationOrManifest = await fetchAndStoreManifest();
                 if (violationOrManifest.status !== VERIFICATION_STATUS.MATCH) {
                     return violationOrManifest;
                 }
-                latestManifest = violationOrManifest.manifest;
                 appVersion = violationOrManifest.appVersion;
+                manifest = violationOrManifest.manifest;
+                freshlyFetched = true;
             }
         }
 
-        const trustedManifest = await trustedManifestStore.get(appVersion);
-
-        let result = verifyFileHash(trustedManifest, fileKey, fileHash, searchByHash);
-        if (result.status !== VERIFICATION_STATUS.MATCH) {
-            logger.log(`Verification failed for ${fileKey} - ${result.status}`);
-            if (!latestManifest) {
-                const violationOrManifest = await fetchAndStoreManifest();
-                if (violationOrManifest.status !== VERIFICATION_STATUS.MATCH) {
-                    return violationOrManifest;
-                }
-                latestManifest = violationOrManifest.manifest;
-                result = verifyFileHash(latestManifest, fileKey, fileHash, searchByHash);
+        let result = verifyFileHash(manifest, fileKey, fileHash);
+        if (result.status !== VERIFICATION_STATUS.MATCH && !freshlyFetched) {
+            logger.log(`Verification failed for ${fileKey} - ${result.status}, refetching`);
+            const violationOrManifest = await fetchAndStoreManifest();
+            if (violationOrManifest.status !== VERIFICATION_STATUS.MATCH) {
+                return violationOrManifest;
             }
+            result = verifyFileHash(violationOrManifest.manifest, fileKey, fileHash);
         }
         await verificationResultsStore.add(appVersion, result);
 
@@ -185,8 +191,40 @@ export const createManifestService = ({ swContext, appStore, config }) => {
         return result;
     };
 
+    /**
+     * Resolve the manifest context for a single request/operation.
+     * Loads the current trusted manifest once and returns a view with
+     * `mode`, `shouldVerify`, and `verifyFile` so downstream consumers
+     * don't each re-read IndexedDB.
+     *
+     * `clientId` and `isNavigation` are accepted for forward compatibility
+     * with per-client manifest pinning — the current implementation still
+     * resolves the global manifest. Pass `{}` (or nothing) for operations
+     * outside the fetch pipeline such as importScripts.
+     */
+    // eslint-disable-next-line no-unused-vars
+    const resolveManifest = async ({ clientId, isNavigation } = {}) => {
+        // TODO: We will use the latest manifest for the configuration, but for the files we keep a list of manifests
+        // TODO: that we search by hash first.
+        const appVersion = await appVersionStore.get();
+        const latestManifest = appVersion ? await trustedManifestStore.get(appVersion) : undefined;
+
+        return {
+            // TODO: read mode from manifest.policy once that field is defined.
+            mode: MODE.PROTECTED,
+            shouldVerify: (url) => shouldVerifyAsset(url, isNavigation, latestManifest),
+            verifyFile: (url, content) =>
+                verifyFileWithContext(
+                    { appVersion, manifest: latestManifest },
+                    url,
+                    isNavigation,
+                    content
+                ),
+        };
+    };
+
     return {
         initializeManifest,
-        verifyFile,
+        resolveManifest,
     };
 };

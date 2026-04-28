@@ -136,9 +136,9 @@ pure functions: `createVerificationResult`, `createSyntheticAppVersion`, `should
 
 **`manifest/manifest-service.js`** is the stateful manifest lifecycle manager. Contains
 `loadManifestFromUrl` (fetch + signature verification + normalization + storage) as a private
-function with single-flight deduplication. Exposes `verifyFile(url, content, searchByHash)` which
-computes hashes and orchestrates verification with retry. Returns results with a `status` field
-(`MATCH`, `MISMATCH`, `NOT_FOUND_IN_MANIFEST`, `VERIFICATION_ERROR`).
+function with single-flight deduplication. Exposes `verifyFile(url, content)` which computes hashes
+and orchestrates verification with retry. Returns results with a `status` field (`MATCH`,
+`MISMATCH`, `NOT_FOUND_IN_MANIFEST`, `VERIFICATION_ERROR`).
 
 ### Storage
 

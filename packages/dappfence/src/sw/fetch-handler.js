@@ -3,14 +3,11 @@
  * Orchestrates security checks and app service worker integration
  */
 
-import { createBlockResponse, createNavigationWarningResponse } from './response.js';
+import { createBlockResponse } from './response.js';
 import { createLogger } from '../core/logger.js';
-import { API_PREFIX } from '../core/constants.js';
-import {
-    ASSET_TYPE,
-    shouldVerifyAsset,
-    VERIFICATION_STATUS,
-} from './manifest/verification-helpers.js';
+import { API_PREFIX, MODE } from '../core/constants.js';
+import { ASSET_TYPE, VERIFICATION_STATUS } from './manifest/verification-helpers.js';
+import { isFeatureEnabled } from '../core/utils.js';
 
 const logger = createLogger();
 
@@ -29,8 +26,9 @@ export function createSecurityFetchHandler({
     appStore,
     handleApiEndpoint,
 }) {
-    const { activeBlocksStore, appVersionStore, trustedManifestStore } = appStore;
+    const { activeBlocksStore } = appStore;
     const locationOrigin = swContext.getLocationOrigin();
+    const locationHref = swContext.getLocationHref();
 
     /**
      * Add DappFence tracking markers to the request.
@@ -143,21 +141,18 @@ export function createSecurityFetchHandler({
     }
 
     /**
-     * Process any security-critical asset (JS, CSS, JSON, HTML, SVG)
+     * Verify the integrity of security-critical asset (JS, CSS, JSON, HTML, SVG)
+     * using a pre-resolved manifest context so we don't re-read IndexedDB.
      */
-    async function processSecurityAsset(request, isNavigation, response) {
-        logger.log('Processing security-critical asset:', request.url);
+    async function verifyAssetIntegrity(ctx, request, response) {
+        logger.log('Verifying security-critical asset:', request.url);
 
         // Get file content for verification
         const assetClone = response.clone();
         const assetContent = await assetClone.text();
 
         // Verification mode: check against trusted manifest
-        const verificationResult = await manifestService.verifyFile(
-            request.url,
-            assetContent,
-            true
-        );
+        const verificationResult = await ctx.verifyFile(request.url, assetContent);
         if (verificationResult && verificationResult.status !== VERIFICATION_STATUS.MATCH) {
             const blockDetails = {
                 ...verificationResult,
@@ -166,51 +161,55 @@ export function createSecurityFetchHandler({
             };
 
             // File hash mismatch - SECURITY VIOLATION
-            const mustBlock = await appStore.recordSecurityViolation(blockDetails);
-            if (mustBlock) {
-                if (!isNavigation) {
-                    await onSecurityViolation();
-                }
-                return createBlockResponse(isNavigation, request.url, swContext.getLocationHref());
-            }
+            return await appStore.recordSecurityViolation(blockDetails);
         }
-        return response;
+        return false;
     }
 
     return async (event, callChildHandlers) => {
         const originalRequest = event.request;
         try {
             const url = new URL(originalRequest.url);
+            const isNavigation = originalRequest.mode === 'navigate';
+            const clientId = isNavigation ? event.resultingClientId : event.clientId;
 
             // Log all fetch requests for debugging
-            logger.log(`%cFetch: ${originalRequest.method} ${originalRequest.url}`, 'color:cyan');
+            logger.log(
+                `%cFetch: ${originalRequest.method} ${originalRequest.url} ${isNavigation ? 'isNavigation' : ''} clientId: ${clientId} `,
+                'color:cyan'
+            );
 
-            const isNavigation = originalRequest.mode === 'navigate';
-
-            // Handle internal API endpoints. If the handler declines (undefined),
-            // skip the site-wide isBlocked gate and fall through to the normal
-            // child-SW pipeline — so API probes behave like any other asset
-            // request and don't reveal DappFence via the warning redirect.
+            // Handle internal API endpoints. Served in every mode so client-side
+            // dappfence.js can always talk to the SW. If the handler declines
+            // (undefined), fall through to the normal child-SW pipeline — API
+            // probes behave like any other asset request and don't reveal
+            // DappFence via the warning redirect.
             if (url.pathname.startsWith(API_PREFIX)) {
                 logger.log('Handling API endpoint:', url.pathname);
-                const apiResponse = await handleApiEndpoint(url.pathname, originalRequest);
-                if (apiResponse) {
-                    return apiResponse;
+                const response = await handleApiEndpoint(url.pathname, originalRequest);
+                if (response) {
+                    return response;
                 }
-            } else if (await activeBlocksStore.isBlocked()) {
-                if (isNavigation) {
-                    return createNavigationWarningResponse();
-                }
-                return createBlockResponse(
-                    isNavigation,
-                    originalRequest.url,
-                    swContext.getLocationHref()
-                );
             }
 
-            // CRITICAL: Add tracking markers to request BEFORE any handlers to see it
-            const markedRequest = addMarkToRequest(event, originalRequest, isNavigation);
+            // Resolve the manifest context once per request — mode, shouldVerify,
+            // and verifyFile all share the single IndexedDB lookup done here.
+            const ctx = await manifestService.resolveManifest({ clientId, isNavigation });
+            logger.log(`Client mode: ${clientId} ${ctx.mode}`);
 
+            // Site-wide block gate only fires in protected mode. In other modes we
+            // still let the request flow so the child SW's response is returned
+            // untouched.
+            if (ctx.mode === MODE.PROTECTED && (await activeBlocksStore.isBlocked())) {
+                return createBlockResponse(isNavigation, originalRequest.url, locationHref);
+            }
+
+            // Add tracking markers to request BEFORE any handlers to see it
+            const markedRequest = isFeatureEnabled('mark_request')
+                ? addMarkToRequest(event, originalRequest, isNavigation)
+                : originalRequest;
+
+            // Delegate to child SW and capture its response
             const response = await handleAppServiceWorkerFetch(
                 event,
                 callChildHandlers,
@@ -220,23 +219,30 @@ export function createSecurityFetchHandler({
                 return response;
             }
 
-            // Smart asset verification based on manifest metadata
-            const appVersion = await appVersionStore.get();
-            const trustedManifest = await trustedManifestStore.get(appVersion);
-            if (shouldVerifyAsset(markedRequest.url, isNavigation, trustedManifest)) {
-                return await processSecurityAsset(markedRequest, isNavigation, response);
+            if (!ctx.shouldVerify(markedRequest.url)) {
+                return response;
+            }
+
+            const mustBlock = await verifyAssetIntegrity(ctx, markedRequest, response);
+            if (ctx.mode === MODE.PROTECTED && mustBlock) {
+                // Navigation requests get the warning inline via createBlockResponse;
+                // so broadcasting to the client would double-notify.
+                if (!isNavigation) {
+                    await onSecurityViolation();
+                }
+                return createBlockResponse(isNavigation, markedRequest.url, locationHref);
             }
             return response;
         } catch (error) {
             logger.error('Error processing:', originalRequest.url, error);
-            // On error, fallback to regular fetch to avoid breaking the app
-            try {
-                return await swContext.fetch(originalRequest);
-            } catch (fetchError) {
-                logger.error('Fallback fetch also failed:', originalRequest.url, fetchError);
-                // Return undefined to let the browser handle the error
-                return undefined;
-            }
         }
+        // On error, fallback to regular fetch to avoid breaking the app
+        try {
+            return await swContext.fetch(originalRequest);
+        } catch (fetchError) {
+            logger.error('Fallback fetch also failed:', originalRequest.url, fetchError);
+        }
+        // Return undefined to let the browser handle the error
+        return undefined;
     };
 }

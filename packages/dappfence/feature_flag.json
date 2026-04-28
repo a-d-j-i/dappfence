@@ -1,10 +1,12 @@
 {
     "development": {
         "learning_mode": false,
-        "auto_confirm_site_lock": true
+        "auto_confirm_site_lock": true,
+        "mark_request": false
     },
     "production": {
         "learning_mode": false,
-        "auto_confirm_site_lock": false
+        "auto_confirm_site_lock": false,
+        "mark_request": false
     }
 }

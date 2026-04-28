@@ -27,3 +27,8 @@ export const MSG = {
     CLIENT_READY: 'DAPPFENCE_CLIENT_READY',
     CLAIM_CONTROL: 'CLAIM_CONTROL',
 };
+
+export const MODE = {
+    REPORTING: 'reporting', // log to console and indexeddb
+    PROTECTED: 'protected', // stop requests that are invalid
+};

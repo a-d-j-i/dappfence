@@ -58,23 +58,6 @@ function createResponse(body, status, headers) {
 }
 
 /**
- * Creates a 302-redirect response with no-cache headers. Use this for every
- * SW-side redirect so behavior (body, cache policy) is consistent.
- * `Response.redirect` is not used because it requires an absolute URL and
- * doesn't let us set additional headers like `Cache-Control`.
- * @param {string} location - The Location header value (relative or absolute)
- */
-export function createRedirectResponse(location) {
-    return new Response(null, {
-        status: 302,
-        headers: {
-            Location: location,
-            'Cache-Control': 'no-cache, no-store, must-revalidate',
-        },
-    });
-}
-
-/**
  * Create a security warning response for blocked content
  * Uses redirects for non-HTML requests, direct HTML for navigation
  */
@@ -99,24 +82,6 @@ function createJavascriptRedirectResponse() {
         'X-Frame-Options': 'DENY',
         'Content-Security-Policy': "default-src 'self'; object-src 'none'; base-uri 'self';",
     });
-}
-
-/**
- * Creates an HTML response that redirects to the security warning page
- * using a meta-refresh tag for navigation requests
- */
-function createNavigationSecurityPageResponse() {
-    return createResponse(
-        `<html lang="en"><head><meta http-equiv="refresh" content="0; url=${API.SECURITY_WARNING}"></head></html>`,
-        200,
-        {
-            'Content-Type': 'text/html; charset=utf-8',
-            'Cache-Control': 'no-cache, no-store, must-revalidate',
-            'X-Frame-Options': 'DENY',
-            'Content-Security-Policy':
-                "default-src 'unsafe-inline' 'self'; object-src 'none'; base-uri 'self';",
-        }
-    );
 }
 
 /**
@@ -148,20 +113,30 @@ const isServiceWorkerPath = (requestUrl, locationHref) => {
  * @param {string} locationHref - The service worker's location.href
  */
 export function createBlockResponse(isNavigation, requestUrl, locationHref) {
+    if (isNavigation) {
+        return createRedirectResponse(API.SECURITY_WARNING);
+    }
     if (isServiceWorkerPath(requestUrl, locationHref)) {
         return createJavascriptRedirectResponse();
-    }
-    if (isNavigation) {
-        return createNavigationSecurityPageResponse();
     }
     return createSecurityWarningResponse();
 }
 
 /**
- * Creates a 302-redirect response to the security warning page for navigation requests.
+ * Creates a 302-redirect response with no-cache headers. Use this for every
+ * SW-side redirect so behavior (body, cache policy) is consistent.
+ * `Response.redirect` is not used because it requires an absolute URL and
+ * doesn't let us set additional headers like `Cache-Control`.
+ * @param {string} location - The Location header value (relative or absolute)
  */
-export function createNavigationWarningResponse() {
-    return createRedirectResponse(API.SECURITY_WARNING);
+export function createRedirectResponse(location) {
+    return new Response(null, {
+        status: 302,
+        headers: {
+            Location: location,
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+        },
+    });
 }
 
 /**

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
     verifyFileHash,
     normalizeManifestData,
@@ -15,38 +15,27 @@ describe('verifyFileHash', () => {
     const manifest = { files: { '/app.js': 'abc123', '/style.css': 'def456' } };
 
     it('returns MATCH when hash matches by key', () => {
-        const result = verifyFileHash(manifest, '/app.js', 'abc123', false);
+        const result = verifyFileHash(manifest, '/app.js', 'abc123');
         expect(result.status).toBe(VERIFICATION_STATUS.MATCH);
         expect(result.expectedHash).toBe('abc123');
         expect(result.actualHash).toBe('abc123');
     });
 
     it('returns MISMATCH when hash differs', () => {
-        const result = verifyFileHash(manifest, '/app.js', 'wrong', false);
+        const result = verifyFileHash(manifest, '/app.js', 'wrong');
         expect(result.status).toBe(VERIFICATION_STATUS.MISMATCH);
         expect(result.expectedHash).toBe('abc123');
         expect(result.actualHash).toBe('wrong');
     });
 
     it('returns NOT_FOUND_IN_MANIFEST for unknown file', () => {
-        const result = verifyFileHash(manifest, '/unknown.js', 'somehash', false);
+        const result = verifyFileHash(manifest, '/unknown.js', 'somehash');
         expect(result.status).toBe(VERIFICATION_STATUS.NOT_FOUND_IN_MANIFEST);
     });
 
-    it('matches by hash value when searchByHash is true', () => {
-        const result = verifyFileHash(manifest, '/any-path', 'def456', true);
+    it('returns MATCH when hash matches any value in the manifest, even under a different key', () => {
+        const result = verifyFileHash(manifest, '/any-path', 'def456');
         expect(result.status).toBe(VERIFICATION_STATUS.MATCH);
-    });
-
-    it('falls back to key match when searchByHash finds nothing', () => {
-        const result = verifyFileHash(manifest, '/app.js', 'abc123', true);
-        // searchByHash iterates values — 'abc123' is a value, so it matches
-        expect(result.status).toBe(VERIFICATION_STATUS.MATCH);
-    });
-
-    it('returns NOT_FOUND when searchByHash fails and key not found', () => {
-        const result = verifyFileHash(manifest, '/unknown.js', 'nope', true);
-        expect(result.status).toBe(VERIFICATION_STATUS.NOT_FOUND_IN_MANIFEST);
     });
 });
 
@@ -176,7 +165,18 @@ describe('verifyManifestSignature', () => {
     });
 });
 
+const mockManifestService = (verifyFileMock) => ({
+    resolveManifest: vi.fn().mockResolvedValue({ verifyFile: verifyFileMock }),
+});
+
 describe('verifyLocation', () => {
+    beforeEach(() => {
+        globalThis.__FEATURES__ = { mark_request: true };
+    });
+    afterEach(() => {
+        delete globalThis.__FEATURES__;
+    });
+
     it('fetches the URL and returns the verifyFile result', async () => {
         const verifyFileResult = {
             status: 'MATCH',
@@ -185,6 +185,7 @@ describe('verifyLocation', () => {
             actualHash: 'abc',
             timestamp: '2026-01-01T00:00:00.000Z',
         };
+        const verifyFile = vi.fn().mockResolvedValue(verifyFileResult);
         const deps = {
             swContext: {
                 fetch: vi.fn().mockResolvedValue({
@@ -192,51 +193,30 @@ describe('verifyLocation', () => {
                     text: async () => 'file content',
                 }),
             },
-            manifestService: { verifyFile: vi.fn().mockResolvedValue(verifyFileResult) },
+            manifestService: mockManifestService(verifyFile),
         };
 
-        const result = await verifyLocation(deps, '/lib.js', false);
+        const result = await verifyLocation(deps, '/lib.js');
 
         expect(deps.swContext.fetch).toHaveBeenCalledWith('/lib.js', {
             headers: { 'x-dappfence': 'sw-verification' },
         });
-        expect(deps.manifestService.verifyFile).toHaveBeenCalledWith(
-            '/lib.js',
-            'file content',
-            false
-        );
+        expect(verifyFile).toHaveBeenCalledWith('/lib.js', 'file content');
         expect(result).toEqual(verifyFileResult);
     });
 
-    it('passes searchByHash through to verifyFile', async () => {
-        const deps = {
-            swContext: {
-                fetch: vi.fn().mockResolvedValue({
-                    ok: true,
-                    text: async () => 'content',
-                }),
-            },
-            manifestService: {
-                verifyFile: vi.fn().mockResolvedValue({ status: 'MATCH' }),
-            },
-        };
-
-        await verifyLocation(deps, '/sw.js', true);
-
-        expect(deps.manifestService.verifyFile).toHaveBeenCalledWith('/sw.js', 'content', true);
-    });
-
     it('returns verifyFile-compatible error on fetch failure', async () => {
+        const verifyFile = vi.fn();
         const deps = {
             swContext: {
                 fetch: vi.fn().mockResolvedValue({ ok: false, status: 500, statusText: 'Error' }),
             },
-            manifestService: { verifyFile: vi.fn() },
+            manifestService: mockManifestService(verifyFile),
         };
 
-        const result = await verifyLocation(deps, '/missing.js', false);
+        const result = await verifyLocation(deps, '/missing.js');
 
-        expect(deps.manifestService.verifyFile).not.toHaveBeenCalled();
+        expect(verifyFile).not.toHaveBeenCalled();
         expect(result).toEqual({
             status: 'VERIFICATION_ERROR',
             url: '/missing.js',
@@ -248,11 +228,17 @@ describe('verifyLocation', () => {
 });
 
 describe('verifyImportedScript', () => {
+    beforeEach(() => {
+        globalThis.__FEATURES__ = { mark_request: true };
+    });
+    afterEach(() => {
+        delete globalThis.__FEATURES__;
+    });
+
     it('calls verifyFile with script URL and content', async () => {
+        const verifyFile = vi.fn().mockResolvedValue({ status: 'MATCH' });
         const core = {
-            manifestService: {
-                verifyFile: vi.fn().mockResolvedValue({ status: 'MATCH' }),
-            },
+            manifestService: mockManifestService(verifyFile),
             appStore: { recordSecurityViolation: vi.fn() },
             swContext: {
                 fetch: vi.fn().mockResolvedValue({
@@ -267,19 +253,14 @@ describe('verifyImportedScript', () => {
         expect(core.swContext.fetch).toHaveBeenCalledWith('https://example.com/lib.js', {
             headers: { 'x-dappfence': 'sw-verification' },
         });
-        expect(core.manifestService.verifyFile).toHaveBeenCalledWith(
-            'https://example.com/lib.js',
-            'script content',
-            false
-        );
+        expect(verifyFile).toHaveBeenCalledWith('https://example.com/lib.js', 'script content');
         expect(core.appStore.recordSecurityViolation).not.toHaveBeenCalled();
     });
 
     it('records violation on mismatch', async () => {
+        const verifyFile = vi.fn().mockResolvedValue({ status: 'MISMATCH', fileKey: '/lib.js' });
         const core = {
-            manifestService: {
-                verifyFile: vi.fn().mockResolvedValue({ status: 'MISMATCH', fileKey: '/lib.js' }),
-            },
+            manifestService: mockManifestService(verifyFile),
             appStore: { recordSecurityViolation: vi.fn() },
             swContext: {
                 fetch: vi.fn().mockResolvedValue({
@@ -300,8 +281,9 @@ describe('verifyImportedScript', () => {
     });
 
     it('records violation on fetch failure', async () => {
+        const verifyFile = vi.fn();
         const core = {
-            manifestService: { verifyFile: vi.fn() },
+            manifestService: mockManifestService(verifyFile),
             appStore: { recordSecurityViolation: vi.fn() },
             swContext: {
                 fetch: vi
@@ -312,7 +294,7 @@ describe('verifyImportedScript', () => {
 
         await verifyImportedScript(core, 'https://example.com/missing.js');
 
-        expect(core.manifestService.verifyFile).not.toHaveBeenCalled();
+        expect(verifyFile).not.toHaveBeenCalled();
         expect(core.appStore.recordSecurityViolation).toHaveBeenCalledWith(
             expect.objectContaining({
                 status: 'VERIFICATION_ERROR',
