@@ -44,15 +44,16 @@ describe('generateBlockId', () => {
         expect(id).toMatch(/^block_[0-9a-f]{16}$/);
     });
 
-    it('throws when required fields are missing', async () => {
-        await expect(generateBlockId({ status: 'MISMATCH' })).rejects.toThrow(
-            'Missing required parameters'
-        );
+    it('throws when status is missing', async () => {
         await expect(generateBlockId({ fileKey: '/app.js' })).rejects.toThrow(
             'Missing required parameters'
         );
-        await expect(generateBlockId({ status: 'MISMATCH', fileKey: '/app.js' })).rejects.toThrow(
-            'Missing required parameters'
-        );
+    });
+
+    it('produces a stable id when only status is set (manifest-load errors)', async () => {
+        const id = await generateBlockId({ status: 'CONFIG_ERROR' });
+        expect(id).toMatch(/^block_[0-9a-f]{16}$/);
+        const id2 = await generateBlockId({ status: 'CONFIG_ERROR' });
+        expect(id2).toBe(id);
     });
 });

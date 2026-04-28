@@ -46,13 +46,7 @@ export const createManifestService = ({ swContext, appStore, config }) => {
                 logger.error(
                     `Failed to load manifest: ${response?.status} ${response?.statusText}`
                 );
-                return {
-                    status: VERIFICATION_STATUS.ERROR,
-                    fileKey,
-                    url: manifestUrl,
-                    actualHash: 'N/A',
-                    expectedHash: 'N/A',
-                };
+                return { status: VERIFICATION_STATUS.ERROR, fileKey };
             }
 
             const json = await response.json();
@@ -61,14 +55,11 @@ export const createManifestService = ({ swContext, appStore, config }) => {
                 manifestSignatureIdentity,
                 json
             );
-            if (signatureResult.status !== VERIFICATION_STATUS.MATCH) {
+            if (signatureResult.status.isViolation) {
                 return {
                     ...signatureResult,
                     assetType: ASSET_TYPE.MANIFEST,
                     fileKey,
-                    url: manifestUrl,
-                    actualHash: signatureResult.actualHash || 'N/A',
-                    expectedHash: signatureResult.expectedHash || 'ERROR',
                 };
             }
 
@@ -82,13 +73,7 @@ export const createManifestService = ({ swContext, appStore, config }) => {
         } catch (error) {
             logger.error('Error loading manifest:', error);
         }
-        return {
-            status: VERIFICATION_STATUS.ERROR,
-            fileKey,
-            url: manifestUrl,
-            actualHash: 'N/A',
-            expectedHash: 'N/A',
-        };
+        return { status: VERIFICATION_STATUS.ERROR, fileKey };
     };
 
     const fetchAndStoreManifest = async () => {
@@ -96,9 +81,6 @@ export const createManifestService = ({ swContext, appStore, config }) => {
             return {
                 status: VERIFICATION_STATUS.CONFIG_ERROR,
                 assetType: ASSET_TYPE.MANIFEST,
-                url: 'N/A',
-                actualHash: 'N/A',
-                expectedHash: 'N/A',
             };
         }
         return singleFlight(loadManifestFromUrl);
@@ -120,8 +102,18 @@ export const createManifestService = ({ swContext, appStore, config }) => {
      * clients running different apps could verify against each other's
      * manifest — fine for single-app deploys, wrong once pinning is on.
      */
-    const verifyFileWithContext = async (url, isNavigation, response) => {
+    const verifyFileWithContext = async (url, isNavigation, response, extensions) => {
         const fileKey = getFileKey(url, swContext.getLocationHref());
+        // Skip-or-verify decision lives here, not at the caller — the caller
+        // would have to make the same call with the same inputs (URL +
+        // navigation flag + response headers) plus the manifest's extension
+        // list, which it doesn't have direct access to. Pass the resolved
+        // fileKey rather than the raw URL: importScripts hands us relative
+        // URLs that `new URL(url)` can't parse standalone.
+        if (!shouldVerifyAsset(fileKey, isNavigation, response, extensions)) {
+            logger.log(`⏭️  Skipping verification: ${fileKey}`);
+            return { status: VERIFICATION_STATUS.SKIPPED, fileKey };
+        }
         // Hash the raw bytes — avoids a UTF-8 round-trip that would silently
         // corrupt non-UTF-8 content and produce a hash the signer never saw.
         const fileHash = await calculateHash(await response.arrayBuffer());
@@ -132,25 +124,33 @@ export const createManifestService = ({ swContext, appStore, config }) => {
             logger.log(`Identified manifest from hash ${fileHash} ${appVersion}`);
         } else {
             const violationOrManifest = await fetchAndStoreManifest();
-            if (violationOrManifest.status !== VERIFICATION_STATUS.MATCH) {
+            if (violationOrManifest.status.isViolation) {
                 return violationOrManifest;
             }
             appVersion = violationOrManifest.appVersion;
             manifest = violationOrManifest.manifest;
         }
         const result = verifyFilePath(manifest, fileKey, fileHash, isNavigation);
-        await verificationResultsStore.add(appVersion, result);
+        // Persist as the description string — structuredClone won't reattach
+        // the verdict object's identity, and downstream UI/JSON consumers
+        // expect a plain status name.
+        await verificationResultsStore.add(appVersion, {
+            ...result,
+            status: result.status.description,
+        });
         const icon = fileKey.startsWith('/') ? '📄' : '🌐';
-        const statusIcon = result.status === VERIFICATION_STATUS.MATCH ? '✅' : '❌';
-        logger.log(`${statusIcon} ${icon} ${result.status}: ${fileKey}`);
+        const statusIcon = result.status.isViolation ? '❌' : '✅';
+        logger.log(`${statusIcon} ${icon} ${result.status.description}: ${fileKey}`);
         return result;
     };
 
     /**
      * Resolve the manifest context for a single request/operation.
      * Loads the current trusted manifest once and returns a view with
-     * `mode`, `shouldVerify`, and `verifyFile` so downstream consumers
-     * don't each re-read IndexedDB.
+     * `mode` and `verifyFile` so downstream consumers don't each re-read
+     * IndexedDB. The skip-or-verify decision is folded into `verifyFile`
+     * (returns SKIPPED for non-applicable assets) so the caller doesn't
+     * carry per-asset policy.
      *
      * `clientId` and `isNavigation` are accepted for forward compatibility
      * with per-client manifest pinning — the current implementation still
@@ -184,9 +184,8 @@ export const createManifestService = ({ swContext, appStore, config }) => {
         );
         return {
             mode,
-            extensions,
-            shouldVerify: (url) => shouldVerifyAsset(url, isNavigation, extensions),
-            verifyFile: (url, response) => verifyFileWithContext(url, isNavigation, response),
+            verifyFile: (url, response) =>
+                verifyFileWithContext(url, isNavigation, response, extensions),
         };
     };
 

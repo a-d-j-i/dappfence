@@ -65,23 +65,20 @@ export const verifyFilePath = (trustedManifest, fileKey, actualHash, isNavigatio
         return {
             status: VERIFICATION_STATUS.NOT_FOUND_IN_MANIFEST,
             fileKey,
-            expectedHash: null,
             actualHash,
-            timestamp: new Date().toISOString(),
         };
     }
     const { matchedKey, expectedHash } = matched;
     const status =
         expectedHash === actualHash ? VERIFICATION_STATUS.MATCH : VERIFICATION_STATUS.MISMATCH;
     logger.log(
-        `verifyFilePath, file: ${matchedKey}, hash: ${actualHash}, expectedHash: ${expectedHash}, status: ${status}`
+        `verifyFilePath, file: ${matchedKey}, hash: ${actualHash}, expectedHash: ${expectedHash}, status: ${status.description}`
     );
     return {
         status,
         fileKey: matchedKey,
         expectedHash,
         actualHash,
-        timestamp: new Date().toISOString(),
     };
 };
 
@@ -148,22 +145,34 @@ export const getFileKey = (url, baseUrl) => {
 };
 
 /**
- * Determines if a URL requires security verification based on manifest metadata.
+ * Determines if a fetched asset requires verification against the manifest.
  * Logs the decision reason at each branch; callers only read the boolean.
- * @param {string} url - The request URL
+ *
+ * Takes `fileKey` (the manifest-key form: pathname for same-origin or full
+ * URL for cross-origin, as returned by `getFileKey`) rather than a raw URL —
+ * callers reach this function with already-resolved keys (importScripts may
+ * pass relative URLs that `new URL(url)` couldn't parse standalone).
+ *
+ * `response` is accepted so future content-type / MIME policy can branch
+ * here (e.g. skip non-text bodies, or require a specific MIME for `.js`).
+ * Today it is unused — the predicate is path/extension-based only.
+ *
+ * @param {string} fileKey - Resolved manifest key (pathname or absolute URL)
  * @param {boolean} isNavigation - Whether this is a navigation request
+ * @param {Response} response - The fetched response (headers reachable via response.headers)
  * @param {string[]} extensions - the manifest metadata extensions or default extensions
  * @returns {boolean} true if the asset should be verified against the manifest
  */
-export const shouldVerifyAsset = (url, isNavigation, extensions) => {
+
+export const shouldVerifyAsset = (fileKey, isNavigation, response, extensions) => {
     if (isNavigation) {
-        logger.log(`Asset check for ${url}: Navigation request`);
+        logger.log(`Asset check for ${fileKey}: Navigation request`);
         return true;
     }
-    const path = new URL(url).pathname.toLowerCase();
-    const ret = extensions.some((ext) => path.endsWith(ext.toLowerCase()));
+    const lowerKey = fileKey.toLowerCase();
+    const ret = extensions.some((ext) => lowerKey.endsWith(ext.toLowerCase()));
     logger.log(
-        `Asset check for ${url}, ${ret ? 'found' : 'not found'} in extensions ${extensions}`
+        `Asset check for ${fileKey}, ${ret ? 'found' : 'not found'} in extensions ${extensions}`
     );
     return ret;
 };
@@ -224,7 +233,7 @@ export const verifyManifestSignature = (
  * @param {object} deps.swContext
  * @param {object} deps.manifestService
  * @param {string} url
- * @returns {Promise<object>} Result with status, fileKey, expectedHash, actualHash, timestamp
+ * @returns {Promise<object>} Verification result with at least { status }; verifyFile populates fileKey/expectedHash/actualHash on success.
  */
 export async function verifyLocation({ swContext, manifestService }, url) {
     try {
@@ -242,13 +251,7 @@ export async function verifyLocation({ swContext, manifestService }, url) {
     } catch (error) {
         logger.error(`Error verifying ${url}:`, error);
     }
-    return {
-        status: VERIFICATION_STATUS.ERROR,
-        url,
-        expectedHash: null,
-        actualHash: null,
-        timestamp: new Date().toISOString(),
-    };
+    return { status: VERIFICATION_STATUS.ERROR };
 }
 
 /**
@@ -261,13 +264,15 @@ export async function verifyLocation({ swContext, manifestService }, url) {
  */
 export async function verifyImportedScript(deps, scriptPath) {
     const verificationResult = await verifyLocation(deps, scriptPath);
-    if (verificationResult.status !== VERIFICATION_STATUS.MATCH) {
+    if (verificationResult.status.isViolation) {
         await deps.appStore.recordSecurityViolation({
             ...verificationResult,
             assetType: ASSET_TYPE.SERVICE_WORKER,
             url: scriptPath,
         });
-        logger.log(`Security violation detected for ${scriptPath}: ${verificationResult.status}`);
+        logger.log(
+            `Security violation detected for ${scriptPath}: ${verificationResult.status.description}`
+        );
         return;
     }
     logger.log(`Script verified: ${scriptPath}`);

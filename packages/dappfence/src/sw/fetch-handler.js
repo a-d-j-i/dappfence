@@ -5,7 +5,7 @@
 
 import { createBlockResponse } from './response.js';
 import { createLogger } from '../core/logger.js';
-import { API_PREFIX, ASSET_TYPE, MODE, VERIFICATION_STATUS } from '../core/constants.js';
+import { API_PREFIX, ASSET_TYPE, MODE } from '../core/constants.js';
 import { isFeatureEnabled } from '../core/utils.js';
 
 const logger = createLogger();
@@ -140,8 +140,10 @@ export function createSecurityFetchHandler({
     }
 
     /**
-     * Verify the integrity of security-critical asset (JS, CSS, JSON, HTML, SVG)
-     * using a pre-resolved manifest context so we don't re-read IndexedDB.
+     * Run the manifest-aware verification for an asset response. `verifyFile`
+     * decides whether to actually verify (returns SKIPPED for non-applicable
+     * assets) or hashes and compares. Only true violations reach
+     * recordSecurityViolation; SKIPPED and MATCH pass through.
      */
     async function verifyAssetIntegrity(ctx, request, response) {
         logger.log('Verifying security-critical asset:', request.url);
@@ -149,15 +151,12 @@ export function createSecurityFetchHandler({
         // Clone so the original body is still available to forward to the page;
         // verifyFile consumes the clone via arrayBuffer().
         const verificationResult = await ctx.verifyFile(request.url, response.clone());
-        if (verificationResult && verificationResult.status !== VERIFICATION_STATUS.MATCH) {
-            const blockDetails = {
+        if (verificationResult.status.isViolation) {
+            return await appStore.recordSecurityViolation({
                 ...verificationResult,
                 assetType: ASSET_TYPE.ASSET,
                 url: request.url,
-            };
-
-            // File hash mismatch - SECURITY VIOLATION
-            return await appStore.recordSecurityViolation(blockDetails);
+            });
         }
         return false;
     }
@@ -188,8 +187,8 @@ export function createSecurityFetchHandler({
                 }
             }
 
-            // Resolve the manifest context once per request — mode, shouldVerify,
-            // and verifyFile all share the single IndexedDB lookup done here.
+            // Resolve the manifest context once per request — mode and verifyFile
+            // share the single IndexedDB lookup done here.
             const ctx = await manifestService.resolveManifest({ clientId, isNavigation });
             logger.log(`Client mode: ${clientId} ${ctx.mode}`);
 
@@ -212,10 +211,6 @@ export function createSecurityFetchHandler({
                 markedRequest
             );
             if (!response || !response.ok) {
-                return response;
-            }
-
-            if (!ctx.shouldVerify(markedRequest.url)) {
                 return response;
             }
 

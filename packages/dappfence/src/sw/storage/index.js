@@ -35,38 +35,42 @@ export function createAppStore(db, { userAgent, origin } = {}) {
      */
     async function recordSecurityViolation(details) {
         try {
+            // status is the runtime verdict object; persistence + log lines want
+            // the description string. Normalize once and use it everywhere below.
+            const statusName = details.status.description;
+            const persistedDetails = { ...details, status: statusName };
             if (details.status === VERIFICATION_STATUS.MATCH) {
                 logger.log(`SW file verification passed: ${details.fileKey}`);
             } else if (details.status === VERIFICATION_STATUS.MISMATCH) {
                 logger.error(
                     `SECURITY ALERT: Service Worker file integrity violation!`,
-                    `File: ${details.url}\nExpected: ${details.expectedHash}...`,
-                    `Actual: ${details.actualHash}...`
+                    `File: ${details.url}\nExpected: ${details.expectedHash}`,
+                    `Actual: ${details.actualHash}`
                 );
             } else if (details.status === VERIFICATION_STATUS.NOT_FOUND_IN_MANIFEST) {
                 logger.error(
                     `SECURITY ALERT: Unknown file not in trusted manifest!`,
                     `File: ${details.fileKey}`,
-                    `Hash: ${details.expectedHash}...`
+                    `Hash: ${details.actualHash}`
                 );
             } else {
                 logger.error(
-                    `SECURITY ALERT: {${details.status}}`,
-                    `URL: ${details.url}`,
-                    `File: ${details.fileKey}`
+                    `SECURITY ALERT: {${statusName}}`,
+                    `URL: ${details.url ?? 'N/A'}`,
+                    `File: ${details.fileKey ?? 'N/A'}`
                 );
             }
 
             try {
                 await securityEventsStore.logSecurityEvent({
                     type: 'SECURITY_VIOLATION',
-                    status: details.status,
+                    status: statusName,
                     assetType: details.assetType,
                     timestamp: new Date().toISOString(),
                     url: details.url,
                     fileKey: details.fileKey,
-                    expectedHash: details.expectedHash?.substring(0, 16) + '...',
-                    actualHash: details.actualHash?.substring(0, 16) + '...',
+                    expectedHash: details.expectedHash,
+                    actualHash: details.actualHash,
                     userAgent,
                     origin,
                 });
@@ -74,12 +78,12 @@ export function createAppStore(db, { userAgent, origin } = {}) {
                 logger.error('Failed to store security log:', error);
             }
 
-            const mustBlock = await activeBlocksStore.recordSecurityBlock(details);
+            const mustBlock = await activeBlocksStore.recordSecurityBlock(persistedDetails);
             if (mustBlock) {
-                logger.log(`Security violation handled: ${details.status} - ${details.fileKey}`);
+                logger.log(`Security violation handled: ${statusName} - ${details.fileKey}`);
             } else {
                 logger.log(
-                    `%cSecurity violation recurrence (not re-activated): ${details.status} - ${details.fileKey}`,
+                    `%cSecurity violation recurrence (not re-activated): ${statusName} - ${details.fileKey}`,
                     'color:yellow'
                 );
             }

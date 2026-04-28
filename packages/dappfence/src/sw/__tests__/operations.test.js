@@ -38,7 +38,7 @@ describe('verifyFilePath', () => {
     it('returns NOT_FOUND_IN_MANIFEST for an unregistered fileKey', () => {
         const result = verifyFilePath(manifest, '/unknown.js', 'def456', false);
         expect(result.status).toBe(VERIFICATION_STATUS.NOT_FOUND_IN_MANIFEST);
-        expect(result.expectedHash).toBeNull();
+        expect(result.expectedHash).toBeUndefined();
     });
 
     it('does not match by hash value alone (content under a different key is NOT_FOUND)', () => {
@@ -166,7 +166,7 @@ describe('getFileKey', () => {
 describe('verifyManifestSignature', () => {
     it('returns UNSUPPORTED_SIGNATURE for unknown signature types', () => {
         const result = verifyManifestSignature('unknown-type', '0xABC', { pay: {}, sig: 'sig' });
-        expect(result.status).toBe('UNSUPPORTED_SIGNATURE');
+        expect(result.status).toBe(VERIFICATION_STATUS.UNSUPPORTED_SIGNATURE);
     });
 });
 
@@ -220,13 +220,7 @@ describe('verifyLocation', () => {
         const result = await verifyLocation(deps, '/missing.js');
 
         expect(verifyFile).not.toHaveBeenCalled();
-        expect(result).toEqual({
-            status: 'VERIFICATION_ERROR',
-            url: '/missing.js',
-            expectedHash: null,
-            actualHash: null,
-            timestamp: expect.any(String),
-        });
+        expect(result).toEqual({ status: VERIFICATION_STATUS.ERROR });
     });
 });
 
@@ -259,7 +253,10 @@ describe('verifyImportedScript', () => {
     });
 
     it('records violation on mismatch', async () => {
-        const verifyFile = vi.fn().mockResolvedValue({ status: 'MISMATCH', fileKey: '/lib.js' });
+        const verifyFile = vi.fn().mockResolvedValue({
+            status: VERIFICATION_STATUS.MISMATCH,
+            fileKey: '/lib.js',
+        });
         const core = {
             manifestService: mockManifestService(verifyFile),
             appStore: { recordSecurityViolation: vi.fn() },
@@ -295,11 +292,29 @@ describe('verifyImportedScript', () => {
         expect(verifyFile).not.toHaveBeenCalled();
         expect(core.appStore.recordSecurityViolation).toHaveBeenCalledWith(
             expect.objectContaining({
-                status: 'VERIFICATION_ERROR',
+                status: VERIFICATION_STATUS.ERROR,
                 assetType: 'service-worker',
                 url: 'https://example.com/missing.js',
             })
         );
+    });
+
+    it('treats SKIPPED results as non-violations', async () => {
+        const verifyFile = vi.fn().mockResolvedValue({
+            status: VERIFICATION_STATUS.SKIPPED,
+            fileKey: '/lib.js',
+        });
+        const core = {
+            manifestService: mockManifestService(verifyFile),
+            appStore: { recordSecurityViolation: vi.fn() },
+            swContext: {
+                fetch: vi.fn().mockResolvedValue(new Response('content')),
+            },
+        };
+
+        await verifyImportedScript(core, 'https://example.com/lib.js');
+
+        expect(core.appStore.recordSecurityViolation).not.toHaveBeenCalled();
     });
 });
 

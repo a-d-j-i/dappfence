@@ -1,7 +1,8 @@
 /**
- * Cross-module contract strings — values that appear in 2+ modules or cross
- * the SW ↔ client boundary. A silent rename in one place breaks coordination,
- * so they live here with one canonical declaration.
+ * Cross-module contract values — strings (and a couple of small frozen
+ * objects) that appear in 2+ modules or cross the SW ↔ client boundary.
+ * A silent rename in one place breaks coordination, so they live here
+ * with one canonical declaration.
  *
  * Scope guard — NOT a home for:
  *   - storage keys (private to each store module)
@@ -40,14 +41,32 @@ export const MODE = {
  */
 export const DEFAULT_SECURITY_EXTENSIONS = ['.js', '.css', '.json', '.html', '.svg'];
 
-export const VERIFICATION_STATUS = {
-    MATCH: 'MATCH',
-    MISMATCH: 'MISMATCH',
-    NOT_FOUND_IN_MANIFEST: 'NOT_FOUND_IN_MANIFEST',
-    UNSUPPORTED_SIGNATURE: 'UNSUPPORTED_SIGNATURE',
-    ERROR: 'VERIFICATION_ERROR',
-    CONFIG_ERROR: 'CONFIG_ERROR',
-};
+/**
+ * Verification verdict for a single file or manifest.
+ *
+ * Each entry is a frozen object carrying both a human-readable `description`
+ * (the wire/log/storage form, kept stable for telemetry) and `isViolation`
+ * (the action signal — does the caller record + potentially block, or
+ * pass through?). Co-locating the classification with the description keeps
+ * a single source of truth: adding or reclassifying a status is a one-line
+ * change here, no consumer needs to keep an exclusion list current.
+ *
+ * Comparisons use reference equality (`result.status === VERIFICATION_STATUS.MATCH`).
+ * Stringification needs `.description` explicitly — `toString`/`toJSON` would
+ * break `structuredClone` (used by IndexedDB), so persistence layers must
+ * write `details.status.description`, not the object.
+ */
+const verdict = (description, isViolation) => Object.freeze({ description, isViolation });
+
+export const VERIFICATION_STATUS = Object.freeze({
+    MATCH: verdict('MATCH', false),
+    SKIPPED: verdict('SKIPPED', false),
+    MISMATCH: verdict('MISMATCH', true),
+    NOT_FOUND_IN_MANIFEST: verdict('NOT_FOUND_IN_MANIFEST', true),
+    UNSUPPORTED_SIGNATURE: verdict('UNSUPPORTED_SIGNATURE', true),
+    ERROR: verdict('VERIFICATION_ERROR', true),
+    CONFIG_ERROR: verdict('CONFIG_ERROR', true),
+});
 
 export const ASSET_TYPE = {
     ASSET: 'asset',
