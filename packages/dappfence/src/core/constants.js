@@ -32,3 +32,10 @@ export const MODE = {
     REPORTING: 'reporting', // log to console and indexeddb
     PROTECTED: 'protected', // stop requests that are invalid
 };
+
+/**
+ * Verification Policy
+ * Decides whether a request needs integrity verification
+ * based on manifest metadata and file extensions.
+ */
+export const DEFAULT_SECURITY_EXTENSIONS = ['.js', '.css', '.json', '.html', '.svg'];

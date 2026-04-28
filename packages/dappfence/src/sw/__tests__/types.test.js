@@ -4,6 +4,7 @@ import {
     shouldVerifyAsset,
     VERIFICATION_STATUS,
 } from '../manifest/verification-helpers.js';
+import { DEFAULT_SECURITY_EXTENSIONS } from '../../core/constants.js';
 
 describe('createSyntheticAppVersion', () => {
     it('creates a version string from manifest data', async () => {
@@ -35,42 +36,54 @@ describe('VERIFICATION_STATUS', () => {
 
 describe('shouldVerifyAsset', () => {
     it('always verifies navigation requests', () => {
-        expect(shouldVerifyAsset('https://example.com/image.png', true, { files: {} })).toBe(true);
+        expect(
+            shouldVerifyAsset('https://example.com/image.png', true, DEFAULT_SECURITY_EXTENSIONS)
+        ).toBe(true);
     });
 
-    it('verifies JS files by default', () => {
-        expect(shouldVerifyAsset('https://example.com/app.js', false, { files: {} })).toBe(true);
+    it('verifies JS files with default extensions', () => {
+        expect(
+            shouldVerifyAsset('https://example.com/app.js', false, DEFAULT_SECURITY_EXTENSIONS)
+        ).toBe(true);
     });
 
-    it('verifies CSS files by default', () => {
-        expect(shouldVerifyAsset('https://example.com/style.css', false, { files: {} })).toBe(true);
+    it('verifies CSS files with default extensions', () => {
+        expect(
+            shouldVerifyAsset('https://example.com/style.css', false, DEFAULT_SECURITY_EXTENSIONS)
+        ).toBe(true);
     });
 
-    it('verifies HTML files by default', () => {
-        expect(shouldVerifyAsset('https://example.com/page.html', false, { files: {} })).toBe(true);
+    it('verifies HTML files with default extensions', () => {
+        expect(
+            shouldVerifyAsset('https://example.com/page.html', false, DEFAULT_SECURITY_EXTENSIONS)
+        ).toBe(true);
     });
 
-    it('does not verify images by default', () => {
-        expect(shouldVerifyAsset('https://example.com/logo.png', false, { files: {} })).toBe(false);
+    it('does not verify images with default extensions', () => {
+        expect(
+            shouldVerifyAsset('https://example.com/logo.png', false, DEFAULT_SECURITY_EXTENSIONS)
+        ).toBe(false);
     });
 
-    it('does not verify fonts by default', () => {
-        expect(shouldVerifyAsset('https://example.com/font.woff2', false, { files: {} })).toBe(
-            false
+    it('does not verify fonts with default extensions', () => {
+        expect(
+            shouldVerifyAsset('https://example.com/font.woff2', false, DEFAULT_SECURITY_EXTENSIONS)
+        ).toBe(false);
+    });
+
+    it('matches files against the provided extensions list', () => {
+        expect(shouldVerifyAsset('https://example.com/module.wasm', false, ['.wasm', '.js'])).toBe(
+            true
         );
     });
 
-    it('uses manifest metadata extensions when provided', () => {
-        const manifest = { files: {}, metadata: { extensions: ['.wasm', '.js'] } };
-        expect(shouldVerifyAsset('https://example.com/module.wasm', false, manifest)).toBe(true);
+    it('rejects files not in the provided extensions list', () => {
+        expect(shouldVerifyAsset('https://example.com/app.js', false, ['.wasm'])).toBe(false);
     });
 
-    it('rejects files not in manifest metadata extensions', () => {
-        const manifest = { files: {}, metadata: { extensions: ['.wasm'] } };
-        expect(shouldVerifyAsset('https://example.com/app.js', false, manifest)).toBe(false);
-    });
-
-    it('falls back to defaults when manifest has no metadata', () => {
-        expect(shouldVerifyAsset('https://example.com/app.json', false, { files: {} })).toBe(true);
+    it('verifies .json with default extensions', () => {
+        expect(
+            shouldVerifyAsset('https://example.com/app.json', false, DEFAULT_SECURITY_EXTENSIONS)
+        ).toBe(true);
     });
 });

@@ -1,9 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
-    verifyFileHash,
+    verifyFilePath,
     normalizeManifestData,
     getFileKey,
-    identifyAppFromFile,
     verifyManifestSignature,
     verifyImportedScript,
     verifyLocation,
@@ -11,31 +10,64 @@ import {
 import { createSingleFlight } from '../../core/utils.js';
 import { VERIFICATION_STATUS } from '../manifest/verification-helpers.js';
 
-describe('verifyFileHash', () => {
-    const manifest = { files: { '/app.js': 'abc123', '/style.css': 'def456' } };
+describe('verifyFilePath', () => {
+    const manifest = {
+        files: {
+            '/app.js': 'abc123',
+            '/style.css': 'def456',
+            '/index.html': 'idx111',
+            '/docs/index.html': 'idx222',
+        },
+    };
 
-    it('returns MATCH when hash matches by key', () => {
-        const result = verifyFileHash(manifest, '/app.js', 'abc123');
+    it('returns MATCH when fileKey is registered and the hash matches', () => {
+        const result = verifyFilePath(manifest, '/app.js', 'abc123', false);
         expect(result.status).toBe(VERIFICATION_STATUS.MATCH);
+        expect(result.fileKey).toBe('/app.js');
         expect(result.expectedHash).toBe('abc123');
         expect(result.actualHash).toBe('abc123');
     });
 
-    it('returns MISMATCH when hash differs', () => {
-        const result = verifyFileHash(manifest, '/app.js', 'wrong');
+    it('returns MISMATCH when fileKey is registered but hash differs', () => {
+        const result = verifyFilePath(manifest, '/app.js', 'wrong', false);
         expect(result.status).toBe(VERIFICATION_STATUS.MISMATCH);
         expect(result.expectedHash).toBe('abc123');
         expect(result.actualHash).toBe('wrong');
     });
 
-    it('returns NOT_FOUND_IN_MANIFEST for unknown file', () => {
-        const result = verifyFileHash(manifest, '/unknown.js', 'somehash');
+    it('returns NOT_FOUND_IN_MANIFEST for an unregistered fileKey', () => {
+        const result = verifyFilePath(manifest, '/unknown.js', 'def456', false);
+        expect(result.status).toBe(VERIFICATION_STATUS.NOT_FOUND_IN_MANIFEST);
+        expect(result.expectedHash).toBeNull();
+    });
+
+    it('does not match by hash value alone (content under a different key is NOT_FOUND)', () => {
+        const result = verifyFilePath(manifest, '/any-path', 'def456', false);
         expect(result.status).toBe(VERIFICATION_STATUS.NOT_FOUND_IN_MANIFEST);
     });
 
-    it('returns MATCH when hash matches any value in the manifest, even under a different key', () => {
-        const result = verifyFileHash(manifest, '/any-path', 'def456');
+    it('navigation: remaps "/" to "/index.html"', () => {
+        const result = verifyFilePath(manifest, '/', 'idx111', true);
         expect(result.status).toBe(VERIFICATION_STATUS.MATCH);
+        expect(result.fileKey).toBe('/index.html');
+        expect(result.expectedHash).toBe('idx111');
+    });
+
+    it('navigation: remaps "/docs/" to "/docs/index.html"', () => {
+        const result = verifyFilePath(manifest, '/docs/', 'idx222', true);
+        expect(result.status).toBe(VERIFICATION_STATUS.MATCH);
+        expect(result.fileKey).toBe('/docs/index.html');
+    });
+
+    it('navigation: remaps extensionless "/docs" to "/docs/index.html"', () => {
+        const result = verifyFilePath(manifest, '/docs', 'idx222', true);
+        expect(result.status).toBe(VERIFICATION_STATUS.MATCH);
+        expect(result.fileKey).toBe('/docs/index.html');
+    });
+
+    it('non-navigation: does not remap "/"', () => {
+        const result = verifyFilePath(manifest, '/', 'idx111', false);
+        expect(result.status).toBe(VERIFICATION_STATUS.NOT_FOUND_IN_MANIFEST);
     });
 });
 
@@ -69,13 +101,11 @@ describe('normalizeManifestData', () => {
         expect(result.files['/app.js']).toBe('abc123');
     });
 
-    it('converts SRI format to hex', () => {
-        // sha256- prefix triggers SRI conversion
+    it('preserves SRI hashes as-is (no encoding conversion)', () => {
         const sriHash = 'sha256-' + btoa('test');
         const input = { files: { '/app.js': sriHash } };
         const result = normalizeManifestData(input);
-        // Should be converted from SRI to hex
-        expect(result.files['/app.js']).not.toContain('sha256-');
+        expect(result.files['/app.js']).toBe(sriHash);
     });
 
     it('returns empty files for non-object input', () => {
@@ -89,6 +119,20 @@ describe('normalizeManifestData', () => {
         const result = normalizeManifestData(input);
         expect(result.files['/app.js']).toBeUndefined();
         expect(result.files['/ok.js']).toBe('hash');
+    });
+
+    it('preserves top-level fields (mode, metadata, future fields) in enhanced format', () => {
+        const input = {
+            files: { '/app.js': 'abc' },
+            mode: 'reporting',
+            metadata: { extensions: ['.js', '.wasm'] },
+            customField: { future: true },
+        };
+        const result = normalizeManifestData(input);
+        expect(result.mode).toBe('reporting');
+        expect(result.metadata).toEqual({ extensions: ['.js', '.wasm'] });
+        expect(result.customField).toEqual({ future: true });
+        expect(result.files['/app.js']).toBe('abc');
     });
 });
 
@@ -116,45 +160,6 @@ describe('getFileKey', () => {
 
     it('returns absolute URL as-is on parse failure', () => {
         expect(getFileKey('https://cdn.com/lib.js', 'bad-base')).toBe('https://cdn.com/lib.js');
-    });
-});
-
-describe('identifyAppFromFile', () => {
-    it('returns null when no manifests are stored', async () => {
-        const mockStore = { getAll: async () => ({}) };
-        const result = await identifyAppFromFile(mockStore, '/app.js', 'hash123');
-        expect(result).toBeNull();
-    });
-
-    it('returns matching version when file hash matches', async () => {
-        const mockStore = {
-            getAll: async () => ({
-                v1: { files: { '/app.js': 'hash123' } },
-                v2: { files: { '/app.js': 'other' } },
-            }),
-        };
-        const result = await identifyAppFromFile(mockStore, '/app.js', 'hash123');
-        expect(result).toBe('v1');
-    });
-
-    it('returns null when no version matches', async () => {
-        const mockStore = {
-            getAll: async () => ({
-                v1: { files: { '/app.js': 'nope' } },
-            }),
-        };
-        const result = await identifyAppFromFile(mockStore, '/app.js', 'hash123');
-        expect(result).toBeNull();
-    });
-
-    it('returns null on error', async () => {
-        const mockStore = {
-            getAll: async () => {
-                throw new Error('db error');
-            },
-        };
-        const result = await identifyAppFromFile(mockStore, '/app.js', 'hash123');
-        expect(result).toBeNull();
     });
 });
 

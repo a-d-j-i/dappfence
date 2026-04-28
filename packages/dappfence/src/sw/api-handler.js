@@ -14,13 +14,8 @@ const logger = createLogger();
  * @param {object} deps.appStore
  */
 export function createApiHandler({ onSecurityViolation, appStore }) {
-    const {
-        apiTokenStore,
-        activeBlocksStore,
-        appVersionStore,
-        trustedManifestStore,
-        verificationResultsStore,
-    } = appStore;
+    const { apiTokenStore, activeBlocksStore, trustedManifestStore, verificationResultsStore } =
+        appStore;
 
     async function validateApiToken(request) {
         const token = await apiTokenStore.getApiToken();
@@ -32,9 +27,12 @@ export function createApiHandler({ onSecurityViolation, appStore }) {
 
     async function handleStatus(_request) {
         logger.log('Serving status endpoint');
-        const appVersion = await appVersionStore.get();
-        const trustedManifest = await trustedManifestStore.get(appVersion);
-        const verificationResults = await verificationResultsStore.get(appVersion);
+        const latest = await trustedManifestStore.getLatest();
+        const appVersion = latest?.appVersion ?? null;
+        const trustedManifest = latest?.manifest;
+        const verificationResults = appVersion
+            ? await verificationResultsStore.get(appVersion)
+            : [];
         const blockHistory = await activeBlocksStore.getAllBlocks();
         const status = {
             appVersion,
@@ -43,7 +41,7 @@ export function createApiHandler({ onSecurityViolation, appStore }) {
             verificationResults,
             blockHistory,
             stats: {
-                trustedFiles: Object.keys(trustedManifest.files).length,
+                trustedFiles: Object.keys(trustedManifest?.files ?? {}).length,
                 totalVerifications: verificationResults.length,
                 totalBlocks: blockHistory.length,
                 activeBlocks: blockHistory.filter((b) => b.active).length,

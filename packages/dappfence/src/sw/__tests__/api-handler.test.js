@@ -25,11 +25,11 @@ function createMockAppStore() {
             getAllBlocks: vi.fn().mockResolvedValue([]),
             clearBlockCondition: vi.fn().mockResolvedValue(undefined),
         },
-        appVersionStore: {
-            get: vi.fn().mockResolvedValue('v1'),
-        },
         trustedManifestStore: {
-            get: vi.fn().mockResolvedValue({ files: { '/app.js': 'hash1' } }),
+            getLatest: vi.fn().mockResolvedValue({
+                appVersion: 'v1',
+                manifest: { files: { '/app.js': 'hash1' } },
+            }),
         },
         verificationResultsStore: {
             get: vi.fn().mockResolvedValue([{ file: '/app.js', status: 'match' }]),
@@ -123,11 +123,8 @@ describe('createApiHandler', () => {
             expect(body.blockHistory).toEqual([]);
         });
 
-        it('returns empty manifest when no app version', async () => {
-            // The real stores return empty defaults for a missing appVersion;
-            // mirror that in the mocks since we removed the caller-side ternary.
-            appStore.appVersionStore.get.mockResolvedValue(null);
-            appStore.trustedManifestStore.get.mockResolvedValue({ files: {} });
+        it('returns empty stats when no manifest is stored', async () => {
+            appStore.trustedManifestStore.getLatest.mockResolvedValue(undefined);
             appStore.verificationResultsStore.get.mockResolvedValue([]);
 
             const res = await handler('/sw-api/status', req('/sw-api/status'));
@@ -355,7 +352,7 @@ describe('createApiHandler', () => {
 
     describe('outer error handling', () => {
         it('returns 500 when an unexpected error occurs', async () => {
-            appStore.appVersionStore.get.mockRejectedValue(new Error('unexpected'));
+            appStore.trustedManifestStore.getLatest.mockRejectedValue(new Error('unexpected'));
 
             const res = await handler('/sw-api/status', req('/sw-api/status'));
             expect(res.status).toBe(500);

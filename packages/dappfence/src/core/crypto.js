@@ -11,42 +11,21 @@ hashes.hmacSha256 = (key, msg) => hmac(sha256, key, msg);
 hashes.sha256 = sha256;
 
 /**
- * Calculate SHA-256 hash of a buffer.
+ * Calculate SHA-256 hash of a buffer in SRI format.
+ * Output format: `sha256-${standard-base64-with-padding}` — matches what
+ * the signer emits and what HTML's Subresource Integrity attribute uses,
+ * so manifest values and runtime hashes can compare with `===` directly.
  * @param {ArrayBuffer|Uint8Array} buffer - Data to hash
- * @returns {Promise<string>} Hex string of the hash
+ * @returns {Promise<string>} SRI hash, e.g. "sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU="
  */
 export async function calculateHash(buffer) {
     const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
-    const hashArray = Array.from(new Uint8Array(hashBuffer));
-    return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
-}
-
-/**
- * Convert SRI format hash to hex format.
- * @param {string} sriHash - SRI format hash (e.g., "sha256-abc123...")
- * @returns {string} Hex format hash
- */
-export function sriToHex(sriHash) {
-    if (!sriHash || !sriHash.startsWith('sha256-')) {
-        return sriHash; // Return as-is if not SRI format
+    const bytes = new Uint8Array(hashBuffer);
+    let binary = '';
+    for (let i = 0; i < bytes.length; i++) {
+        binary += String.fromCharCode(bytes[i]);
     }
-
-    try {
-        const base64Hash = sriHash.replace('sha256-', '');
-        const binaryString = atob(base64Hash);
-        const bytes = new Uint8Array(binaryString.length);
-
-        for (let i = 0; i < binaryString.length; i++) {
-            bytes[i] = binaryString.charCodeAt(i);
-        }
-
-        return Array.from(bytes)
-            .map((b) => b.toString(16).padStart(2, '0'))
-            .join('');
-    } catch (error) {
-        console.warn('[DappFence Utils] Failed to convert SRI to hex:', sriHash, error);
-        return sriHash; // Return original on error
-    }
+    return `sha256-${btoa(binary)}`;
 }
 
 /**

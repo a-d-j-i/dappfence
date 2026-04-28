@@ -22,7 +22,6 @@ describe('createAppStore', () => {
         const appStore = createAppStore(createInMemoryDatabase());
 
         // Manifest store (spread at top level)
-        expect(appStore.appVersionStore).toBeDefined();
         expect(appStore.configStore).toBeDefined();
         expect(appStore.trustedManifestStore).toBeDefined();
         expect(appStore.verificationResultsStore).toBeDefined();
@@ -35,9 +34,11 @@ describe('createAppStore', () => {
 
     it('manifest stores are functional', async () => {
         const appStore = createAppStore(createInMemoryDatabase());
-        await appStore.appVersionStore.set('v1');
-        const version = await appStore.appVersionStore.get();
-        expect(version).toBe('v1');
+        const { appVersion } = await appStore.trustedManifestStore.addLatest({
+            files: { '/a.js': 'h' },
+        });
+        const latest = await appStore.trustedManifestStore.getLatest();
+        expect(latest.appVersion).toBe(appVersion);
     });
 
     it('active blocks store is functional', async () => {

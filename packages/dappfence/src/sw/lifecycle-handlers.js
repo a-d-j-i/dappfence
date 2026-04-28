@@ -43,17 +43,22 @@ export function createInstallHandler({
             await swContext.skipWaiting();
 
             logger.log('Initializing manifest system');
-            const manifestVerificationResult = await manifestService.initializeManifest();
+            const manifestVerificationResult = await manifestService.fetchAndStoreManifest();
             if (manifestVerificationResult.status !== VERIFICATION_STATUS.MATCH) {
                 await appStore.recordSecurityViolation(manifestVerificationResult);
                 logger.error('❌ error during initialization: Failed to load manifest');
+            } else {
+                logger.log(
+                    'Manifest system initialized',
+                    manifestVerificationResult.appVersion,
+                    manifestVerificationResult.manifest.mode
+                );
             }
-
             // Even if manifest verification fails, we proceed to load the child SW. This is intentional because:
             // 1. The child SW may provide critical app functionality
             // 2. Security violations are already recorded and will be reported
             // 3. Blocking the child SW would leave the app in a non-functional state
-            // loadAppServiceWorker must be called during `install` and after initializeManifest completes, because:
+            // loadAppServiceWorker must be called during `install` and after fetchAndStoreManifest completes, because:
             // 1. We need manifest data to check child service worker integrity
             // 2. importScripts() can only be called during `install`
             logger.log('Loading child service worker app');
