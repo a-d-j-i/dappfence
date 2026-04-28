@@ -1,5 +1,5 @@
 import { createLogger } from '../core/logger.js';
-import { VERIFICATION_STATUS } from './manifest/verification-helpers.js';
+import { VERIFICATION_STATUS } from '../core/constants.js';
 
 const logger = createLogger();
 

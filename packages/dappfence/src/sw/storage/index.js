@@ -1,9 +1,9 @@
 /**
  * App Store Facade
  *
- * Manifest Store properties (appVersion, config, trustedManifest,
- * verificationResults) are spread at the top level since they're
- * already uniquely named. The other three are grouped objects.
+ * Manifest Store properties (trustedManifest, verificationResults)
+ * are spread at the top level since they're already uniquely named.
+ * The other three are grouped objects.
  *
  * @param {object} db - Low-level Store backend from createDatabase()
  * @param {object} env - Environment info for log enrichment
@@ -11,7 +11,7 @@
  * @param {string} env.origin
  */
 import { createLogger } from '../../core/logger.js';
-import { VERIFICATION_STATUS } from '../manifest/verification-helpers.js';
+import { VERIFICATION_STATUS } from '../../core/constants.js';
 import { createManifestStore } from './manifest-store.js';
 import {
     createActiveBlocksStore,

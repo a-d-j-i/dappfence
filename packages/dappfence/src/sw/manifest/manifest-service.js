@@ -4,10 +4,19 @@
  */
 
 import { calculateHash } from '../../core/crypto.js';
-import { DEFAULT_SECURITY_EXTENSIONS, MODE } from '../../core/constants.js';
+import {
+    ASSET_TYPE,
+    DEFAULT_SECURITY_EXTENSIONS,
+    MODE,
+    VERIFICATION_STATUS,
+} from '../../core/constants.js';
 import { createSingleFlight, hasConfigManifest, isFeatureEnabled } from '../../core/utils.js';
-import { getFileKey, verifyFilePath, verifyManifestSignature } from './operations.js';
-import { ASSET_TYPE, shouldVerifyAsset, VERIFICATION_STATUS } from './verification-helpers.js';
+import {
+    getFileKey,
+    shouldVerifyAsset,
+    verifyFilePath,
+    verifyManifestSignature,
+} from './operations.js';
 import { createLogger } from '../../core/logger.js';
 
 const logger = createLogger();
@@ -111,9 +120,11 @@ export const createManifestService = ({ swContext, appStore, config }) => {
      * clients running different apps could verify against each other's
      * manifest — fine for single-app deploys, wrong once pinning is on.
      */
-    const verifyFileWithContext = async (url, isNavigation, content) => {
+    const verifyFileWithContext = async (url, isNavigation, response) => {
         const fileKey = getFileKey(url, swContext.getLocationHref());
-        const fileHash = await calculateHash(new TextEncoder().encode(content));
+        // Hash the raw bytes — avoids a UTF-8 round-trip that would silently
+        // corrupt non-UTF-8 content and produce a hash the signer never saw.
+        const fileHash = await calculateHash(await response.arrayBuffer());
         logger.log(`Verifying file: ${fileKey} (${fileHash.substring(0, 12)}...)`);
 
         let { appVersion, manifest } = (await trustedManifestStore.findByHash(fileHash)) ?? {};
@@ -175,7 +186,7 @@ export const createManifestService = ({ swContext, appStore, config }) => {
             mode,
             extensions,
             shouldVerify: (url) => shouldVerifyAsset(url, isNavigation, extensions),
-            verifyFile: (url, content) => verifyFileWithContext(url, isNavigation, content),
+            verifyFile: (url, response) => verifyFileWithContext(url, isNavigation, response),
         };
     };
 

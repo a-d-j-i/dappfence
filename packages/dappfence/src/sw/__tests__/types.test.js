@@ -1,29 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import {
-    createSyntheticAppVersion,
-    shouldVerifyAsset,
-    VERIFICATION_STATUS,
-} from '../manifest/verification-helpers.js';
-import { DEFAULT_SECURITY_EXTENSIONS } from '../../core/constants.js';
-
-describe('createSyntheticAppVersion', () => {
-    it('creates a version string from manifest data', async () => {
-        const mockHash = async () => 'abcdef1234567890abcdef';
-        const version = await createSyntheticAppVersion({ files: {} }, mockHash);
-        expect(version).toBe('manifest-abcdef1234567890');
-    });
-
-    it('produces different versions for different manifests', async () => {
-        let callCount = 0;
-        const mockHash = async () => {
-            callCount++;
-            return callCount === 1 ? 'aaaa' : 'bbbb';
-        };
-        const v1 = await createSyntheticAppVersion({ files: { a: '1' } }, mockHash);
-        const v2 = await createSyntheticAppVersion({ files: { b: '2' } }, mockHash);
-        expect(v1).not.toBe(v2);
-    });
-});
+import { shouldVerifyAsset } from '../manifest/operations.js';
+import { DEFAULT_SECURITY_EXTENSIONS, VERIFICATION_STATUS } from '../../core/constants.js';
 
 describe('VERIFICATION_STATUS', () => {
     it('has all expected statuses', () => {

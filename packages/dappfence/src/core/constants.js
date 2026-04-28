@@ -39,3 +39,18 @@ export const MODE = {
  * based on manifest metadata and file extensions.
  */
 export const DEFAULT_SECURITY_EXTENSIONS = ['.js', '.css', '.json', '.html', '.svg'];
+
+export const VERIFICATION_STATUS = {
+    MATCH: 'MATCH',
+    MISMATCH: 'MISMATCH',
+    NOT_FOUND_IN_MANIFEST: 'NOT_FOUND_IN_MANIFEST',
+    UNSUPPORTED_SIGNATURE: 'UNSUPPORTED_SIGNATURE',
+    ERROR: 'VERIFICATION_ERROR',
+    CONFIG_ERROR: 'CONFIG_ERROR',
+};
+
+export const ASSET_TYPE = {
+    ASSET: 'asset',
+    SERVICE_WORKER: 'service-worker',
+    MANIFEST: 'manifest',
+};

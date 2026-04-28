@@ -22,38 +22,6 @@ describe('createManifestStore', () => {
         storage = createManifestStore(createInMemoryStorage());
     });
 
-    describe('config', () => {
-        it('returns default config when nothing is stored', async () => {
-            const config = await storage.configStore.get();
-            expect(config).toEqual({
-                includeExternalDomains: true,
-                allowedExternalDomains: [],
-                blockedExternalDomains: [],
-            });
-        });
-
-        it('merges stored config with defaults', async () => {
-            await storage.configStore.set({ includeExternalDomains: false });
-            const config = await storage.configStore.get();
-            expect(config).toEqual({
-                includeExternalDomains: false,
-                allowedExternalDomains: [],
-                blockedExternalDomains: [],
-            });
-        });
-
-        it('stores and retrieves custom config fields', async () => {
-            await storage.configStore.set({
-                includeExternalDomains: true,
-                allowedExternalDomains: ['cdn.example.com'],
-                blockedExternalDomains: ['evil.com'],
-            });
-            const config = await storage.configStore.get();
-            expect(config.allowedExternalDomains).toEqual(['cdn.example.com']);
-            expect(config.blockedExternalDomains).toEqual(['evil.com']);
-        });
-    });
-
     describe('trustedManifest', () => {
         // appVersion is a deterministic synthetic key derived from the
         // manifest content via SHA-256, so tests use distinct content to

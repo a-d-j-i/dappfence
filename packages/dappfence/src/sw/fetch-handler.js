@@ -5,8 +5,7 @@
 
 import { createBlockResponse } from './response.js';
 import { createLogger } from '../core/logger.js';
-import { API_PREFIX, MODE } from '../core/constants.js';
-import { ASSET_TYPE, VERIFICATION_STATUS } from './manifest/verification-helpers.js';
+import { API_PREFIX, ASSET_TYPE, MODE, VERIFICATION_STATUS } from '../core/constants.js';
 import { isFeatureEnabled } from '../core/utils.js';
 
 const logger = createLogger();
@@ -147,12 +146,9 @@ export function createSecurityFetchHandler({
     async function verifyAssetIntegrity(ctx, request, response) {
         logger.log('Verifying security-critical asset:', request.url);
 
-        // Get file content for verification
-        const assetClone = response.clone();
-        const assetContent = await assetClone.text();
-
-        // Verification mode: check against trusted manifest
-        const verificationResult = await ctx.verifyFile(request.url, assetContent);
+        // Clone so the original body is still available to forward to the page;
+        // verifyFile consumes the clone via arrayBuffer().
+        const verificationResult = await ctx.verifyFile(request.url, response.clone());
         if (verificationResult && verificationResult.status !== VERIFICATION_STATUS.MATCH) {
             const blockDetails = {
                 ...verificationResult,

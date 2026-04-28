@@ -22,7 +22,6 @@ describe('createAppStore', () => {
         const appStore = createAppStore(createInMemoryDatabase());
 
         // Manifest store (spread at top level)
-        expect(appStore.configStore).toBeDefined();
         expect(appStore.trustedManifestStore).toBeDefined();
         expect(appStore.verificationResultsStore).toBeDefined();
 

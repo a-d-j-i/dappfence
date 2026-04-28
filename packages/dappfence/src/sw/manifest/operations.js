@@ -1,4 +1,4 @@
-import { ASSET_TYPE, VERIFICATION_STATUS } from './verification-helpers.js';
+import { ASSET_TYPE, VERIFICATION_STATUS } from '../../core/constants.js';
 import { recoverEthereumAddress, recoverPersonalSign } from '../../core/crypto.js';
 import { createLogger } from '../../core/logger.js';
 import { isFeatureEnabled } from '../../core/utils.js';
@@ -148,6 +148,27 @@ export const getFileKey = (url, baseUrl) => {
 };
 
 /**
+ * Determines if a URL requires security verification based on manifest metadata.
+ * Logs the decision reason at each branch; callers only read the boolean.
+ * @param {string} url - The request URL
+ * @param {boolean} isNavigation - Whether this is a navigation request
+ * @param {string[]} extensions - the manifest metadata extensions or default extensions
+ * @returns {boolean} true if the asset should be verified against the manifest
+ */
+export const shouldVerifyAsset = (url, isNavigation, extensions) => {
+    if (isNavigation) {
+        logger.log(`Asset check for ${url}: Navigation request`);
+        return true;
+    }
+    const path = new URL(url).pathname.toLowerCase();
+    const ret = extensions.some((ext) => path.endsWith(ext.toLowerCase()));
+    logger.log(
+        `Asset check for ${url}, ${ret ? 'found' : 'not found'} in extensions ${extensions}`
+    );
+    return ret;
+};
+
+/**
  * Validate manifest data signature using Ethereum-style secp256k1 signature recovery.
  * @param {string} manifestSignatureType - Signature algorithm identifier
  * @param {string} manifestSignatureIdentity - Expected signer address
@@ -215,7 +236,7 @@ export async function verifyLocation({ swContext, manifestService }, url) {
         );
         if (response && response.ok) {
             const ctx = await manifestService.resolveManifest();
-            return await ctx.verifyFile(url, await response.text());
+            return await ctx.verifyFile(url, response);
         }
         logger.error(`Failed to fetch ${url}: ${response.status} ${response.statusText}`);
     } catch (error) {

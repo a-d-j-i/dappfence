@@ -8,7 +8,7 @@ import {
     verifyLocation,
 } from '../manifest/operations.js';
 import { createSingleFlight } from '../../core/utils.js';
-import { VERIFICATION_STATUS } from '../manifest/verification-helpers.js';
+import { VERIFICATION_STATUS } from '../../core/constants.js';
 
 describe('verifyFilePath', () => {
     const manifest = {
@@ -191,12 +191,10 @@ describe('verifyLocation', () => {
             timestamp: '2026-01-01T00:00:00.000Z',
         };
         const verifyFile = vi.fn().mockResolvedValue(verifyFileResult);
+        const response = new Response('file content');
         const deps = {
             swContext: {
-                fetch: vi.fn().mockResolvedValue({
-                    ok: true,
-                    text: async () => 'file content',
-                }),
+                fetch: vi.fn().mockResolvedValue(response),
             },
             manifestService: mockManifestService(verifyFile),
         };
@@ -206,7 +204,7 @@ describe('verifyLocation', () => {
         expect(deps.swContext.fetch).toHaveBeenCalledWith('/lib.js', {
             headers: { 'x-dappfence': 'sw-verification' },
         });
-        expect(verifyFile).toHaveBeenCalledWith('/lib.js', 'file content');
+        expect(verifyFile).toHaveBeenCalledWith('/lib.js', response);
         expect(result).toEqual(verifyFileResult);
     });
 
@@ -240,16 +238,14 @@ describe('verifyImportedScript', () => {
         delete globalThis.__FEATURES__;
     });
 
-    it('calls verifyFile with script URL and content', async () => {
+    it('calls verifyFile with script URL and the fetched response', async () => {
         const verifyFile = vi.fn().mockResolvedValue({ status: 'MATCH' });
+        const response = new Response('script content');
         const core = {
             manifestService: mockManifestService(verifyFile),
             appStore: { recordSecurityViolation: vi.fn() },
             swContext: {
-                fetch: vi.fn().mockResolvedValue({
-                    ok: true,
-                    text: async () => 'script content',
-                }),
+                fetch: vi.fn().mockResolvedValue(response),
             },
         };
 
@@ -258,7 +254,7 @@ describe('verifyImportedScript', () => {
         expect(core.swContext.fetch).toHaveBeenCalledWith('https://example.com/lib.js', {
             headers: { 'x-dappfence': 'sw-verification' },
         });
-        expect(verifyFile).toHaveBeenCalledWith('https://example.com/lib.js', 'script content');
+        expect(verifyFile).toHaveBeenCalledWith('https://example.com/lib.js', response);
         expect(core.appStore.recordSecurityViolation).not.toHaveBeenCalled();
     });
 
@@ -268,10 +264,7 @@ describe('verifyImportedScript', () => {
             manifestService: mockManifestService(verifyFile),
             appStore: { recordSecurityViolation: vi.fn() },
             swContext: {
-                fetch: vi.fn().mockResolvedValue({
-                    ok: true,
-                    text: async () => 'bad content',
-                }),
+                fetch: vi.fn().mockResolvedValue(new Response('bad content')),
             },
         };
 

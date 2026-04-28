@@ -8,41 +8,33 @@
 
 import { calculateHash } from '../../core/crypto.js';
 import { normalizeManifestData } from '../manifest/operations.js';
-import { createSyntheticAppVersion } from '../manifest/verification-helpers.js';
 
 // Trusted Manifest System constants
 const TRUSTED_MANIFEST_KEY = 'trusted-manifest';
 const VERIFICATION_RESULTS_KEY = 'verification-results';
-const MANIFEST_CONFIG_KEY = 'manifest-config';
 
 // Trusted-manifest priority queue: newest-first, capped to MAX_MANIFESTS so
 // the working set stays bounded across upgrades.
 const MAX_MANIFESTS = 5;
 
 /**
+ * Synthesize a deterministic appVersion from manifest content. Strips the
+ * `sha256-` encoding prefix before truncating, so the 16-char tail is pure
+ * entropy (~96 bits of base64) rather than 9 payload chars after a fixed
+ * prefix. Same content -> same key, which is how to addLatest dedups.
+ */
+const createSyntheticAppVersion = async (manifestData) => {
+    const manifestStr = JSON.stringify(manifestData);
+    const manifestHash = await calculateHash(new TextEncoder().encode(manifestStr));
+    const rawHash = manifestHash.replace(/^sha256-/, '');
+    return `manifest-${rawHash.substring(0, 16)}`;
+};
+
+/**
  * Create all manifest database operations with an injected database backend.
  * @param {object} database - database backend with { get(key), set(key, value), delete(key) }
  */
 export function createManifestStore(database) {
-    /**
-     * Configuration database Operations
-     */
-    const configStore = {
-        async get() {
-            const defaultConfig = {
-                includeExternalDomains: true,
-                allowedExternalDomains: [],
-                blockedExternalDomains: [],
-            };
-            const config = await database.get(MANIFEST_CONFIG_KEY);
-            return { ...defaultConfig, ...config };
-        },
-
-        async set(config) {
-            await database.set(MANIFEST_CONFIG_KEY, config);
-        },
-    };
-
     /**
      * Trusted Manifest database Operations
      *
@@ -70,7 +62,7 @@ export function createManifestStore(database) {
     const buildHashIndex = (list) => {
         const index = {};
         // Iterate oldest -> newest so newer entries overwrite, matching
-        // priority-queue semantics. Index points to the entry itself so
+        // priority-queue semantics. Index points to the entry itself, so
         // findByHash can return both appVersion and manifest in one lookup.
         for (let i = list.length - 1; i >= 0; i--) {
             const entry = list[i];
@@ -97,7 +89,7 @@ export function createManifestStore(database) {
             // content; same content -> same key, so re-adding dedups and
             // promotes to the front.
             const manifest = normalizeManifestData(rawManifest);
-            const appVersion = await createSyntheticAppVersion(manifest, calculateHash);
+            const appVersion = await createSyntheticAppVersion(manifest);
             // Read-modify-write under a single transaction so concurrent
             // addLatest calls can't clobber each other's updates. Read from
             // the tx (not cachedList) so the inner read sees the committed state,
@@ -171,7 +163,6 @@ export function createManifestStore(database) {
     };
 
     return {
-        configStore,
         trustedManifestStore,
         verificationResultsStore,
     };
