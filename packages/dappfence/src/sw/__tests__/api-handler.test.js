@@ -3,7 +3,7 @@ import { createApiHandler } from '../api-handler.js';
 
 vi.mock('../../templates/security-warning.html?raw', () => ({
     default:
-        '<html><!-- API_TOKEN_PLACEHOLDER --><style>/* CSS will be injected here during build */</style><script>/* JavaScript values will be injected here during build */</script></html>',
+        '<html><style>/* CSS will be injected here during build */</style><script id="dappfence-config">const DAPPFENCE_CONFIG = {};</script></html>',
 }));
 vi.mock('../../templates/security-warning.css?raw', () => ({
     default: 'body { color: red; }',
@@ -70,24 +70,26 @@ describe('createApiHandler', () => {
 
         it('falls through (undefined) for protected endpoints with wrong token', async () => {
             const res = await handler(
-                '/sw-api/active-blocks',
-                req('/sw-api/active-blocks', { token: 'wrong' })
+                '/sw-api/site-unblock',
+                req('/sw-api/site-unblock', { method: 'POST', token: 'wrong' })
             );
             expect(res).toBeUndefined();
         });
 
         it('accepts token via header', async () => {
             const res = await handler(
-                '/sw-api/active-blocks',
-                req('/sw-api/active-blocks', { token: TOKEN })
+                '/sw-api/site-unblock',
+                req('/sw-api/site-unblock', { method: 'POST', token: TOKEN })
             );
             expect(res.status).toBe(200);
         });
 
         it('accepts token via query param', async () => {
             const res = await handler(
-                '/sw-api/active-blocks',
-                new Request(`https://example.com/sw-api/active-blocks?token=${TOKEN}`)
+                '/sw-api/site-unblock',
+                new Request(`https://example.com/sw-api/site-unblock?token=${TOKEN}`, {
+                    method: 'POST',
+                })
             );
             expect(res.status).toBe(200);
         });
@@ -198,32 +200,24 @@ describe('createApiHandler', () => {
             expect(onSecurityViolation).toHaveBeenCalledTimes(1);
 
             const html = await res.text();
-            expect(html).toContain(`content="${TOKEN}"`);
             expect(html).toContain('body { color: red; }');
         });
-    });
 
-    describe('GET /sw-api/active-blocks', () => {
-        it('returns an empty array when no blocks', async () => {
-            appStore.activeBlocksStore.getActiveBlocks.mockResolvedValue([]);
+        // `encodeURIComponent` output never contains `"`, so this capture is safe.
+        function decodeInlinedConfig(html) {
+            const match = html.match(/decodeURIComponent\("([^"]*)"\)/);
+            if (!match) throw new Error('no encoded config payload found');
+            return JSON.parse(decodeURIComponent(match[1]));
+        }
 
-            const res = await handler(
-                '/sw-api/active-blocks',
-                req('/sw-api/active-blocks', { token: TOKEN })
-            );
-            expect(res.status).toBe(200);
-            expect(await res.json()).toEqual([]);
-        });
-
-        it('returns block records with public fields', async () => {
+        it('inlines apiToken, activeBlocks, and autoConfirmSiteLock into DAPPFENCE_CONFIG', async () => {
+            appStore.activeBlocksStore.isBlocked.mockResolvedValue(true);
             appStore.activeBlocksStore.getActiveBlocks.mockResolvedValue([
                 {
                     id: 'block_abc',
                     timestamp: '2025-01-01T00:00:00.000Z',
-                    lastSeen: '2025-01-02T00:00:00.000Z',
                     status: 'MISMATCH',
                     fileKey: '/app.js',
-                    url: 'https://example.com/app.js',
                     expectedHash: 'aaa',
                     actualHash: 'bbb',
                     occurrenceCount: 3,
@@ -231,42 +225,98 @@ describe('createApiHandler', () => {
             ]);
 
             const res = await handler(
-                '/sw-api/active-blocks',
-                req('/sw-api/active-blocks', { token: TOKEN })
+                '/sw-api/security-warning',
+                req('/sw-api/security-warning', { mode: 'navigate' })
             );
-            const body = await res.json();
+            const html = await res.text();
 
-            expect(body).toHaveLength(1);
-            expect(body[0]).toMatchObject({
+            expect(html).not.toContain('const DAPPFENCE_CONFIG = {};');
+            const config = decodeInlinedConfig(html);
+            expect(config.apiToken).toBe(TOKEN);
+            expect(config.autoConfirmSiteLock).toBe(false); // mocked `isFeatureEnabled` returns false
+            expect(config.activeBlocks).toHaveLength(1);
+            expect(config.activeBlocks[0]).toMatchObject({
                 id: 'block_abc',
                 fileKey: '/app.js',
-                occurrenceCount: 3,
                 expectedHash: 'aaa',
-                actualHash: 'bbb',
+                occurrenceCount: 3,
             });
-            expect(body[0].formattedTimestamp).toBeDefined();
+            expect(config.activeBlocks[0].formattedTimestamp).toBeDefined();
         });
 
-        it('defaults missing optional fields', async () => {
+        it('defaults missing optional block fields in the inlined payload', async () => {
+            appStore.activeBlocksStore.isBlocked.mockResolvedValue(true);
             appStore.activeBlocksStore.getActiveBlocks.mockResolvedValue([
                 {
                     id: 'block_xyz',
                     timestamp: '2025-01-01T00:00:00.000Z',
                     status: 'NEW_FILE',
                     fileKey: '/new.js',
-                    url: 'https://example.com/new.js',
                 },
             ]);
 
             const res = await handler(
-                '/sw-api/active-blocks',
-                req('/sw-api/active-blocks', { token: TOKEN })
+                '/sw-api/security-warning',
+                req('/sw-api/security-warning', { mode: 'navigate' })
             );
-            const body = await res.json();
+            const { activeBlocks } = decodeInlinedConfig(await res.text());
 
-            expect(body[0].expectedHash).toBe('N/A');
-            expect(body[0].actualHash).toBe('N/A');
-            expect(body[0].occurrenceCount).toBe(1);
+            expect(activeBlocks[0].expectedHash).toBe('N/A');
+            expect(activeBlocks[0].actualHash).toBe('N/A');
+            expect(activeBlocks[0].occurrenceCount).toBe(1);
+        });
+
+        it('keeps HTML-sensitive chars out of the inlined payload while preserving them on decode', async () => {
+            appStore.activeBlocksStore.isBlocked.mockResolvedValue(true);
+            const nastyFileKey = '/x.js?</script><script>alert(1&2)"\\  ';
+            appStore.activeBlocksStore.getActiveBlocks.mockResolvedValue([
+                {
+                    id: 'block_evil',
+                    timestamp: '2025-01-01T00:00:00.000Z',
+                    status: 'MISMATCH',
+                    fileKey: nastyFileKey,
+                },
+            ]);
+
+            const res = await handler(
+                '/sw-api/security-warning',
+                req('/sw-api/security-warning', { mode: 'navigate' })
+            );
+            const html = await res.text();
+            const match = html.match(/decodeURIComponent\("([^"]*)"\)/);
+            expect(match).not.toBeNull();
+            const encoded = match[1];
+
+            // None of the breakout chars can appear in encodeURIComponent output.
+            for (const ch of ['<', '>', '"', '\\', '&', ' ', ' ']) {
+                expect(encoded).not.toContain(ch);
+            }
+            // Round-trip preserves the original attacker-supplied bytes intact.
+            const { activeBlocks } = decodeInlinedConfig(html);
+            expect(activeBlocks[0].fileKey).toBe(nastyFileKey);
+        });
+
+        it('injects the config wrapped in DOUBLE quotes (single quotes would be unsafe)', async () => {
+            // `'` is in encodeURIComponent's unreserved set, so an attacker-
+            // supplied apostrophe would survive unescaped. Wrapping in `'...'`
+            // would let them close the literal.
+            appStore.activeBlocksStore.isBlocked.mockResolvedValue(true);
+            appStore.activeBlocksStore.getActiveBlocks.mockResolvedValue([
+                {
+                    id: 'block_quote',
+                    timestamp: '2025-01-01T00:00:00.000Z',
+                    status: 'MISMATCH',
+                    fileKey: "/a'b;alert(1)//",
+                },
+            ]);
+
+            const res = await handler(
+                '/sw-api/security-warning',
+                req('/sw-api/security-warning', { mode: 'navigate' })
+            );
+            const html = await res.text();
+            expect(html).toMatch(/JSON\.parse\(decodeURIComponent\("[^"]+"\)\)/);
+            expect(html).not.toMatch(/decodeURIComponent\('[^']+'\)/);
         });
     });
 

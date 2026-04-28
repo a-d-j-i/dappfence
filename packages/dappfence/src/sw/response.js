@@ -1,4 +1,51 @@
+// Import security warning templates using Vite's raw imports
+import securityWarningHtml from '../templates/security-warning.html?raw';
+import securityWarningCss from '../templates/security-warning.css?raw';
+import { isFeatureEnabled } from '../core/utils.js';
 import { API } from '../core/constants.js';
+
+// CSS and the build-time feature flag are static across all renders — fold
+// them into the template once at a module load instead of repeating the work
+// on every block. `isFeatureEnabled` reads a Vite-defined compile-time
+// constant, so it can never change at runtime.
+const BASE_HTML = securityWarningHtml.replace(
+    '/* CSS will be injected here during build */',
+    securityWarningCss
+);
+const AUTO_CONFIRM_SITE_LOCK = isFeatureEnabled('auto_confirm_site_lock');
+
+// Locate the template's placeholder config <script> once at a module load and
+// pre-slice the surrounding HTML. Matching by id (not by exact string) means
+// prettier / editors can reformat the tag freely without breaking the
+// renderer. The presence of the placeholder is pinned by a unit test against the
+// bundled template — no need for a runtime check here.
+const CONFIG_SCRIPT_PATTERN = /<script id="dappfence-config">[\s\S]*?<\/script>/;
+const { index: configIndex, 0: configMatch } = CONFIG_SCRIPT_PATTERN.exec(BASE_HTML);
+const HTML_PREFIX = BASE_HTML.slice(0, configIndex);
+const HTML_SUFFIX = BASE_HTML.slice(configIndex + configMatch.length);
+
+/**
+ * Emit the `<script>` tag that defines `DAPPFENCE_CONFIG`. The server swaps
+ * the template's default `<script id="dappfence-config">…</script>` block for
+ * this one. Uses `encodeURIComponent` + a double-quoted string literal.
+ * Double quotes are load-bearing: `'` is in `encodeURIComponent`'s unreserved
+ * set, so wrapping in single quotes would let an attacker-supplied apostrophe
+ * close the literal.
+ */
+function renderConfigScript(config) {
+    const encoded = encodeURIComponent(JSON.stringify(config));
+    return `<script>const DAPPFENCE_CONFIG = JSON.parse(decodeURIComponent("${encoded}"));</script>`;
+}
+
+function enrichActiveBlocks(blocks) {
+    return blocks.map((block) => ({
+        ...block,
+        expectedHash: block.expectedHash || 'N/A',
+        actualHash: block.actualHash || 'N/A',
+        occurrenceCount: block.occurrenceCount || 1,
+        formattedTimestamp: new Date(block.timestamp).toLocaleString(),
+    }));
+}
 
 /**
  * Creates a Response object with the specified parameters
@@ -115,4 +162,33 @@ export function createBlockResponse(isNavigation, requestUrl, locationHref) {
  */
 export function createNavigationWarningResponse() {
     return createRedirectResponse(API.SECURITY_WARNING);
+}
+
+/**
+ * Build the security warning page response: block details, API token, and the
+ * build-time feature flag are baked into an inline `DAPPFENCE_CONFIG`. No
+ * runtime fetches are needed to populate the page — everything travels in the
+ * HTML itself.
+ *
+ * @param {string|null} apiToken
+ * @param {Array} activeBlocks
+ */
+export function createSecurityPageResponse(apiToken, activeBlocks) {
+    const configScript = renderConfigScript({
+        apiToken,
+        activeBlocks: enrichActiveBlocks(activeBlocks),
+        autoConfirmSiteLock: AUTO_CONFIRM_SITE_LOCK,
+    });
+    const html = HTML_PREFIX + configScript + HTML_SUFFIX;
+    return new Response(html, {
+        status: 200,
+        statusText: 'Security Warning',
+        headers: {
+            'Content-Type': 'text/html; charset=utf-8',
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+            'X-Frame-Options': 'DENY',
+            'Content-Security-Policy':
+                "default-src 'unsafe-inline' 'self'; object-src 'none'; base-uri 'self';",
+        },
+    });
 }

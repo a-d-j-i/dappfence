@@ -17,7 +17,6 @@ export const API_PREFIX = '/sw-api/';
 export const API = {
     STATUS: API_PREFIX + 'status',
     SECURITY_WARNING: API_PREFIX + 'security-warning',
-    ACTIVE_BLOCKS: API_PREFIX + 'active-blocks',
     SITE_UNBLOCK: API_PREFIX + 'site-unblock',
 };
 
