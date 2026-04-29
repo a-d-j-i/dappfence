@@ -65,7 +65,7 @@ export default defineConfig({
         : {}),
     /* Configure projects for major browsers, use fake-time project when executed via run-playwright-faketime.js script */
     projects: [
-        ...// too slot to run them all the time, they are used to measure automatic cache invalidation.
+        ...// to slow to run them all the time, they are used to measure automatic cache invalidation.
         (process.env.RUN_FAKETIME_TESTS
             ? [
                   {
@@ -92,6 +92,13 @@ export default defineConfig({
                   },
               ]
             : []),
+        ...['reporting-test'].map((name) => ({
+            name,
+            testMatch: [`${name}/**/*.spec.ts`],
+            use: {
+                ...devices['Desktop Chrome'],
+            },
+        })),
         ...['simple-app', 'simple-app-sw-fixed', 'simple-app-sw-capture'].map((name) => ({
             name,
             testMatch: [`${name}/**/*.spec.ts`, 'common/**/*.spec.ts'],

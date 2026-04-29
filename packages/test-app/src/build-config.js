@@ -63,6 +63,11 @@ const BUILD_TARGETS = {
         htmlOutput: 'tampering-test.html',
         description: 'Tampering Security Test',
     },
+    'reporting-test': {
+        ...simpleAppBase,
+        templateFlags: { USE_SW_REGISTER: true, USE_APP: false },
+        manifestMode: MODE.REPORTING,
+    },
 };
 
 const OUT_DIR = path.join(ROOT_DIR, 'dist');
