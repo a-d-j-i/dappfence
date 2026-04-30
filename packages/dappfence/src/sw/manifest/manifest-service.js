@@ -30,7 +30,7 @@ const logger = createLogger();
  */
 export const createManifestService = ({ swContext, appStore, config }) => {
     const { trustedManifestStore, verificationResultsStore } = appStore;
-
+    const clientIdXManifest = new Map();
     const singleFlight = createSingleFlight();
 
     const loadManifestFromUrl = async () => {
@@ -43,7 +43,7 @@ export const createManifestService = ({ swContext, appStore, config }) => {
                 headers: { 'x-dappfence': 'manifest-load' },
             });
 
-            if (!response.ok) {
+            if (!response || !response.ok) {
                 logger.error(
                     `Failed to load manifest: ${response?.status} ${response?.statusText}`
                 );
@@ -88,6 +88,31 @@ export const createManifestService = ({ swContext, appStore, config }) => {
     };
 
     /**
+     * Fetch a URL and verify its content against the trusted manifest.
+     * Returns a verifyFile-compatible result so callers can decide what to do.
+     * @param {string} url
+     * @returns {Promise<object>} Verification result with at least { status }; verifyFile populates fileKey/expectedHash/actualHash on success.
+     */
+    const verifyLocation = async (url) => {
+        try {
+            const response = await swContext.fetch(
+                url,
+                isFeatureEnabled('mark_request')
+                    ? { headers: { 'x-dappfence': 'sw-verification' } }
+                    : {}
+            );
+            if (response && response.ok) {
+                const fileKey = getFileKey(url, swContext.getLocationHref());
+                return await verifyResponse(fileKey, response);
+            }
+            logger.error(`Failed to fetch ${url}: ${response.status} ${response.statusText}`);
+        } catch (error) {
+            logger.error(`Error verifying ${url}:`, error);
+        }
+        return { status: VERIFICATION_STATUS.ERROR };
+    };
+
+    /**
      * Verify a file against a (possibly pre-resolved) manifest. When
      * `manifest` is undefined, runs the cold-start path: identify the app
      * from a stored manifest by file hash, or fetch a fresh one. Once a
@@ -95,47 +120,45 @@ export const createManifestService = ({ swContext, appStore, config }) => {
      * mismatch, refetches once in case an in-flight manifest update has
      * landed (skipped if we just fetched a fresh manifest above).
      *
-     * TODO(per-client pinning): once `resolveManifest` pins a manifest to
-     * `clientId` on navigation, this function needs to take that pinned
-     * `{appVersion, manifest}` as an argument and verify against it,
-     * falling back to `findByHash` only when there's no pin yet. Today's
-     * content-driven `findByHash` lookup is shared across clients, so two
-     * clients running different apps could verify against each other's
-     * manifest — fine for single-app deploys, wrong once pinning is on.
+     * once `resolveManifest` pins a manifest to `clientId` on navigation,
+     * this function takes that pinned `{appVersion, manifest}` and verifies
+     * against it, falling back to `findByHash` only when there's no pin yet.
      */
-    const verifyFileWithContext = async (url, isNavigation, response, extensions, contentTypes) => {
-        const fileKey = getFileKey(url, swContext.getLocationHref());
-        // Skip-or-verify decision lives here, not at the caller — the caller
-        // would have to make the same call with the same inputs (URL +
-        // navigation flag + response headers) plus the manifest's extension
-        // and content-type lists, which it doesn't have direct access to.
-        // Pass the resolved fileKey rather than the raw URL: importScripts
-        // hands us relative URLs that `new URL(url)` can't parse standalone.
-        if (!shouldVerifyAsset(fileKey, isNavigation, response, extensions, contentTypes)) {
-            logger.log(`⏭️  Skipping verification: ${fileKey}`);
-            return { status: VERIFICATION_STATUS.SKIPPED, fileKey };
-        }
+    const verifyResponse = async (fileKey, response, isNavigation, clientId) => {
         // Hash the raw bytes — avoids a UTF-8 round-trip that would silently
         // corrupt non-UTF-8 content and produce a hash the signer never saw.
         const fileHash = await calculateHash(await response.arrayBuffer());
-        logger.log(`Verifying file: ${fileKey} (${fileHash.substring(0, 12)}...)`);
-
-        let { appVersion, manifest } = (await trustedManifestStore.findByHash(fileHash)) ?? {};
-        if (appVersion) {
-            logger.log(`Identified manifest from hash ${fileHash} ${appVersion}`);
-        } else {
-            const violationOrManifest = await fetchAndStoreManifest();
-            if (violationOrManifest.status.isViolation) {
-                return violationOrManifest;
-            }
-            appVersion = violationOrManifest.appVersion;
-            manifest = violationOrManifest.manifest;
+        logger.log(`Verifying file: ${fileKey} hash ${fileHash}`);
+        let manifestInfo;
+        if (clientId && !isNavigation) {
+            manifestInfo = clientIdXManifest.get(clientId);
         }
-        const result = verifyFilePath(manifest, fileKey, fileHash, isNavigation);
+        // Use pinned manifest for this client if available; otherwise look up by hash.
+        // (Pinned manifests are set during navigation; prior clients may lack one.)
+        if (!manifestInfo) {
+            manifestInfo = await trustedManifestStore.findByHash(fileHash);
+            if (!manifestInfo || !manifestInfo.appVersion) {
+                const violationOrManifest = await fetchAndStoreManifest();
+                if (violationOrManifest.status.isViolation) {
+                    return violationOrManifest;
+                }
+                manifestInfo = {
+                    appVersion: violationOrManifest.appVersion,
+                    manifest: violationOrManifest.manifest,
+                };
+            }
+            if (clientId) {
+                clientIdXManifest.set(clientId, manifestInfo);
+            }
+        }
+        logger.log(
+            `Using manifest ${manifestInfo.appVersion} for ${fileKey} hash ${fileHash} clientId ${clientId} ${isNavigation ? 'navigation' : 'no-navigation'}`
+        );
+        const result = verifyFilePath(manifestInfo.manifest, fileKey, fileHash, isNavigation);
         // Persist as the description string — structuredClone won't reattach
         // the verdict object's identity, and downstream UI/JSON consumers
         // expect a plain status name.
-        await verificationResultsStore.add(appVersion, {
+        await verificationResultsStore.add(manifestInfo.appVersion, {
             ...result,
             status: result.status.description,
         });
@@ -158,7 +181,7 @@ export const createManifestService = ({ swContext, appStore, config }) => {
      * resolves the global manifest. Pass `{}` (or nothing) for operations
      * outside the fetch pipeline such as importScripts.
      */
-    // eslint-disable-next-line no-unused-vars
+
     const resolveManifest = async ({ clientId, isNavigation } = {}) => {
         // The latest stored manifest drives policy; on a cold start we fetch one.
         // On fetch failure the result has no `manifest` field, so policy
@@ -187,13 +210,20 @@ export const createManifestService = ({ swContext, appStore, config }) => {
         );
         return {
             mode,
-            verifyFile: (url, response) =>
-                verifyFileWithContext(url, isNavigation, response, extensions, contentTypes),
+            verifyFile: (url, response) => {
+                const fileKey = getFileKey(url, swContext.getLocationHref());
+                if (!shouldVerifyAsset(fileKey, isNavigation, response, extensions, contentTypes)) {
+                    logger.log(`⏭️  Skipping verification: ${fileKey}`);
+                    return { status: VERIFICATION_STATUS.SKIPPED, fileKey };
+                }
+                return verifyResponse(fileKey, response, isNavigation, clientId);
+            },
         };
     };
 
     return {
         fetchAndStoreManifest,
         resolveManifest,
+        verifyLocation,
     };
 };
