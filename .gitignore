@@ -41,6 +41,7 @@ Thumbs.db
 **/dist/
 **/coverage/
 **/test-results/
+**/playwright-report/
 
 # Temporary files
 .tmp/

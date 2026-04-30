@@ -1,0 +1,35 @@
+{
+    "name": "@dappfence/extension",
+    "version": "0.1.0",
+    "private": true,
+    "description": "Chromium extension that auto-injects DappFence on sites that publish an integrity manifest",
+    "type": "module",
+    "scripts": {
+        "build": "node build.js",
+        "build:firefox": "node build.js --target=firefox",
+        "pack": "node build.js && node pack.js",
+        "pack:firefox": "node build.js --target=firefox && node pack.js --target=firefox",
+        "dev": "node test/server.js",
+        "dev:prod": "node test/server.js --prod",
+        "test": "playwright test",
+        "clean": "rm -rf dist dist-test release test-results playwright-report",
+        "lint": "eslint build.js icon.js pack.js src/ --fix",
+        "check": "eslint build.js icon.js pack.js src/ && prettier --check build.js icon.js pack.js src/",
+        "format": "prettier --write build.js icon.js pack.js src/"
+    },
+    "engines": {
+        "node": ">=16.0.0"
+    },
+    "devDependencies": {
+        "@dappfence/core": "file:../../packages/dappfence",
+        "@dappfence/signer": "file:../../packages/signer",
+        "@dappfence/test-app": "file:../../packages/test-app",
+        "@eslint/js": "9.39.4",
+        "@playwright/test": "^1.59.1",
+        "archiver": "8.0.0",
+        "eslint": "9.39.4",
+        "eslint-config-prettier": "10.1.8",
+        "globals": "14.0.0",
+        "prettier": "3.2.5"
+    }
+}
