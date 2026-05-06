@@ -50,6 +50,11 @@ export async function generateBlockId({ status, fileKey, expectedHash, actualHas
  * @param {object} database - Store backend with { get, set, withTx }
  */
 export function createActiveBlocksStore(database) {
+    // In-memory cache: null = unhydrated, boolean = known state.
+    // Shared across all tabs (single SW instance). Updated synchronously
+    // after every write so subsequent isBlocked() calls never touch IndexedDB.
+    let blocked = null;
+
     /**
      * Upsert the block record and add its ID to the active set iff it's brand new.
      * Recurrences of known blocks (including previously cleared ones) only bump
@@ -63,7 +68,7 @@ export function createActiveBlocksStore(database) {
      */
     async function recordSecurityBlock(blockData) {
         const blockId = await generateBlockId(blockData);
-        return await database.withTx(async (tx) => {
+        const mustBlock = await database.withTx(async (tx) => {
             try {
                 const blocks = (await tx.get(BLOCKS_KEY)) || {};
                 const activeIds = (await tx.get(ACTIVE_BLOCK_IDS_KEY)) || [];
@@ -102,12 +107,19 @@ export function createActiveBlocksStore(database) {
                 return true;
             }
         });
+        if (mustBlock) {
+            blocked = true;
+        }
+        return mustBlock;
     }
 
     async function isBlocked() {
         try {
-            const activeIds = (await database.get(ACTIVE_BLOCK_IDS_KEY)) || [];
-            return activeIds.length > 0;
+            if (blocked === null) {
+                const activeIds = (await database.get(ACTIVE_BLOCK_IDS_KEY)) || [];
+                blocked = activeIds.length > 0;
+            }
+            return blocked;
         } catch (error) {
             logger.error('Failed to read active block ids:', error);
             return false;
@@ -158,6 +170,7 @@ export function createActiveBlocksStore(database) {
     async function clearBlockCondition() {
         try {
             await database.set(ACTIVE_BLOCK_IDS_KEY, []);
+            blocked = false;
             logger.log('Block condition cleared');
         } catch (error) {
             logger.error('Failed to clear block condition:', error);
