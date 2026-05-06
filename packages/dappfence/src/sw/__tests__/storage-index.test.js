@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { createAppStore } from '../storage/index.js';
+import { VERIFICATION_STATUS } from '../../core/constants.js';
 
 function createInMemoryDatabase() {
     const store = new Map();
@@ -22,8 +23,6 @@ describe('createAppStore', () => {
         const appStore = createAppStore(createInMemoryDatabase());
 
         // Manifest store (spread at top level)
-        expect(appStore.appVersionStore).toBeDefined();
-        expect(appStore.configStore).toBeDefined();
         expect(appStore.trustedManifestStore).toBeDefined();
         expect(appStore.verificationResultsStore).toBeDefined();
 
@@ -35,9 +34,11 @@ describe('createAppStore', () => {
 
     it('manifest stores are functional', async () => {
         const appStore = createAppStore(createInMemoryDatabase());
-        await appStore.appVersionStore.set('v1');
-        const version = await appStore.appVersionStore.get();
-        expect(version).toBe('v1');
+        const { appVersion } = await appStore.trustedManifestStore.addLatest({
+            files: { '/a.js': 'h' },
+        });
+        const latest = await appStore.trustedManifestStore.getLatest();
+        expect(latest.appVersion).toBe(appVersion);
     });
 
     it('active blocks store is functional', async () => {
@@ -70,7 +71,7 @@ describe('recordSecurityViolation', () => {
     }
 
     const mismatchDetails = {
-        status: 'MISMATCH',
+        status: VERIFICATION_STATUS.MISMATCH,
         fileKey: '/app.js',
         url: 'https://example.com/app.js',
         expectedHash: 'aaaa1111bbbb2222',
@@ -124,7 +125,7 @@ describe('recordSecurityViolation', () => {
         const appStore = createStore();
         const mustBlock = await appStore.recordSecurityViolation({
             ...mismatchDetails,
-            status: 'MATCH',
+            status: VERIFICATION_STATUS.MATCH,
         });
         expect(mustBlock).toBe(true);
     });
@@ -133,7 +134,7 @@ describe('recordSecurityViolation', () => {
         const appStore = createStore();
         const mustBlock = await appStore.recordSecurityViolation({
             ...mismatchDetails,
-            status: 'NOT_FOUND_IN_MANIFEST',
+            status: VERIFICATION_STATUS.NOT_FOUND_IN_MANIFEST,
         });
         expect(mustBlock).toBe(true);
     });
@@ -142,7 +143,7 @@ describe('recordSecurityViolation', () => {
         const appStore = createStore();
         const mustBlock = await appStore.recordSecurityViolation({
             ...mismatchDetails,
-            status: 'UNKNOWN_TYPE',
+            status: { description: 'UNKNOWN_TYPE', isViolation: true },
         });
         expect(mustBlock).toBe(true);
     });

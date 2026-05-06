@@ -1,4 +1,6 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import securityWarningHtml from '../../templates/security-warning.html?raw';
+import { createBlockResponse, createRedirectResponse } from '../response.js';
 
 // `isFeatureEnabled` reads the Vite-injected `__FEATURES__` define, which
 // isn't populated in the vitest runtime — stub it so `response.js`'s
@@ -6,9 +8,6 @@ import { describe, it, expect, vi } from 'vitest';
 vi.mock('../../core/utils.js', () => ({
     isFeatureEnabled: vi.fn(() => false),
 }));
-
-import securityWarningHtml from '../../templates/security-warning.html?raw';
-import { createBlockResponse, createNavigationWarningResponse } from '../response.js';
 
 describe('createBlockResponse', () => {
     it('returns JS redirect when request targets the SW script', () => {
@@ -20,13 +19,14 @@ describe('createBlockResponse', () => {
         expect(response.headers.get('Content-Type')).toContain('javascript');
     });
 
-    it('returns HTML redirect for navigation requests', () => {
+    it('returns 302 redirect to the warning page for navigation requests', () => {
         const response = createBlockResponse(
             true,
             'https://example.com/app.js',
             'https://example.com/sw.js'
         );
-        expect(response.headers.get('Content-Type')).toContain('text/html');
+        expect(response.status).toBe(302);
+        expect(response.headers.get('Location')).toBe('/sw-api/security-warning');
     });
 
     it('returns plain text warning for non-navigation subresource requests', () => {
@@ -50,11 +50,12 @@ describe('createBlockResponse', () => {
     });
 });
 
-describe('createNavigationWarningResponse', () => {
-    it('returns a 302 redirect to the static warning page', () => {
-        const response = createNavigationWarningResponse();
+describe('createRedirectResponse', () => {
+    it('returns a 302 redirect with no-cache headers', () => {
+        const response = createRedirectResponse('/some/path');
         expect(response.status).toBe(302);
-        expect(response.headers.get('Location')).toBe('/sw-api/security-warning');
+        expect(response.headers.get('Location')).toBe('/some/path');
+        expect(response.headers.get('Cache-Control')).toContain('no-cache');
     });
 });
 

@@ -3,6 +3,7 @@
  *
  * Ensures the Service Worker is installed and active before running each test.
  * These tests assume that the /index.html file is correct and has already been loaded at least once.
+ * In reporting mode, the Service Worker must never block requests or navigation.
  */
 import { expect, test } from '../sw-fixtures';
 ['index', 'front-page'].forEach((name) => {
@@ -39,35 +40,27 @@ import { expect, test } from '../sw-fixtures';
             await expect(page).toHaveTitle('DappFence - Manifest Mode Example');
         });
 
-        test('should block navigation when index.html is tampered', async ({ page, swHelper }) => {
-            await swHelper.interceptAndModifyPageContent('**/');
-            await page.goto('about:blank');
-            await page.goto('');
-            await page.waitForURL(/.*\/sw-api/);
-        });
-
-        test('should block fast when index.html is tampered with client already loaded', async ({
+        test('should not block navigation when index.html is tampered', async ({
             page,
             swHelper,
-            baseURL,
         }) => {
             await swHelper.interceptAndModifyPageContent('**/');
-            await expect(page.goto('')).rejects.toThrow(
-                'page.goto: net::ERR_ABORTED at ' + baseURL
-            );
-            await page.waitForURL(/.*\/sw-api/);
+            await page.goto('');
+            await page.waitForURL('/');
+            await expect(page).toHaveTitle('DappFence - Manifest Mode Example');
         });
 
-        test('should block navigation when dappfence.js is tampered', async ({
+        test('should not block navigation when dappfence.js is tampered', async ({
             page,
             swHelper,
         }) => {
             await swHelper.interceptAndModifyPageContent('**/dappfence.js');
             await page.goto('');
-            await page.waitForURL(/.*\/sw-api/);
+            await page.waitForURL('/');
+            await expect(page).toHaveTitle('DappFence - Manifest Mode Example');
         });
 
-        test('should block navigation when app.js is tampered', async ({
+        test('should not block navigation when app.js is tampered', async ({
             page,
             swHelper,
         }, testInfo) => {
@@ -77,30 +70,6 @@ import { expect, test } from '../sw-fixtures';
             );
             await swHelper.interceptAndModifyPageContent('**/app.js');
             await page.goto('');
-            await page.waitForURL(/.*\/sw-api/);
-        });
-
-        test('should block navigation if an external resource is tampered', async ({
-            page,
-            swHelper,
-        }) => {
-            await swHelper.interceptAndModifyPageContent('**/jquery-3.7.1.min.js');
-            await page.goto('');
-            await page.waitForURL(/.*\/sw-api/);
-        });
-
-        test('should allow normal navigation after dismissing a security block', async ({
-            page,
-            swHelper,
-        }) => {
-            await swHelper.interceptAndModifyPageContent('**/jquery-3.7.1.min.js');
-            await page.goto('');
-            await page.waitForURL(/.*\/sw-api/);
-            await page.getByRole('button', { name: 'Remove Site Lock' }).click();
-            await page.waitForURL('/');
-            await expect(page).toHaveTitle('DappFence - Manifest Mode Example');
-
-            await page.reload();
             await page.waitForURL('/');
             await expect(page).toHaveTitle('DappFence - Manifest Mode Example');
         });

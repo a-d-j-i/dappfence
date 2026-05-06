@@ -53,8 +53,7 @@ src/
 │   ├── message-broker.js     # Security message queuing to clients
 │   ├── response.js      # Block response and navigation redirect builders
 │   ├── manifest/
-│   │   ├── verification-helpers.js  # Constants (VERIFICATION_STATUS, ASSET_TYPE), pure functions
-│   │   ├── operations.js    # Hash verification, signature checks, verifyLocation
+│   │   ├── operations.js    # Hash verification, signature checks, verifyLocation, shouldVerifyAsset
 │   │   └── manifest-service.js  # Manifest lifecycle, loading, file verification
 │   ├── storage/
 │   │   ├── indexeddb.js       # Low-level IndexedDB wrapper
@@ -79,8 +78,7 @@ main.js
         │     ├── manifest-store.js
         │     └── security-stores.js
         ├── manifest/
-        │     ├── verification-helpers.js (constants, pure functions)
-        │     ├── operations.js (hash verification, signature checks, verifyLocation)
+        │     ├── operations.js (hash verification, signature checks, verifyLocation, shouldVerifyAsset)
         │     └── manifest-service.js (manifest lifecycle, file verification, manifest loading)
         ├── message-broker.js
         ├── appsw-hooks.js
@@ -126,26 +124,28 @@ All handlers receive a shared `core` object:
 
 ### Manifest System
 
-**`manifest/verification-helpers.js`** defines `VERIFICATION_STATUS` and `ASSET_TYPE` constants plus
-pure functions: `createVerificationResult`, `createSyntheticAppVersion`, `shouldVerifyAsset`.
+`VERIFICATION_STATUS` and `ASSET_TYPE` constants live in `core/constants.js` alongside the other
+cross-module contract strings.
 
-**`manifest/operations.js`** contains pure verification functions: `verifyFileHash` (hash lookup),
-`verifyManifestSignature` (secp256k1 recovery), `normalizeManifestData` (SRI-to-hex), `getFileKey`
-(URL to manifest key), `identifyAppFromFile`, `verifyLocation` (fetch + verify),
-`verifyImportedScript` (delegates to `verifyLocation`, records violations).
+**`manifest/operations.js`** contains pure verification functions: `verifyFilePath` (manifest lookup
+and hash compare), `verifyManifestSignature` (secp256k1 recovery), `normalizeManifestData`,
+`getFileKey` (URL to manifest key), `shouldVerifyAsset` (extension/navigation predicate),
+`verifyLocation` (fetch + verify), `verifyImportedScript` (delegates to `verifyLocation`, records
+violations).
 
 **`manifest/manifest-service.js`** is the stateful manifest lifecycle manager. Contains
 `loadManifestFromUrl` (fetch + signature verification + normalization + storage) as a private
-function with single-flight deduplication. Exposes `verifyFile(url, content, searchByHash)` which
-computes hashes and orchestrates verification with retry. Returns results with a `status` field
-(`MATCH`, `MISMATCH`, `NOT_FOUND_IN_MANIFEST`, `VERIFICATION_ERROR`).
+function with single-flight deduplication. Exposes `verifyFile(url, content)` which computes hashes
+and orchestrates verification with retry. Returns results with a `status` field (`MATCH`,
+`MISMATCH`, `NOT_FOUND_IN_MANIFEST`, `VERIFICATION_ERROR`).
 
 ### Storage
 
 -   **`storage/indexeddb.js`** — low-level IndexedDB wrapper: `{ get, set, delete, withTx }`.
 -   **`storage/index.js`** — app store facade. Composes all stores, exposes
     `recordSecurityViolation(details)`.
--   **`storage/manifest-store.js`** — app version, config, trusted manifests, verification results.
+-   **`storage/manifest-store.js`** — trusted manifests (priority queue, hash index) and
+    verification results.
 -   **`storage/security-stores.js`** — active blocks (deterministic IDs), security events, API
     tokens.
 

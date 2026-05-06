@@ -34,10 +34,10 @@ const BLOCKS_KEY = 'blocks';
  * @returns {Promise<string>} Deterministic block ID like "block_<hash prefix>"
  */
 export async function generateBlockId({ status, fileKey, expectedHash, actualHash }) {
-    if (!status || !fileKey || !actualHash) {
+    if (!status) {
         throw new Error('generateBlockId: Missing required parameters');
     }
-    const contentKey = `${status}_${fileKey}_${expectedHash || 'N/A'}_${actualHash || 'ERROR'}`;
+    const contentKey = `${status}_${fileKey || 'N/A'}_${expectedHash || 'N/A'}_${actualHash || 'ERROR'}`;
     const encoder = new TextEncoder();
     const data = encoder.encode(contentKey);
     const hashBuffer = await crypto.subtle.digest('SHA-256', data);

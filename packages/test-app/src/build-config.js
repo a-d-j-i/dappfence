@@ -1,5 +1,23 @@
 const path = require('path');
 const { getPublicKey, hexToBytes } = require('@dappfence/signer/crypto');
+const { MODE } = require('@dappfence/core/constants');
+
+const SECURITY_CONTENT_TYPES = {
+    '.js': 'text/javascript',
+    '.mjs': 'text/javascript',
+    '.css': 'text/css',
+    '.json': 'application/json',
+    '.html': 'text/html',
+    '.htm': 'text/html',
+    '.svg': 'image/svg+xml',
+};
+
+const EXTERNAL_ASSETS = {
+    'http://code.jquery.com/jquery-3.7.1.min.js':
+        'sha256-dHRfBy/qpMhrsW1oz1R0O4A+2QuM+wZNTuk8mQAKGBU=',
+    'https://code.jquery.com/jquery-3.7.1.min.js':
+        'sha256-/JqT3SQfawRcv/BIHPThkBvs0OEvtFFmqPF/lYI/Cxo=',
+};
 
 const ROOT_DIR = path.resolve(__dirname, '..');
 const directories = {
@@ -16,6 +34,7 @@ const keys = { publicKey, secretKey };
 const simpleAppBase = {
     ...directories,
     manifestFile: 'integrity-manifest.json',
+    manifestMode: MODE.PROTECTED,
     htmlOutput: 'index.html',
     description: 'Simple App Example',
     exclude: ['/test-excluded'],
@@ -44,6 +63,11 @@ const BUILD_TARGETS = {
         htmlOutput: 'tampering-test.html',
         description: 'Tampering Security Test',
     },
+    'reporting-test': {
+        ...simpleAppBase,
+        templateFlags: { USE_SW_REGISTER: true, USE_APP: false },
+        manifestMode: MODE.REPORTING,
+    },
 };
 
 const OUT_DIR = path.join(ROOT_DIR, 'dist');
@@ -51,4 +75,10 @@ Object.keys(BUILD_TARGETS).forEach((name) => {
     BUILD_TARGETS[name].outDir = path.join(OUT_DIR, name);
 });
 
-module.exports = { OUT_DIR, BUILD_TARGETS, keys };
+module.exports = {
+    OUT_DIR,
+    BUILD_TARGETS,
+    keys,
+    EXTERNAL_ASSETS,
+    SECURITY_CONTENT_TYPES,
+};

@@ -7,6 +7,11 @@ function createInMemoryStorage() {
         get: async (key) => store.get(key),
         set: async (key, value) => store.set(key, value),
         delete: async (key) => store.delete(key),
+        withTx: async (fn) =>
+            fn({
+                get: async (key) => store.get(key),
+                set: async (key, value) => store.set(key, value),
+            }),
     };
 }
 
@@ -17,122 +22,159 @@ describe('createManifestStore', () => {
         storage = createManifestStore(createInMemoryStorage());
     });
 
-    describe('appVersion', () => {
-        it('returns undefined when no version is set', async () => {
-            const version = await storage.appVersionStore.get();
-            expect(version).toBeUndefined();
-        });
-
-        it('stores and retrieves an app version', async () => {
-            await storage.appVersionStore.set('v1.0');
-            const version = await storage.appVersionStore.get();
-            expect(version).toBe('v1.0');
-        });
-
-        it('sets session version on first set, keeps it on subsequent sets', async () => {
-            await storage.appVersionStore.set('v1.0');
-            // Session version is now v1.0 — subsequent set should not overwrite it
-            await storage.appVersionStore.set('v2.0');
-
-            // get() prefers session version
-            const version = await storage.appVersionStore.get();
-            expect(version).toBe('v1.0');
-        });
-
-        it('returns app version after session is cleared', async () => {
-            await storage.appVersionStore.set('v1.0');
-            await storage.appVersionStore.set('v2.0');
-            await storage.appVersionStore.clearSession();
-
-            const version = await storage.appVersionStore.get();
-            expect(version).toBe('v2.0');
-        });
-    });
-
-    describe('config', () => {
-        it('returns default config when nothing is stored', async () => {
-            const config = await storage.configStore.get();
-            expect(config).toEqual({
-                includeExternalDomains: true,
-                allowedExternalDomains: [],
-                blockedExternalDomains: [],
-            });
-        });
-
-        it('merges stored config with defaults', async () => {
-            await storage.configStore.set({ includeExternalDomains: false });
-            const config = await storage.configStore.get();
-            expect(config).toEqual({
-                includeExternalDomains: false,
-                allowedExternalDomains: [],
-                blockedExternalDomains: [],
-            });
-        });
-
-        it('stores and retrieves custom config fields', async () => {
-            await storage.configStore.set({
-                includeExternalDomains: true,
-                allowedExternalDomains: ['cdn.example.com'],
-                blockedExternalDomains: ['evil.com'],
-            });
-            const config = await storage.configStore.get();
-            expect(config.allowedExternalDomains).toEqual(['cdn.example.com']);
-            expect(config.blockedExternalDomains).toEqual(['evil.com']);
-        });
-    });
-
     describe('trustedManifest', () => {
-        it('returns empty manifest for unknown version', async () => {
+        // appVersion is a deterministic synthetic key derived from the
+        // manifest content via SHA-256, so tests use distinct content to
+        // get distinct keys and capture the returned appVersion when they
+        // need to refer to a specific entry.
+
+        it('returns undefined for unknown version', async () => {
             const manifest = await storage.trustedManifestStore.get('unknown');
-            expect(manifest).toEqual({ files: {} });
+            expect(manifest).toBeUndefined();
         });
 
-        it('stores and retrieves a manifest by version', async () => {
+        it('returns undefined from getLatest when nothing is stored', async () => {
+            const latest = await storage.trustedManifestStore.getLatest();
+            expect(latest).toBeUndefined();
+        });
+
+        it('addLatest synthesizes a deterministic appVersion from manifest content', async () => {
+            const { appVersion } = await storage.trustedManifestStore.addLatest({
+                files: { '/a.js': 'h' },
+            });
+            // Synthetic appVersion is "manifest-" + 16 chars of base64 entropy
+            // (the `sha256-` prefix is stripped before truncation).
+            expect(appVersion).toMatch(/^manifest-[A-Za-z0-9+/]{16}$/);
+            // Adding the same content again yields the same key.
+            const dup = await storage.trustedManifestStore.addLatest({
+                files: { '/a.js': 'h' },
+            });
+            expect(dup.appVersion).toBe(appVersion);
+            // Different content yields a different key.
+            const other = await storage.trustedManifestStore.addLatest({
+                files: { '/b.js': 'h2' },
+            });
+            expect(other.appVersion).not.toBe(appVersion);
+        });
+
+        it('addLatest stores a manifest retrievable by appVersion and via getLatest', async () => {
             const manifestData = { files: { '/app.js': 'abc123', '/style.css': 'def456' } };
-            await storage.trustedManifestStore.set('v1', manifestData);
+            const { appVersion } = await storage.trustedManifestStore.addLatest(manifestData);
 
-            const manifest = await storage.trustedManifestStore.get('v1');
-            expect(manifest.files).toEqual({ '/app.js': 'abc123', '/style.css': 'def456' });
-        });
-
-        it('keeps manifests isolated by version', async () => {
-            await storage.trustedManifestStore.set('v1', {
-                files: { '/app.js': 'hash-v1' },
+            expect(await storage.trustedManifestStore.get(appVersion)).toEqual(manifestData);
+            expect(await storage.trustedManifestStore.getLatest()).toEqual({
+                appVersion,
+                manifest: manifestData,
             });
-            await storage.trustedManifestStore.set('v2', {
-                files: { '/app.js': 'hash-v2' },
+        });
+
+        it('preserves mode, metadata, and other top-level manifest fields', async () => {
+            const manifestData = {
+                files: { '/app.js': 'abc' },
+                mode: 'reporting',
+                metadata: { extensions: ['.js', '.wasm'] },
+                customField: { future: true },
+            };
+            const { appVersion } = await storage.trustedManifestStore.addLatest(manifestData);
+
+            expect(await storage.trustedManifestStore.get(appVersion)).toEqual(manifestData);
+            expect((await storage.trustedManifestStore.getLatest()).manifest).toEqual(manifestData);
+        });
+
+        it('getLatest returns the most recently added manifest', async () => {
+            await storage.trustedManifestStore.addLatest({ files: { '/a.js': 'x' } });
+            const second = await storage.trustedManifestStore.addLatest({
+                files: { '/b.js': 'y' },
             });
 
-            const v1 = await storage.trustedManifestStore.get('v1');
-            const v2 = await storage.trustedManifestStore.get('v2');
-            expect(v1.files['/app.js']).toBe('hash-v1');
-            expect(v2.files['/app.js']).toBe('hash-v2');
+            const latest = await storage.trustedManifestStore.getLatest();
+            expect(latest.appVersion).toBe(second.appVersion);
+            expect(latest.manifest).toEqual({ files: { '/b.js': 'y' } });
         });
 
-        it('getAllVersions returns stored version keys', async () => {
-            await storage.trustedManifestStore.set('v1', { files: { '/a.js': 'x' } });
-            await storage.trustedManifestStore.set('v2', { files: { '/b.js': 'y' } });
-
-            const versions = await storage.trustedManifestStore.getAllVersions();
-            expect(versions).toEqual(['v1', 'v2']);
+        it('addLatest evicts the oldest entry once length exceeds 5', async () => {
+            const versions = [];
+            for (let i = 1; i <= 6; i++) {
+                const { appVersion } = await storage.trustedManifestStore.addLatest({
+                    files: { [`/f${i}.js`]: `h${i}` },
+                });
+                versions.push(appVersion);
+            }
+            // First addition (oldest) should have been evicted.
+            expect(await storage.trustedManifestStore.get(versions[0])).toBeUndefined();
+            // Last addition (newest) should be the latest.
+            expect((await storage.trustedManifestStore.getLatest()).appVersion).toBe(versions[5]);
+            // Second-oldest still present.
+            expect(await storage.trustedManifestStore.get(versions[1])).toEqual({
+                files: { '/f2.js': 'h2' },
+            });
         });
 
-        it('getAll returns all manifests keyed by version', async () => {
-            await storage.trustedManifestStore.set('v1', { files: { '/a.js': 'x' } });
-            await storage.trustedManifestStore.set('v2', { files: { '/b.js': 'y' } });
+        it('re-adding an existing manifest dedups and promotes it to the front', async () => {
+            const a = await storage.trustedManifestStore.addLatest({ files: { '/a.js': 'x' } });
+            await storage.trustedManifestStore.addLatest({ files: { '/b.js': 'y' } });
+            const aAgain = await storage.trustedManifestStore.addLatest({
+                files: { '/a.js': 'x' },
+            });
 
-            const all = await storage.trustedManifestStore.getAll();
-            expect(Object.keys(all)).toEqual(['v1', 'v2']);
-            expect(all['v1'].files).toEqual({ '/a.js': 'x' });
-            expect(all['v2'].files).toEqual({ '/b.js': 'y' });
+            expect(aAgain.appVersion).toBe(a.appVersion);
+            expect((await storage.trustedManifestStore.getLatest()).appVersion).toBe(a.appVersion);
         });
 
-        it('overwrites manifest for an existing version', async () => {
-            await storage.trustedManifestStore.set('v1', { files: { '/a.js': 'old' } });
-            await storage.trustedManifestStore.set('v1', { files: { '/a.js': 'new' } });
+        it('findByHash returns the entry that owns a hash', async () => {
+            const a = await storage.trustedManifestStore.addLatest({
+                files: { '/a.js': 'hash-a', '/b.js': 'hash-b' },
+            });
+            const b = await storage.trustedManifestStore.addLatest({
+                files: { '/c.js': 'hash-c' },
+            });
 
-            const manifest = await storage.trustedManifestStore.get('v1');
-            expect(manifest.files['/a.js']).toBe('new');
+            expect(await storage.trustedManifestStore.findByHash('hash-a')).toEqual({
+                appVersion: a.appVersion,
+                manifest: a.manifest,
+            });
+            expect(await storage.trustedManifestStore.findByHash('hash-c')).toEqual({
+                appVersion: b.appVersion,
+                manifest: b.manifest,
+            });
+            expect(await storage.trustedManifestStore.findByHash('missing')).toBeNull();
+        });
+
+        it('findByHash prefers the newest manifest when a hash collides', async () => {
+            await storage.trustedManifestStore.addLatest({ files: { '/a.js': 'shared' } });
+            const newer = await storage.trustedManifestStore.addLatest({
+                files: { '/b.js': 'shared' },
+            });
+
+            const found = await storage.trustedManifestStore.findByHash('shared');
+            expect(found.appVersion).toBe(newer.appVersion);
+        });
+
+        it('findByHash drops hashes that were only in evicted manifests', async () => {
+            await storage.trustedManifestStore.addLatest({ files: { '/old.js': 'gone' } });
+            const survivors = [];
+            for (let i = 1; i <= 5; i++) {
+                const { appVersion } = await storage.trustedManifestStore.addLatest({
+                    files: { [`/f${i}.js`]: `h${i}` },
+                });
+                survivors.push(appVersion);
+            }
+            // The oldest entry has been evicted; its hashes should no longer resolve.
+            expect(await storage.trustedManifestStore.findByHash('gone')).toBeNull();
+            const found = await storage.trustedManifestStore.findByHash('h1');
+            expect(found.appVersion).toBe(survivors[0]);
+        });
+
+        it('findByHash rebuilds the in-memory index lazily after a fresh store is created', async () => {
+            // Populate via one store, then create a new one over the same backend
+            // — simulates SW restart where the in-memory index is empty.
+            await storage.trustedManifestStore.addLatest({ files: { '/a.js': 'hash-a' } });
+            const sameBackend = createInMemoryStorage();
+            // Copy persisted state
+            const persisted = { appVersion: 'v1', manifest: { files: { '/a.js': 'hash-a' } } };
+            await sameBackend.set('trusted-manifest', [persisted]);
+            const reopened = createManifestStore(sameBackend);
+            expect(await reopened.trustedManifestStore.findByHash('hash-a')).toEqual(persisted);
         });
     });
 

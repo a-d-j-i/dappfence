@@ -13,25 +13,13 @@ const {
     bytesToHex,
     keccak256,
 } = require('@dappfence/signer/crypto');
-const { BUILD_TARGETS, OUT_DIR, keys } = require('./build-config');
-
-// Security-critical file extensions that need integrity verification
-const SECURITY_CRITICAL_EXTENSIONS = ['.js', '.mjs', '.css', '.json', '.html', '.htm', '.svg'];
-
-const SECURITY_CONTENT_TYPES = {
-    '.js': 'text/javascript',
-    '.mjs': 'text/javascript',
-    '.css': 'text/css',
-    '.json': 'application/json',
-    '.html': 'text/html',
-    '.htm': 'text/html',
-    '.svg': 'image/svg+xml',
-};
-
-const EXTERNAL_ASSETS = {
-    'https://code.jquery.com/jquery-3.7.1.min.js':
-        'sha256-/JqT3SQfawRcv/BIHPThkBvs0OEvtFFmqPF/lYI/Cxo=',
-};
+const {
+    BUILD_TARGETS,
+    OUT_DIR,
+    keys,
+    EXTERNAL_ASSETS,
+    SECURITY_CONTENT_TYPES,
+} = require('./build-config');
 
 let log = console.log;
 
@@ -58,7 +46,7 @@ function findSecurityCriticalFiles(dir, baseDir = dir) {
             }
         } else {
             const extension = getFileExtension(file);
-            if (extension && SECURITY_CRITICAL_EXTENSIONS.includes(extension)) {
+            if (extension && SECURITY_CONTENT_TYPES[extension]) {
                 const relativePath = path.relative(baseDir, filePath);
                 const webPath = '/' + relativePath.replace(/\\/g, '/');
                 securityFiles.push({
@@ -113,6 +101,7 @@ async function buildTarget(targetName, target, { personalSign = false }, version
 
     const manifestData = {
         files: {},
+        mode: target.manifestMode,
         metadata: {
             extensions: new Set(),
             contentTypes: new Set(),

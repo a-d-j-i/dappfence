@@ -1,10 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { calculateHash, sriToHex } from '../crypto.js';
+import { calculateHash } from '../crypto.js';
 
 describe('calculateHash', () => {
-    it('returns a hex string for given input', async () => {
+    it('returns an SRI string for given input', async () => {
         const hash = await calculateHash(new TextEncoder().encode('hello'));
-        expect(hash).toMatch(/^[0-9a-f]{64}$/);
+        // sha256- prefix + 44 standard-base64 chars (with `=` padding)
+        expect(hash).toMatch(/^sha256-[A-Za-z0-9+/]{43}=$/);
     });
 
     it('returns consistent hashes for the same input', async () => {
@@ -20,31 +21,17 @@ describe('calculateHash', () => {
         expect(hash1).not.toBe(hash2);
     });
 
-    it('produces the known SHA-256 of an empty string', async () => {
+    it('produces the known SHA-256 of an empty string in SRI form', async () => {
         const hash = await calculateHash(new TextEncoder().encode(''));
-        expect(hash).toBe('e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855');
-    });
-});
-
-describe('sriToHex', () => {
-    it('converts a valid sha256 SRI hash to hex', () => {
-        // sha256 of empty string in base64 = "47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU="
-        const hex = sriToHex('sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=');
-        expect(hex).toMatch(/^[0-9a-f]{64}$/);
-        expect(hex).toBe('e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855');
+        expect(hash).toBe('sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=');
     });
 
-    it('returns non-SRI strings as-is', () => {
-        const hex = 'abc123def456';
-        expect(sriToHex(hex)).toBe(hex);
-    });
-
-    it('returns null/undefined as-is', () => {
-        expect(sriToHex(null)).toBe(null);
-        expect(sriToHex(undefined)).toBe(undefined);
-    });
-
-    it('returns non-sha256 prefixed strings as-is', () => {
-        expect(sriToHex('sha384-abc')).toBe('sha384-abc');
+    it('matches the canonical SRI encoding (standard base64, with padding) used by the signer', async () => {
+        // The signer emits hashes via Buffer.toString('base64') in Node — same
+        // encoding as `btoa` here. A drift in either side (base64url, missing
+        // padding, etc.) would silently break manifest hash comparisons, so
+        // pin a known input to a known output.
+        const hash = await calculateHash(new TextEncoder().encode('abc'));
+        expect(hash).toBe('sha256-ungWv48Bz+pBQUDeXa4iI7ADYaOWF3qctBD/YfIAFa0=');
     });
 });

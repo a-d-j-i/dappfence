@@ -1,6 +1,7 @@
-import { ASSET_TYPE, VERIFICATION_STATUS } from './verification-helpers.js';
-import { recoverEthereumAddress, recoverPersonalSign, sriToHex } from '../../core/crypto.js';
+import { ASSET_TYPE, VERIFICATION_STATUS } from '../../core/constants.js';
+import { recoverEthereumAddress, recoverPersonalSign } from '../../core/crypto.js';
 import { createLogger } from '../../core/logger.js';
+import { isFeatureEnabled } from '../../core/utils.js';
 
 const logger = createLogger();
 
@@ -13,107 +14,104 @@ const MANIFEST_SIGNATURE_TYPES = {
 };
 
 /**
- * Verify a file hash against a trusted manifest (pure function).
- * @param {object} trustedManifest - Manifest with a .files map of fileKey → hash
- * @param {string} fileKey - The file key to look up
- * @param {string} actualHash - The hash of the file content
- * @param {boolean} searchByHash - If true, also search by hash value across all files
- * @returns {object} Verification result with status, fileKey, expectedHash, actualHash
+ * Resolve a fileKey against a manifest's `.files` map, applying navigation
+ * heuristics for common server-side remappings (e.g. directory request `/`
+ * served as `/index.html`).
+ *
+ * Placeholder for richer remapping rules; today it only handles the
+ * trailing-slash → `index.html` case, which covers `/` and `/some/dir/`.
+ * Extend here as new server behaviors come up (e.g. extensionless URLs,
+ * locale prefixes).
+ *
+ * @returns {{matchedKey: string, expectedHash: string} | null}
  */
-export const verifyFileHash = (trustedManifest, fileKey, actualHash, searchByHash) => {
-    logger.log(
-        `verifyFileHash, file: ${fileKey}, hash: ${actualHash}, searchByHash: ${searchByHash}`
-    );
-    if (searchByHash) {
-        // TODO: Build the right structure in trustedManifest to avoid iterating over all files
-        for (const hash of Object.values(trustedManifest.files)) {
-            if (hash === actualHash) {
-                logger.log(
-                    `verifyFileHash, file: ${fileKey}, hash: ${actualHash} matched hash for navigation request`
-                );
-                return {
-                    status: VERIFICATION_STATUS.MATCH,
-                    fileKey,
-                    expectedHash: hash,
-                    actualHash,
-                    timestamp: new Date().toISOString(),
-                };
-            }
+const matchManifestPath = (manifest, fileKey, isNavigation) => {
+    const direct = manifest.files[fileKey];
+    if (direct !== undefined) {
+        logger.log(`matchManifestPath, file: ${fileKey}, hash: ${direct}`);
+        return { matchedKey: fileKey, expectedHash: direct };
+    }
+    if (isNavigation) {
+        const indexKey = (fileKey.endsWith('/') ? fileKey : fileKey + '/') + 'index.html';
+        const remapped = manifest.files[indexKey];
+        if (remapped !== undefined) {
+            logger.log(`matchManifestPath, file: ${indexKey}, hash: ${remapped}`);
+            return { matchedKey: indexKey, expectedHash: remapped };
         }
     }
-    const trustedEntry = trustedManifest.files[fileKey];
-    if (!trustedEntry) {
+    logger.log(`matchManifestPath, file: ${fileKey}, hash: NOT_FOUND_IN_MANIFEST`);
+    return null;
+};
+
+/**
+ * Verify that `fileKey` is registered in the manifest and that its
+ * expected hash matches `actualHash` (pure function). Identification of
+ * the manifest itself is done by `trustedManifestStore.findByHash` before
+ * calling this — so this function only checks "is this URL allowed in
+ * this manifest, and does the content match what's recorded for it?".
+ *
+ * @param {object} trustedManifest - Manifest with a .files map of fileKey → hash
+ * @param {string} fileKey - The request fileKey
+ * @param {string} actualHash - The hash of the file content
+ * @param {boolean} isNavigation - Whether this is a navigation request (enables remap heuristics)
+ * @returns {object} Verification result with status, fileKey, expectedHash, actualHash
+ */
+export const verifyFilePath = (trustedManifest, fileKey, actualHash, isNavigation) => {
+    const matched = matchManifestPath(trustedManifest, fileKey, isNavigation);
+    if (!matched) {
         logger.log(
-            `verifyFileHash, file: ${fileKey}, hash: ${actualHash} not found in trusted manifest`
+            `verifyFilePath, file: ${fileKey}, hash: ${actualHash}, status: NOT_FOUND_IN_MANIFEST`
         );
         return {
             status: VERIFICATION_STATUS.NOT_FOUND_IN_MANIFEST,
             fileKey,
-            expectedHash: null,
             actualHash,
-            timestamp: new Date().toISOString(),
         };
     }
-
-    const expectedHash = trustedEntry; // Always a string now
+    const { matchedKey, expectedHash } = matched;
     const status =
-        actualHash === expectedHash ? VERIFICATION_STATUS.MATCH : VERIFICATION_STATUS.MISMATCH;
-
+        expectedHash === actualHash ? VERIFICATION_STATUS.MATCH : VERIFICATION_STATUS.MISMATCH;
     logger.log(
-        `verifyFileHash, file: ${fileKey}, hash: ${actualHash}, expectedHash: ${expectedHash}, status: ${status}`
+        `verifyFilePath, file: ${matchedKey}, hash: ${actualHash}, expectedHash: ${expectedHash}, status: ${status.description}`
     );
     return {
-        status: status,
-        fileKey,
+        status,
+        fileKey: matchedKey,
         expectedHash,
         actualHash,
-        timestamp: new Date().toISOString(),
     };
 };
 
 /**
  * Normalize manifest data from external sources (pure function).
- * Handles both enhanced format ({ files: {...} }) and legacy flat format.
- * Converts SRI hashes to hex for consistent internal storage.
+ * Handles both enhanced format ({ files: {...}, metadata, mode, ... }) and
+ * legacy flat format. Hashes are stored as-is in SRI form (the same format
+ * the signer emits and HTML's Subresource Integrity uses), so no encoding
+ * conversion happens here. Top-level fields other than `files` (mode,
+ * metadata, and any future fields) are preserved as-is so consumers can
+ * read them.
  * @param {object} manifestData - Raw manifest data
- * @returns {{ files: Object<string, string> }} Normalized manifest with hex hashes
+ * @returns {object} Normalized manifest with `files` map of fileKey -> SRI hash
  */
 export const normalizeManifestData = (manifestData) => {
     const normalizedFiles = {};
 
     if (typeof manifestData === 'object') {
-        // Handle new enhanced format with files and metadata sections
+        // Enhanced format: { "files": { "/path/file.js": "sha256-..." }, "metadata": {...} }
         if (manifestData.files && typeof manifestData.files === 'object') {
-            // Enhanced format: { "files": { "/path/file.js": "sha256-hash..." }, "metadata": {...} }
             for (const [filePath, entry] of Object.entries(manifestData.files)) {
-                let hashValue;
-                if (typeof entry === 'string') {
-                    hashValue = entry;
-                } else if (entry && entry.hash) {
-                    hashValue = entry.hash;
-                }
-
-                // Convert SRI format to hex for consistent internal storage
+                const hashValue = typeof entry === 'string' ? entry : entry?.hash;
                 if (hashValue) {
-                    normalizedFiles[filePath] = sriToHex(hashValue);
+                    normalizedFiles[filePath] = hashValue;
                 }
             }
-        } else {
-            // Legacy flat format: { "/path/file.js": "sha256-hash..." }
-            for (const [filePath, entry] of Object.entries(manifestData)) {
-                let hashValue;
-                if (typeof entry === 'string') {
-                    // Simple format: { "/path/file.js": "sha256-hash..." }
-                    hashValue = entry;
-                } else if (entry && entry.hash) {
-                    // Legacy format: { "/path/file.js": { "hash": "sha256-...", ... } }
-                    hashValue = entry.hash;
-                }
-
-                // Convert SRI format to hex for consistent internal storage
-                if (hashValue) {
-                    normalizedFiles[filePath] = sriToHex(hashValue);
-                }
+            return { ...manifestData, files: normalizedFiles };
+        }
+        // Legacy flat format: { "/path/file.js": "sha256-..." | { hash: "sha256-..." } }
+        for (const [filePath, entry] of Object.entries(manifestData)) {
+            const hashValue = typeof entry === 'string' ? entry : entry?.hash;
+            if (hashValue) {
+                normalizedFiles[filePath] = hashValue;
             }
         }
     }
@@ -147,45 +145,48 @@ export const getFileKey = (url, baseUrl) => {
 };
 
 /**
- * Identify an app version from the first file request by searching stored manifests
- * @param {object} trustedManifestStore - Injected storage for trusted manifests
- * @param {string} fileKey
- * @param {string} fileHash
+ * Determines if a fetched asset requires verification against the manifest.
+ * Logs the decision reason at each branch; callers only read the boolean.
+ *
+ * Takes `fileKey` (the manifest-key form: pathname for same-origin or full
+ * URL for cross-origin, as returned by `getFileKey`) rather than a raw URL —
+ * callers reach this function with already-resolved keys (importScripts may
+ * pass relative URLs that `new URL(url)` couldn't parse standalone).
+ *
+ * Verification triggers if EITHER the file extension matches the manifest's
+ * extension allowlist OR the response Content-Type matches the manifest's
+ * MIME allowlist. The OR catches extensionless URLs that still serve
+ * security-critical content (e.g. `/api/config` returning JSON).
+ *
+ * @param {string} fileKey - Resolved manifest key (pathname or absolute URL)
+ * @param {boolean} isNavigation - Whether this is a navigation request
+ * @param {Response} response - The fetched response (Content-Type read from headers)
+ * @param {string[]} extensions - the manifest metadata extensions or default extensions
+ * @param {string[]} contentTypes - the manifest metadata content types or default content types
+ * @returns {boolean} true if the asset should be verified against the manifest
  */
-export const identifyAppFromFile = async (trustedManifestStore, fileKey, fileHash) => {
-    try {
-        logger.log(
-            `Attempting to identify app from file: ${fileKey} (${fileHash.substring(0, 12)}...)`
-        );
-
-        const allManifests = await trustedManifestStore.getAll();
-        const versions = Object.keys(allManifests);
-
-        if (versions.length === 0) {
-            logger.log('No stored manifests found for identification');
-            return null;
-        }
-
-        logger.log(`Searching through ${versions.length} stored manifests for match`);
-
-        for (const version of versions) {
-            const manifest = allManifests[version];
-            const storedHash = manifest.files[fileKey];
-
-            if (storedHash === fileHash) {
-                logger.log(`✅ Identified app version: ${version} (file match: ${fileKey})`);
-                return version;
-            }
-        }
-
-        logger.log(
-            `No manifest contains file ${fileKey} with hash ${fileHash.substring(0, 12)}...`
-        );
-        return null;
-    } catch (error) {
-        logger.error('Error during app identification:', error);
-        return null;
+export const shouldVerifyAsset = (fileKey, isNavigation, response, extensions, contentTypes) => {
+    if (isNavigation) {
+        logger.log(`Asset check for ${fileKey}: Navigation request`);
+        return true;
     }
+    const lowerKey = fileKey.toLowerCase();
+    if (extensions.some((ext) => lowerKey.endsWith(ext.toLowerCase()))) {
+        logger.log(`Asset check for ${fileKey}: extension match`);
+        return true;
+    }
+    // Strip parameters off the Content-Type (e.g. `; charset=utf-8`) before
+    // matching — the manifest list stores bare MIME types.
+    const rawType = response?.headers?.get?.('content-type') || '';
+    const mime = rawType.split(';')[0].trim().toLowerCase();
+    if (mime && contentTypes.some((ct) => ct.toLowerCase() === mime)) {
+        logger.log(`Asset check for ${fileKey}: content-type match (${mime})`);
+        return true;
+    }
+    logger.log(
+        `Asset check for ${fileKey}: no extension or content-type match (mime=${mime || 'none'})`
+    );
+    return false;
 };
 
 /**
@@ -193,7 +194,7 @@ export const identifyAppFromFile = async (trustedManifestStore, fileKey, fileHas
  * @param {string} manifestSignatureType - Signature algorithm identifier
  * @param {string} manifestSignatureIdentity - Expected signer address
  * @param {object} manifestData - Manifest with .pay (payload) and .sig (signature)
- * @returns {{ status: string, payload?: object, expectedHash?: string, actualHash?: string }}
+ * @returns {{ status: Readonly<{description: string, isViolation: boolean}>, payload?: object, expectedHash?: string, actualHash?: string }}
  */
 export const verifyManifestSignature = (
     manifestSignatureType,
@@ -244,24 +245,25 @@ export const verifyManifestSignature = (
  * @param {object} deps.swContext
  * @param {object} deps.manifestService
  * @param {string} url
- * @param {boolean} searchByHash
- * @returns {Promise<object>} Result with status, fileKey, expectedHash, actualHash, timestamp
+ * @returns {Promise<object>} Verification result with at least { status }; verifyFile populates fileKey/expectedHash/actualHash on success.
  */
-export async function verifyLocation({ swContext, manifestService }, url, searchByHash) {
-    const response = await swContext.fetch(url, {
-        headers: { 'x-dappfence': 'sw-verification' },
-    });
-    if (!response.ok) {
-        logger.error(`Failed to fetch ${url}: ${response.status} ${response.statusText}`);
-        return {
-            status: VERIFICATION_STATUS.ERROR,
+export async function verifyLocation({ swContext, manifestService }, url) {
+    try {
+        const response = await swContext.fetch(
             url,
-            expectedHash: null,
-            actualHash: null,
-            timestamp: new Date().toISOString(),
-        };
+            isFeatureEnabled('mark_request')
+                ? { headers: { 'x-dappfence': 'sw-verification' } }
+                : {}
+        );
+        if (response && response.ok) {
+            const ctx = await manifestService.resolveManifest();
+            return await ctx.verifyFile(url, response);
+        }
+        logger.error(`Failed to fetch ${url}: ${response.status} ${response.statusText}`);
+    } catch (error) {
+        logger.error(`Error verifying ${url}:`, error);
     }
-    return await manifestService.verifyFile(url, await response.text(), searchByHash);
+    return { status: VERIFICATION_STATUS.ERROR };
 }
 
 /**
@@ -273,14 +275,16 @@ export async function verifyLocation({ swContext, manifestService }, url, search
  * @param {string} scriptPath
  */
 export async function verifyImportedScript(deps, scriptPath) {
-    const verificationResult = await verifyLocation(deps, scriptPath, false);
-    if (verificationResult.status !== VERIFICATION_STATUS.MATCH) {
+    const verificationResult = await verifyLocation(deps, scriptPath);
+    if (verificationResult.status.isViolation) {
         await deps.appStore.recordSecurityViolation({
             ...verificationResult,
             assetType: ASSET_TYPE.SERVICE_WORKER,
             url: scriptPath,
         });
-        logger.log(`Security violation detected for ${scriptPath}: ${verificationResult.status}`);
+        logger.log(
+            `Security violation detected for ${scriptPath}: ${verificationResult.status.description}`
+        );
         return;
     }
     logger.log(`Script verified: ${scriptPath}`);

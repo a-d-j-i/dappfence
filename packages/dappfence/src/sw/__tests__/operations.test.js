@@ -1,51 +1,72 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
-    verifyFileHash,
+    verifyFilePath,
     normalizeManifestData,
     getFileKey,
-    identifyAppFromFile,
     verifyManifestSignature,
     verifyImportedScript,
     verifyLocation,
 } from '../manifest/operations.js';
 import { createSingleFlight } from '../../core/utils.js';
-import { VERIFICATION_STATUS } from '../manifest/verification-helpers.js';
+import { VERIFICATION_STATUS } from '../../core/constants.js';
 
-describe('verifyFileHash', () => {
-    const manifest = { files: { '/app.js': 'abc123', '/style.css': 'def456' } };
+describe('verifyFilePath', () => {
+    const manifest = {
+        files: {
+            '/app.js': 'abc123',
+            '/style.css': 'def456',
+            '/index.html': 'idx111',
+            '/docs/index.html': 'idx222',
+        },
+    };
 
-    it('returns MATCH when hash matches by key', () => {
-        const result = verifyFileHash(manifest, '/app.js', 'abc123', false);
+    it('returns MATCH when fileKey is registered and the hash matches', () => {
+        const result = verifyFilePath(manifest, '/app.js', 'abc123', false);
         expect(result.status).toBe(VERIFICATION_STATUS.MATCH);
+        expect(result.fileKey).toBe('/app.js');
         expect(result.expectedHash).toBe('abc123');
         expect(result.actualHash).toBe('abc123');
     });
 
-    it('returns MISMATCH when hash differs', () => {
-        const result = verifyFileHash(manifest, '/app.js', 'wrong', false);
+    it('returns MISMATCH when fileKey is registered but hash differs', () => {
+        const result = verifyFilePath(manifest, '/app.js', 'wrong', false);
         expect(result.status).toBe(VERIFICATION_STATUS.MISMATCH);
         expect(result.expectedHash).toBe('abc123');
         expect(result.actualHash).toBe('wrong');
     });
 
-    it('returns NOT_FOUND_IN_MANIFEST for unknown file', () => {
-        const result = verifyFileHash(manifest, '/unknown.js', 'somehash', false);
+    it('returns NOT_FOUND_IN_MANIFEST for an unregistered fileKey', () => {
+        const result = verifyFilePath(manifest, '/unknown.js', 'def456', false);
+        expect(result.status).toBe(VERIFICATION_STATUS.NOT_FOUND_IN_MANIFEST);
+        expect(result.expectedHash).toBeUndefined();
+    });
+
+    it('does not match by hash value alone (content under a different key is NOT_FOUND)', () => {
+        const result = verifyFilePath(manifest, '/any-path', 'def456', false);
         expect(result.status).toBe(VERIFICATION_STATUS.NOT_FOUND_IN_MANIFEST);
     });
 
-    it('matches by hash value when searchByHash is true', () => {
-        const result = verifyFileHash(manifest, '/any-path', 'def456', true);
+    it('navigation: remaps "/" to "/index.html"', () => {
+        const result = verifyFilePath(manifest, '/', 'idx111', true);
         expect(result.status).toBe(VERIFICATION_STATUS.MATCH);
+        expect(result.fileKey).toBe('/index.html');
+        expect(result.expectedHash).toBe('idx111');
     });
 
-    it('falls back to key match when searchByHash finds nothing', () => {
-        const result = verifyFileHash(manifest, '/app.js', 'abc123', true);
-        // searchByHash iterates values — 'abc123' is a value, so it matches
+    it('navigation: remaps "/docs/" to "/docs/index.html"', () => {
+        const result = verifyFilePath(manifest, '/docs/', 'idx222', true);
         expect(result.status).toBe(VERIFICATION_STATUS.MATCH);
+        expect(result.fileKey).toBe('/docs/index.html');
     });
 
-    it('returns NOT_FOUND when searchByHash fails and key not found', () => {
-        const result = verifyFileHash(manifest, '/unknown.js', 'nope', true);
+    it('navigation: remaps extensionless "/docs" to "/docs/index.html"', () => {
+        const result = verifyFilePath(manifest, '/docs', 'idx222', true);
+        expect(result.status).toBe(VERIFICATION_STATUS.MATCH);
+        expect(result.fileKey).toBe('/docs/index.html');
+    });
+
+    it('non-navigation: does not remap "/"', () => {
+        const result = verifyFilePath(manifest, '/', 'idx111', false);
         expect(result.status).toBe(VERIFICATION_STATUS.NOT_FOUND_IN_MANIFEST);
     });
 });
@@ -80,13 +101,11 @@ describe('normalizeManifestData', () => {
         expect(result.files['/app.js']).toBe('abc123');
     });
 
-    it('converts SRI format to hex', () => {
-        // sha256- prefix triggers SRI conversion
+    it('preserves SRI hashes as-is (no encoding conversion)', () => {
         const sriHash = 'sha256-' + btoa('test');
         const input = { files: { '/app.js': sriHash } };
         const result = normalizeManifestData(input);
-        // Should be converted from SRI to hex
-        expect(result.files['/app.js']).not.toContain('sha256-');
+        expect(result.files['/app.js']).toBe(sriHash);
     });
 
     it('returns empty files for non-object input', () => {
@@ -100,6 +119,20 @@ describe('normalizeManifestData', () => {
         const result = normalizeManifestData(input);
         expect(result.files['/app.js']).toBeUndefined();
         expect(result.files['/ok.js']).toBe('hash');
+    });
+
+    it('preserves top-level fields (mode, metadata, future fields) in enhanced format', () => {
+        const input = {
+            files: { '/app.js': 'abc' },
+            mode: 'reporting',
+            metadata: { extensions: ['.js', '.wasm'] },
+            customField: { future: true },
+        };
+        const result = normalizeManifestData(input);
+        expect(result.mode).toBe('reporting');
+        expect(result.metadata).toEqual({ extensions: ['.js', '.wasm'] });
+        expect(result.customField).toEqual({ future: true });
+        expect(result.files['/app.js']).toBe('abc');
     });
 });
 
@@ -130,53 +163,25 @@ describe('getFileKey', () => {
     });
 });
 
-describe('identifyAppFromFile', () => {
-    it('returns null when no manifests are stored', async () => {
-        const mockStore = { getAll: async () => ({}) };
-        const result = await identifyAppFromFile(mockStore, '/app.js', 'hash123');
-        expect(result).toBeNull();
-    });
-
-    it('returns matching version when file hash matches', async () => {
-        const mockStore = {
-            getAll: async () => ({
-                v1: { files: { '/app.js': 'hash123' } },
-                v2: { files: { '/app.js': 'other' } },
-            }),
-        };
-        const result = await identifyAppFromFile(mockStore, '/app.js', 'hash123');
-        expect(result).toBe('v1');
-    });
-
-    it('returns null when no version matches', async () => {
-        const mockStore = {
-            getAll: async () => ({
-                v1: { files: { '/app.js': 'nope' } },
-            }),
-        };
-        const result = await identifyAppFromFile(mockStore, '/app.js', 'hash123');
-        expect(result).toBeNull();
-    });
-
-    it('returns null on error', async () => {
-        const mockStore = {
-            getAll: async () => {
-                throw new Error('db error');
-            },
-        };
-        const result = await identifyAppFromFile(mockStore, '/app.js', 'hash123');
-        expect(result).toBeNull();
-    });
-});
-
 describe('verifyManifestSignature', () => {
     it('returns UNSUPPORTED_SIGNATURE for unknown signature types', () => {
         const result = verifyManifestSignature('unknown-type', '0xABC', { pay: {}, sig: 'sig' });
-        expect(result.status).toBe('UNSUPPORTED_SIGNATURE');
+        expect(result.status).toBe(VERIFICATION_STATUS.UNSUPPORTED_SIGNATURE);
     });
 });
 
+const mockManifestService = (verifyFileMock) => ({
+    resolveManifest: vi.fn().mockResolvedValue({ verifyFile: verifyFileMock }),
+});
+
 describe('verifyLocation', () => {
+    beforeEach(() => {
+        globalThis.__FEATURES__ = { mark_request: true };
+    });
+    afterEach(() => {
+        delete globalThis.__FEATURES__;
+    });
+
     it('fetches the URL and returns the verifyFile result', async () => {
         const verifyFileResult = {
             status: 'MATCH',
@@ -185,80 +190,56 @@ describe('verifyLocation', () => {
             actualHash: 'abc',
             timestamp: '2026-01-01T00:00:00.000Z',
         };
+        const verifyFile = vi.fn().mockResolvedValue(verifyFileResult);
+        const response = new Response('file content');
         const deps = {
             swContext: {
-                fetch: vi.fn().mockResolvedValue({
-                    ok: true,
-                    text: async () => 'file content',
-                }),
+                fetch: vi.fn().mockResolvedValue(response),
             },
-            manifestService: { verifyFile: vi.fn().mockResolvedValue(verifyFileResult) },
+            manifestService: mockManifestService(verifyFile),
         };
 
-        const result = await verifyLocation(deps, '/lib.js', false);
+        const result = await verifyLocation(deps, '/lib.js');
 
         expect(deps.swContext.fetch).toHaveBeenCalledWith('/lib.js', {
             headers: { 'x-dappfence': 'sw-verification' },
         });
-        expect(deps.manifestService.verifyFile).toHaveBeenCalledWith(
-            '/lib.js',
-            'file content',
-            false
-        );
+        expect(verifyFile).toHaveBeenCalledWith('/lib.js', response);
         expect(result).toEqual(verifyFileResult);
     });
 
-    it('passes searchByHash through to verifyFile', async () => {
-        const deps = {
-            swContext: {
-                fetch: vi.fn().mockResolvedValue({
-                    ok: true,
-                    text: async () => 'content',
-                }),
-            },
-            manifestService: {
-                verifyFile: vi.fn().mockResolvedValue({ status: 'MATCH' }),
-            },
-        };
-
-        await verifyLocation(deps, '/sw.js', true);
-
-        expect(deps.manifestService.verifyFile).toHaveBeenCalledWith('/sw.js', 'content', true);
-    });
-
     it('returns verifyFile-compatible error on fetch failure', async () => {
+        const verifyFile = vi.fn();
         const deps = {
             swContext: {
                 fetch: vi.fn().mockResolvedValue({ ok: false, status: 500, statusText: 'Error' }),
             },
-            manifestService: { verifyFile: vi.fn() },
+            manifestService: mockManifestService(verifyFile),
         };
 
-        const result = await verifyLocation(deps, '/missing.js', false);
+        const result = await verifyLocation(deps, '/missing.js');
 
-        expect(deps.manifestService.verifyFile).not.toHaveBeenCalled();
-        expect(result).toEqual({
-            status: 'VERIFICATION_ERROR',
-            url: '/missing.js',
-            expectedHash: null,
-            actualHash: null,
-            timestamp: expect.any(String),
-        });
+        expect(verifyFile).not.toHaveBeenCalled();
+        expect(result).toEqual({ status: VERIFICATION_STATUS.ERROR });
     });
 });
 
 describe('verifyImportedScript', () => {
-    it('calls verifyFile with script URL and content', async () => {
+    beforeEach(() => {
+        globalThis.__FEATURES__ = { mark_request: true };
+    });
+    afterEach(() => {
+        delete globalThis.__FEATURES__;
+    });
+
+    it('calls verifyFile with script URL and the fetched response', async () => {
+        const verifyFile = vi.fn().mockResolvedValue({ status: 'MATCH' });
+        const response = new Response('script content');
         const core = {
-            manifestService: {
-                verifyFile: vi.fn().mockResolvedValue({ status: 'MATCH' }),
-            },
+            manifestService: mockManifestService(verifyFile),
             appStore: { recordSecurityViolation: vi.fn() },
             swContext: {
-                fetch: vi.fn().mockResolvedValue({
-                    ok: true,
-                    text: async () => 'script content',
-                }),
+                fetch: vi.fn().mockResolvedValue(response),
             },
         };
 
@@ -267,25 +248,20 @@ describe('verifyImportedScript', () => {
         expect(core.swContext.fetch).toHaveBeenCalledWith('https://example.com/lib.js', {
             headers: { 'x-dappfence': 'sw-verification' },
         });
-        expect(core.manifestService.verifyFile).toHaveBeenCalledWith(
-            'https://example.com/lib.js',
-            'script content',
-            false
-        );
+        expect(verifyFile).toHaveBeenCalledWith('https://example.com/lib.js', response);
         expect(core.appStore.recordSecurityViolation).not.toHaveBeenCalled();
     });
 
     it('records violation on mismatch', async () => {
+        const verifyFile = vi.fn().mockResolvedValue({
+            status: VERIFICATION_STATUS.MISMATCH,
+            fileKey: '/lib.js',
+        });
         const core = {
-            manifestService: {
-                verifyFile: vi.fn().mockResolvedValue({ status: 'MISMATCH', fileKey: '/lib.js' }),
-            },
+            manifestService: mockManifestService(verifyFile),
             appStore: { recordSecurityViolation: vi.fn() },
             swContext: {
-                fetch: vi.fn().mockResolvedValue({
-                    ok: true,
-                    text: async () => 'bad content',
-                }),
+                fetch: vi.fn().mockResolvedValue(new Response('bad content')),
             },
         };
 
@@ -300,8 +276,9 @@ describe('verifyImportedScript', () => {
     });
 
     it('records violation on fetch failure', async () => {
+        const verifyFile = vi.fn();
         const core = {
-            manifestService: { verifyFile: vi.fn() },
+            manifestService: mockManifestService(verifyFile),
             appStore: { recordSecurityViolation: vi.fn() },
             swContext: {
                 fetch: vi
@@ -312,14 +289,32 @@ describe('verifyImportedScript', () => {
 
         await verifyImportedScript(core, 'https://example.com/missing.js');
 
-        expect(core.manifestService.verifyFile).not.toHaveBeenCalled();
+        expect(verifyFile).not.toHaveBeenCalled();
         expect(core.appStore.recordSecurityViolation).toHaveBeenCalledWith(
             expect.objectContaining({
-                status: 'VERIFICATION_ERROR',
+                status: VERIFICATION_STATUS.ERROR,
                 assetType: 'service-worker',
                 url: 'https://example.com/missing.js',
             })
         );
+    });
+
+    it('treats SKIPPED results as non-violations', async () => {
+        const verifyFile = vi.fn().mockResolvedValue({
+            status: VERIFICATION_STATUS.SKIPPED,
+            fileKey: '/lib.js',
+        });
+        const core = {
+            manifestService: mockManifestService(verifyFile),
+            appStore: { recordSecurityViolation: vi.fn() },
+            swContext: {
+                fetch: vi.fn().mockResolvedValue(new Response('content')),
+            },
+        };
+
+        await verifyImportedScript(core, 'https://example.com/lib.js');
+
+        expect(core.appStore.recordSecurityViolation).not.toHaveBeenCalled();
     });
 });
 

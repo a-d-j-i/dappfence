@@ -19,10 +19,12 @@
     "type": "module",
     "main": "dist/dappfence.js",
     "exports": {
-        ".": "./dist/dappfence.js"
+        ".": "./dist/dappfence.js",
+        "./constants": "./src/core/constants.js"
     },
     "files": [
-        "dist"
+        "dist",
+        "src/core/constants.js"
     ],
     "engines": {
         "node": ">=16.0.0"
