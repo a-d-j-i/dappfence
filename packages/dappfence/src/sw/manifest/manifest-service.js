@@ -138,6 +138,7 @@ export const createManifestService = ({ swContext, appStore, config }) => {
         await verificationResultsStore.add(appVersion, {
             ...result,
             status: result.status.description,
+            timestamp: new Date().toISOString(),
         });
         const icon = fileKey.startsWith('/') ? '📄' : '🌐';
         const statusIcon = result.status.isViolation ? '❌' : '✅';
