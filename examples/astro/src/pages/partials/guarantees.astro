@@ -1,0 +1,12 @@
+---
+export const partial = true;
+---
+
+<ul>
+    <li>Every static file is SHA-256 hashed at build time</li>
+    <li>The manifest is signed — the expected signer address is embedded in the script tag</li>
+    <li>The service worker verifies each response before it reaches the page</li>
+    <li>A tampered file is blocked with a 403 and a security warning, not silently served</li>
+    <li>SSR routes are excluded from hashing but their patterns are recorded in the manifest</li>
+    <li>Page partials fetched at runtime are verified just like JS and CSS assets</li>
+</ul>

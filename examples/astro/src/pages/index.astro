@@ -1,0 +1,805 @@
+---
+import BaseHead from '../components/BaseHead.astro';
+import BackToTop from '../components/BackToTop.astro';
+import Footer from '../components/Footer.astro';
+import Header from '../components/Header.astro';
+import { SITE_DESCRIPTION, SITE_TITLE } from '../consts';
+---
+
+<!doctype html>
+<html lang="en">
+    <head>
+        <BaseHead title={SITE_TITLE} description={SITE_DESCRIPTION} />
+        <style>
+            /* ── Hero ─────────────────────────────────────────────── */
+            .hero {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 1.5em;
+                background: linear-gradient(135deg, #0d1528 0%, #1a1040 60%, #0a1622 100%);
+                border-radius: var(--radius-lg);
+                padding: 1.4em 1.75em;
+                margin-bottom: 1.1em;
+                position: relative;
+                overflow: hidden;
+                flex-wrap: wrap;
+            }
+            .hero::before {
+                content: '';
+                position: absolute;
+                inset: 0;
+                background-image: radial-gradient(
+                    circle,
+                    rgba(129, 140, 248, 0.13) 1px,
+                    transparent 1px
+                );
+                background-size: 24px 24px;
+                pointer-events: none;
+            }
+            .hero-left {
+                display: flex;
+                align-items: center;
+                gap: 0.9em;
+                position: relative;
+            }
+            .hero-icon {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                width: 42px;
+                height: 42px;
+                background: rgba(129, 140, 248, 0.14);
+                border: 1px solid rgba(129, 140, 248, 0.28);
+                border-radius: 10px;
+                color: #a5b4fc;
+                flex-shrink: 0;
+            }
+            .hero-icon svg {
+                width: 20px;
+                height: 20px;
+            }
+            .hero-text h1 {
+                font-size: 1.2em;
+                font-weight: 800;
+                line-height: 1.2;
+                color: #f1f5f9;
+                margin-bottom: 0.15em;
+                letter-spacing: -0.02em;
+            }
+            .hero-accent {
+                background: linear-gradient(120deg, #818cf8, #a78bfa 60%, #38bdf8);
+                -webkit-background-clip: text;
+                -webkit-text-fill-color: transparent;
+                background-clip: text;
+            }
+            .hero-text p {
+                color: #64748b;
+                font-size: 0.78em;
+                margin: 0;
+                line-height: 1.5;
+            }
+            .badge {
+                display: inline-flex;
+                align-items: center;
+                gap: 0.4em;
+                padding: 0.35em 0.9em;
+                border-radius: 100px;
+                font-size: 0.78em;
+                font-weight: 600;
+                background: rgba(255, 255, 255, 0.05);
+                color: #475569;
+                border: 1px solid rgba(255, 255, 255, 0.07);
+                transition:
+                    background 0.35s,
+                    color 0.35s,
+                    border-color 0.35s;
+                flex-shrink: 0;
+                position: relative;
+            }
+            .badge.active {
+                background: rgba(52, 211, 153, 0.12);
+                color: #34d399;
+                border-color: rgba(52, 211, 153, 0.22);
+            }
+            .badge.error {
+                background: rgba(248, 113, 113, 0.12);
+                color: #f87171;
+                border-color: rgba(248, 113, 113, 0.22);
+            }
+            .badge .dot {
+                width: 6px;
+                height: 6px;
+                border-radius: 50%;
+                background: currentColor;
+                flex-shrink: 0;
+            }
+            .badge.active .dot {
+                animation: pulse-dot 2s ease infinite;
+            }
+            @keyframes pulse-dot {
+                0%,
+                100% {
+                    opacity: 1;
+                    transform: scale(1);
+                }
+                50% {
+                    opacity: 0.4;
+                    transform: scale(0.75);
+                }
+            }
+
+            /* ── Collapsible cards ────────────────────────────────── */
+            .card {
+                background: var(--bg);
+                border: 1px solid var(--border);
+                border-radius: var(--radius-lg);
+                box-shadow: var(--shadow);
+                margin-bottom: 0.9em;
+                overflow: hidden;
+            }
+            .dark .card {
+                background: var(--bg-2);
+            }
+
+            .card-summary {
+                display: flex;
+                align-items: center;
+                gap: 0.75em;
+                padding: 1em 1.4em;
+                cursor: pointer;
+                list-style: none;
+                user-select: none;
+                -webkit-user-select: none;
+            }
+            .card-summary::-webkit-details-marker {
+                display: none;
+            }
+            .card-summary::marker {
+                display: none;
+            }
+            .card-summary:hover {
+                background: var(--bg-2);
+            }
+            .dark .card-summary:hover {
+                background: var(--bg-3);
+            }
+            .card-summary:focus-visible {
+                outline: 2px solid var(--accent);
+                outline-offset: -2px;
+                border-radius: var(--radius-lg);
+            }
+
+            .card-icon {
+                font-size: 1.15em;
+                line-height: 1;
+                flex-shrink: 0;
+            }
+            .card-info {
+                flex: 1;
+                min-width: 0;
+            }
+            .card-info h2 {
+                font-size: 0.95em;
+                margin: 0 0 0.1em;
+                color: var(--text);
+            }
+            .desc {
+                font-size: 0.78em;
+                color: var(--text-muted);
+                margin: 0;
+                line-height: 1.4;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+            }
+            .card-chevron {
+                flex-shrink: 0;
+                color: var(--text-faint);
+                transition: transform 0.22s ease;
+                margin-left: auto;
+            }
+            details[open] > .card-summary .card-chevron {
+                transform: rotate(180deg);
+            }
+
+            .card-body {
+                padding: 0 1.4em 1.2em;
+                border-top: 1px solid var(--border);
+                padding-top: 1em;
+            }
+
+            /* ── Buttons ──────────────────────────────────────────── */
+            .btn-row {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 0.4em;
+                margin-bottom: 0.8em;
+            }
+            .btn {
+                padding: 0.35em 0.9em;
+                border: 1.5px solid var(--accent);
+                border-radius: var(--radius);
+                background: transparent;
+                color: var(--accent);
+                cursor: pointer;
+                font-size: 0.8em;
+                font-family: inherit;
+                font-weight: 600;
+                line-height: 1.4;
+                transition:
+                    background 0.14s,
+                    color 0.14s,
+                    transform 0.08s;
+            }
+            .btn:hover,
+            .btn.active {
+                background: var(--accent);
+                color: #fff;
+            }
+            .btn:active {
+                transform: scale(0.96);
+            }
+
+            /* ── Output panels ────────────────────────────────────── */
+            .panel {
+                border: 1px solid var(--border);
+                border-radius: var(--radius);
+                padding: 0.75em 1em;
+                min-height: 2.8em;
+                font-size: 0.845em;
+                background: var(--bg-2);
+                color: var(--text-2);
+                line-height: 1.6;
+            }
+            .dark .panel {
+                background: var(--bg-3);
+            }
+            .panel ul {
+                margin: 0;
+                padding-left: 1.2em;
+            }
+            .panel li {
+                margin: 0.2em 0;
+            }
+
+            /* ── Security Monitor ─────────────────────────────────── */
+            .df-stats {
+                background: #080f1e;
+                border-radius: var(--radius);
+                padding: 0.8em;
+                display: grid;
+                grid-template-columns: repeat(4, 1fr);
+                gap: 0.5em;
+                margin-bottom: 0.65em;
+            }
+            @media (max-width: 500px) {
+                .df-stats {
+                    grid-template-columns: repeat(2, 1fr);
+                }
+            }
+            .df-stat {
+                background: rgba(255, 255, 255, 0.04);
+                border: 1px solid rgba(255, 255, 255, 0.06);
+                border-radius: var(--radius);
+                padding: 0.65em 0.5em;
+                text-align: center;
+            }
+            .df-stat--warn .df-stat-value {
+                color: #fbbf24;
+            }
+            .df-stat-value {
+                display: block;
+                font-size: 1.7em;
+                font-weight: 800;
+                line-height: 1;
+                color: #e2e8f0;
+            }
+            .df-stat-label {
+                display: block;
+                font-size: 0.63em;
+                color: #475569;
+                margin-top: 0.3em;
+                text-transform: uppercase;
+                letter-spacing: 0.05em;
+            }
+            .df-updated {
+                font-size: 0.75em;
+                color: var(--text-muted);
+                margin: 0 0 0.6em;
+            }
+            .df-blocks {
+                background: var(--danger-bg);
+                border: 1px solid rgba(220, 38, 38, 0.18);
+                border-radius: var(--radius);
+                padding: 0.6em 0.9em;
+                font-size: 0.82em;
+                margin-bottom: 0.65em;
+                color: var(--danger);
+            }
+            .df-blocks ul {
+                margin: 0.2em 0 0;
+                padding-left: 1.1em;
+            }
+            .df-empty {
+                color: var(--text-muted);
+                font-size: 0.845em;
+                text-align: center;
+                padding: 1.25em;
+                margin: 0;
+            }
+            .df-results {
+                list-style: none;
+                padding: 0;
+                margin: 0;
+                font-size: 0.76em;
+                font-family: ui-monospace, 'Cascadia Code', monospace;
+                max-height: 280px;
+                overflow-y: auto;
+                border: 1px solid var(--border);
+                border-radius: var(--radius);
+                background: var(--bg);
+            }
+            .dark .df-results {
+                background: var(--bg-3);
+            }
+            .df-result {
+                display: flex;
+                align-items: flex-start;
+                gap: 0.45em;
+                padding: 0.4em 0.9em;
+                border-bottom: 1px solid var(--border);
+            }
+            .df-result:last-child {
+                border-bottom: none;
+            }
+            .df-result-icon {
+                flex-shrink: 0;
+                line-height: 1.75;
+            }
+            .df-result-body {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 0.25em 0.6em;
+                align-items: baseline;
+                flex: 1;
+            }
+            .df-result-key {
+                color: var(--accent);
+                flex: 1;
+                min-width: 120px;
+                word-break: break-all;
+            }
+            .df-result-status {
+                font-weight: 700;
+            }
+            .df-result-time {
+                color: var(--text-muted);
+                margin-left: auto;
+                white-space: nowrap;
+            }
+            .df-hash-diff {
+                width: 100%;
+                display: flex;
+                flex-direction: column;
+                gap: 0.1em;
+                color: var(--text-muted);
+                margin-top: 0.1em;
+            }
+            .df-hash-diff code {
+                font-size: 0.9em;
+            }
+            .monitor-toolbar {
+                display: flex;
+                gap: 0.4em;
+                margin-bottom: 0.7em;
+                flex-wrap: wrap;
+            }
+
+            /* ── Manifest viewer ──────────────────────────────────── */
+            .manifest-tabs {
+                display: flex;
+                gap: 0.35em;
+                margin-bottom: 0.65em;
+            }
+            .manifest-tab {
+                padding: 0.28em 0.8em;
+                border: 1.5px solid var(--border);
+                border-radius: var(--radius);
+                background: transparent;
+                color: var(--text-muted);
+                cursor: pointer;
+                font-size: 0.78em;
+                font-family: inherit;
+                font-weight: 600;
+                transition:
+                    background 0.14s,
+                    color 0.14s,
+                    border-color 0.14s;
+            }
+            .manifest-tab.active {
+                background: var(--accent);
+                color: #fff;
+                border-color: var(--accent);
+            }
+            .meta-row {
+                display: flex;
+                gap: 1em;
+                flex-wrap: wrap;
+                font-size: 0.8em;
+                color: var(--text-muted);
+                margin-bottom: 0.65em;
+            }
+            .meta-row strong {
+                color: var(--text-2);
+            }
+            .manifest-list {
+                font-family: ui-monospace, 'Cascadia Code', monospace;
+                font-size: 0.73em;
+                line-height: 1.8;
+                background: var(--bg-2);
+                border: 1px solid var(--border);
+                border-radius: var(--radius);
+                padding: 0.6em 0.9em;
+                max-height: 240px;
+                overflow-y: auto;
+                list-style: none;
+                margin: 0;
+            }
+            .dark .manifest-list {
+                background: var(--bg-3);
+            }
+            .manifest-list li {
+                display: flex;
+                justify-content: space-between;
+                gap: 1em;
+                border-bottom: 1px solid var(--border);
+                padding: 0.04em 0;
+            }
+            .manifest-list li:last-child {
+                border-bottom: none;
+            }
+            .manifest-list .path {
+                color: var(--accent);
+            }
+            .manifest-list .hash {
+                color: var(--text-muted);
+            }
+            .manifest-section-label span {
+                font-size: 0.85em;
+                color: var(--text-faint);
+                font-style: italic;
+                text-transform: uppercase;
+                letter-spacing: 0.05em;
+            }
+        </style>
+    </head>
+    <body>
+        <Header />
+        <main>
+            <!-- ── Hero ───────────────────────────────────────────── -->
+            <div class="hero">
+                <div class="hero-left">
+                    <div class="hero-icon">
+                        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                            <path
+                                d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4z"
+                            ></path>
+                        </svg>
+                    </div>
+                    <div class="hero-text">
+                        <h1>Frontend Integrity <span class="hero-accent">Protected</span></h1>
+                        <p>
+                            Every file SHA-256 hashed at build time, verified by a service worker
+                            before execution.
+                        </p>
+                    </div>
+                </div>
+                <span class="badge" id="sw-badge">
+                    <span class="dot"></span>
+                    <span id="sw-text">Checking…</span>
+                </span>
+            </div>
+
+            <!-- ── On-demand Partials ─────────────────────────────── -->
+            <details class="card" open>
+                <summary class="card-summary">
+                    <span class="card-icon">⚡</span>
+                    <div class="card-info">
+                        <h2>On-demand Partials</h2>
+                        <p class="desc">
+                            HTML fragments fetched and hash-verified at runtime by the service
+                            worker.
+                        </p>
+                    </div>
+                    <svg
+                        class="card-chevron"
+                        viewBox="0 0 24 24"
+                        width="16"
+                        height="16"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2.5"
+                        aria-hidden="true"
+                    >
+                        <path d="M6 9l6 6 6-6"></path>
+                    </svg>
+                </summary>
+                <div class="card-body">
+                    <div class="btn-row">
+                        <button class="btn" data-partial="/partials/tech-stack">Tech Stack</button>
+                        <button class="btn" data-partial="/partials/guarantees">Guarantees</button>
+                    </div>
+                    <div class="panel" id="partial-output">
+                        <em style="color:var(--text-muted)">Click a button to load a partial.</em>
+                    </div>
+                </div>
+            </details>
+
+            <!-- ── Lazy JavaScript ────────────────────────────────── -->
+            <details class="card" open>
+                <summary class="card-summary">
+                    <span class="card-icon">📦</span>
+                    <div class="card-info">
+                        <h2>Lazy JavaScript</h2>
+                        <p class="desc">
+                            Dynamic <code>import()</code> forces separate Vite chunks — each verified
+                            on load.
+                        </p>
+                    </div>
+                    <svg
+                        class="card-chevron"
+                        viewBox="0 0 24 24"
+                        width="16"
+                        height="16"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2.5"
+                        aria-hidden="true"
+                    >
+                        <path d="M6 9l6 6 6-6"></path>
+                    </svg>
+                </summary>
+                <div class="card-body">
+                    <div class="btn-row">
+                        <button class="btn" id="load-counter">Counter</button>
+                        <button class="btn" id="load-theme">Theme module</button>
+                        <button class="btn" id="load-btt">Back-to-top</button>
+                    </div>
+                    <div class="panel" id="js-output">
+                        <em style="color:var(--text-muted)"
+                            >Click a button to lazy-load a module.</em
+                        >
+                    </div>
+                </div>
+            </details>
+
+            <!-- ── Security Monitor ───────────────────────────────── -->
+            <details class="card" open>
+                <summary class="card-summary">
+                    <span class="card-icon">🛡️</span>
+                    <div class="card-info">
+                        <h2>Security Monitor</h2>
+                        <p class="desc">
+                            Live feed from <code>/sw-api/status</code> — every intercepted fetch, result,
+                            and active blocks.
+                        </p>
+                    </div>
+                    <svg
+                        class="card-chevron"
+                        viewBox="0 0 24 24"
+                        width="16"
+                        height="16"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2.5"
+                        aria-hidden="true"
+                    >
+                        <path d="M6 9l6 6 6-6"></path>
+                    </svg>
+                </summary>
+                <div class="card-body">
+                    <div class="monitor-toolbar">
+                        <button class="btn" id="monitor-refresh">Refresh</button>
+                        <button class="btn" id="monitor-toggle">Pause</button>
+                    </div>
+                    <div id="monitor-output">
+                        <em style="color:var(--text-muted);font-size:.845em"
+                            >Waiting for service worker…</em
+                        >
+                    </div>
+                </div>
+            </details>
+
+            <!-- ── Protected Manifest ─────────────────────────────── -->
+            <details class="card">
+                <summary class="card-summary">
+                    <span class="card-icon">📋</span>
+                    <div class="card-info">
+                        <h2>Protected Manifest</h2>
+                        <p class="desc">
+                            secp256k1-signed at build time — static files hashed, SSR route patterns
+                            recorded.
+                        </p>
+                    </div>
+                    <svg
+                        class="card-chevron"
+                        viewBox="0 0 24 24"
+                        width="16"
+                        height="16"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2.5"
+                        aria-hidden="true"
+                    >
+                        <path d="M6 9l6 6 6-6"></path>
+                    </svg>
+                </summary>
+                <div class="card-body">
+                    <div class="meta-row" id="manifest-meta"></div>
+                    <div class="manifest-tabs">
+                        <button class="manifest-tab active" id="tab-static">Static files</button>
+                        <button class="manifest-tab" id="tab-dynamic">Dynamic routes</button>
+                    </div>
+                    <ul class="manifest-list" id="manifest-list">
+                        <li><span class="path">Loading…</span></li>
+                    </ul>
+                </div>
+            </details>
+        </main>
+        <Footer />
+        <BackToTop />
+
+        <script>
+            // ── Service worker status ────────────────────────────────
+            (async () => {
+                const badge = document.getElementById('sw-badge')!;
+                const text = document.getElementById('sw-text')!;
+                if (!('serviceWorker' in navigator)) {
+                    badge.classList.add('error');
+                    text.textContent = 'Not supported';
+                    return;
+                }
+                const reg = await navigator.serviceWorker.getRegistration('/');
+                if (reg?.active) {
+                    badge.classList.add('active');
+                    text.textContent = 'DappFence active';
+                } else {
+                    text.textContent = 'Registering…';
+                    navigator.serviceWorker.addEventListener('controllerchange', () => {
+                        badge.classList.add('active');
+                        text.textContent = 'DappFence active';
+                    });
+                }
+            })();
+
+            // ── On-demand partials ───────────────────────────────────
+            const partialOutput = document.getElementById('partial-output')!;
+            let activePartialBtn: HTMLButtonElement | null = null;
+
+            document.querySelectorAll<HTMLButtonElement>('[data-partial]').forEach((btn) => {
+                btn.addEventListener('click', async () => {
+                    if (activePartialBtn) activePartialBtn.classList.remove('active');
+                    btn.classList.add('active');
+                    activePartialBtn = btn;
+                    partialOutput.innerHTML = '<em style="color:var(--text-muted)">Loading…</em>';
+                    const html = await fetch(btn.dataset.partial!).then((r) => r.text());
+                    partialOutput.innerHTML = html;
+                });
+            });
+
+            // ── Lazy JS modules ──────────────────────────────────────
+            const jsOutput = document.getElementById('js-output')!;
+
+            document.getElementById('load-counter')?.addEventListener('click', async () => {
+                jsOutput.innerHTML = '<div id="df-counter-host"></div>';
+                const { initCounter } = await import('../scripts/counter');
+                initCounter('df-counter-host');
+            });
+
+            document.getElementById('load-theme')?.addEventListener('click', async () => {
+                const { initThemeToggle } = await import('../scripts/theme');
+                initThemeToggle('theme-toggle');
+                jsOutput.innerHTML =
+                    '<p style="margin:0"><code>theme.ts</code> re-initialised — toggle button is wired to this import.</p>';
+            });
+
+            document.getElementById('load-btt')?.addEventListener('click', async () => {
+                const { initBackToTop } = await import('../scripts/back-to-top');
+                initBackToTop('back-to-top');
+                jsOutput.innerHTML =
+                    '<p style="margin:0"><code>back-to-top.ts</code> re-initialised — scroll down to see the button.</p>';
+            });
+
+            // ── Security Monitor ─────────────────────────────────────
+            const { fetchStatus, renderMonitor, startAutoRefresh } = await import(
+                '../scripts/sw-monitor'
+            );
+
+            async function waitForSW(): Promise<void> {
+                if (navigator.serviceWorker.controller) return;
+                return new Promise((resolve) => {
+                    navigator.serviceWorker.addEventListener('controllerchange', () => resolve(), {
+                        once: true,
+                    });
+                });
+            }
+
+            await waitForSW();
+
+            let stopRefresh = startAutoRefresh('monitor-output', 3000);
+            let paused = false;
+
+            document.getElementById('monitor-refresh')?.addEventListener('click', async () => {
+                const status = await fetchStatus();
+                if (status) renderMonitor('monitor-output', status);
+            });
+
+            document.getElementById('monitor-toggle')?.addEventListener('click', (e) => {
+                const btn = e.currentTarget as HTMLButtonElement;
+                if (paused) {
+                    stopRefresh = startAutoRefresh('monitor-output', 3000);
+                    btn.textContent = 'Pause';
+                } else {
+                    stopRefresh();
+                    btn.textContent = 'Resume';
+                }
+                paused = !paused;
+            });
+
+            // ── Manifest viewer ──────────────────────────────────────
+            fetch('/integrity-manifest.json')
+                .then((r) => r.json())
+                .then((manifest) => {
+                    const { files, metadata } = manifest.pay;
+                    const entries = Object.entries(files) as [string, string][];
+                    const dynamic: string[] = metadata.dynamicRoutes ?? [];
+
+                    document.getElementById('manifest-meta')!.innerHTML = `
+						<span>Static files: <strong>${entries.length}</strong></span>
+						<span>Dynamic routes: <strong>${dynamic.length}</strong></span>
+						<span>Built: <strong>${new Date(metadata.buildTime).toLocaleString()}</strong></span>
+						<span>Signer: <strong>${manifest.identity ?? 'unsigned'}</strong></span>
+					`;
+
+                    const fileItems = entries
+                        .map(
+                            ([path, hash]) =>
+                                `<li><span class="path">${path}</span><span class="hash">${hash.slice(0, 22)}…</span></li>`
+                        )
+                        .join('');
+
+                    const dynamicItems = dynamic.length
+                        ? dynamic
+                              .map(
+                                  (r) =>
+                                      `<li>
+								<span class="path">${r}</span>
+								<span class="hash" title="Not hash-verified — response varies per request">SSR · not hashed</span>
+							</li>`
+                              )
+                              .join('')
+                        : '<li><span class="path" style="color:var(--text-muted)">No dynamic routes</span></li>';
+
+                    const list = document.getElementById('manifest-list')!;
+                    list.innerHTML = fileItems;
+
+                    document.getElementById('tab-static')?.addEventListener('click', (e) => {
+                        document
+                            .querySelectorAll('.manifest-tab')
+                            .forEach((t) => t.classList.remove('active'));
+                        (e.currentTarget as HTMLElement).classList.add('active');
+                        list.innerHTML = fileItems;
+                    });
+
+                    document.getElementById('tab-dynamic')?.addEventListener('click', (e) => {
+                        document
+                            .querySelectorAll('.manifest-tab')
+                            .forEach((t) => t.classList.remove('active'));
+                        (e.currentTarget as HTMLElement).classList.add('active');
+                        list.innerHTML = dynamicItems;
+                    });
+                });
+        </script>
+    </body>
+</html>

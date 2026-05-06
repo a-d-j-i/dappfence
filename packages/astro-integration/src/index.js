@@ -29,6 +29,7 @@ const DEFAULTS = {
     scriptSrc: '/dappfence.js',
     manifestUrl: '/integrity-manifest.json',
     manifestSignatureType: 'noble-secp256k1-recovered-eth',
+    mode: 'protected',
     appSW: null,
     warningUrl: null,
     manifestPath: 'integrity-manifest.json',
@@ -88,11 +89,9 @@ export default function dappfence(options = {}) {
             //      served at the path declared in scriptSrc (default /dappfence.js).
             //   2. Injects the script tag into every HTML file (Astro's SSG
             //      pipeline writes files directly, bypassing Vite's HTML pipeline).
-            //   3. Strips <!-- df:dynamic -->...<!-- /df:dynamic --> sections so
-            //      the hash covers only the stable template content.
-            //   4. Hashes every tracked file (JS, CSS, HTML, …).
-            //   5. Signs and writes integrity-manifest.json to the output dir.
-            async 'astro:build:done'({ dir, logger }) {
+            //   3. Hashes every tracked file (JS, CSS, HTML, …).
+            //   4. Signs and writes integrity-manifest.json to the output dir.
+            async 'astro:build:done'({ dir, pages, logger }) {
                 const outDir = fileURLToPath(dir);
 
                 const destRel = opts.scriptSrc.replace(/^\//, '');
@@ -102,13 +101,11 @@ export default function dappfence(options = {}) {
                 logger.info(`DappFence: copied dappfence.js → ${destRel}`);
 
                 await generateManifest({
+                    ...opts,
                     outDir,
+                    pages,
                     routes: resolvedRoutes,
-                    manifestPath: opts.manifestPath,
-                    extensions: opts.extensions,
-                    exclude: opts.exclude,
-                    secretKey: opts.secretKey,
-                    scriptOpts: opts,
+                    scriptAttrs: opts,
                     logger,
                 });
             },

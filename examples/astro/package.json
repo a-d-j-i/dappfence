@@ -1,0 +1,35 @@
+{
+    "name": "retrograde-ring",
+    "private": true,
+    "type": "module",
+    "version": "0.0.1",
+    "engines": {
+        "node": ">=22.12.0"
+    },
+    "scripts": {
+        "dev": "astro dev",
+        "build": "astro build",
+        "preview": "astro preview",
+        "astro": "astro",
+        "lint": "eslint astro.config.mjs src/ --fix",
+        "format": "prettier --write src/ astro.config.mjs",
+        "check": "eslint astro.config.mjs src/ && prettier --check src/ astro.config.mjs"
+    },
+    "devDependencies": {
+        "@astrojs/mdx": "^5.0.4",
+        "@astrojs/rss": "^4.0.18",
+        "@astrojs/sitemap": "^3.7.2",
+        "@dappfence/astro": "file:../../packages/astro-integration",
+        "@dappfence/core": "file:../../packages/dappfence",
+        "@dappfence/signer": "file:../../packages/signer",
+        "@eslint/js": "9.39.4",
+        "astro": "^6.2.2",
+        "eslint": "9.39.4",
+        "eslint-config-prettier": "10.1.8",
+        "globals": "14.0.0",
+        "prettier": "3.2.5",
+        "prettier-plugin-astro": "0.14.1",
+        "sharp": "^0.34.3",
+        "typescript-eslint": "8.58.2"
+    }
+}

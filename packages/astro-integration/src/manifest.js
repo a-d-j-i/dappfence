@@ -15,47 +15,52 @@ const { calculateFileHash, signManifest } = require('@dappfence/signer');
 
 export const DEFAULT_EXTENSIONS = ['.js', '.mjs', '.css', '.html', '.htm', '.json', '.svg'];
 
-export function buildScriptAttrs(opts) {
-    const attrs = { src: opts.scriptSrc };
-    if (opts.manifestUrl) attrs['data-manifest'] = opts.manifestUrl;
-    if (opts.manifestSignatureType)
-        attrs['data-manifest-signature-type'] = opts.manifestSignatureType;
-    if (opts.manifestSignatureIdentity)
-        attrs['data-manifest-signature-identity'] = opts.manifestSignatureIdentity;
-    if (opts.appSW) attrs['data-app-sw'] = opts.appSW;
-    if (opts.warningUrl) attrs['data-warning-url'] = opts.warningUrl;
+export function buildScriptAttrs(scriptAttrs) {
+    const attrs = { src: scriptAttrs.scriptSrc };
+    if (scriptAttrs.manifestUrl) attrs['data-manifest'] = scriptAttrs.manifestUrl;
+    if (scriptAttrs.manifestSignatureType)
+        attrs['data-manifest-signature-type'] = scriptAttrs.manifestSignatureType;
+    if (scriptAttrs.manifestSignatureIdentity)
+        attrs['data-manifest-signature-identity'] = scriptAttrs.manifestSignatureIdentity;
+    if (scriptAttrs.appSW) attrs['data-app-sw'] = scriptAttrs.appSW;
+    if (scriptAttrs.warningUrl) attrs['data-warning-url'] = scriptAttrs.warningUrl;
     return attrs;
 }
 
-export function buildScriptTag(opts) {
-    const attrStr = Object.entries(buildScriptAttrs(opts))
+export function buildScriptTag(scriptAttrs) {
+    const attrStr = Object.entries(buildScriptAttrs(scriptAttrs))
         .map(([k, v]) => `${k}="${v}"`)
         .join(' ');
     return `<script ${attrStr}></script>`;
 }
 
-export function injectScriptTag(html, scriptTag) {
+export function injectScriptTag(html, scriptAttrs) {
+    const tag = buildScriptTag(scriptAttrs);
     // Guard against double-injection on incremental rebuilds.
-    if (html.includes(scriptTag)) return html;
-    return html.replace(/(<head[^>]*>)/i, `$1\n    ${scriptTag}`);
+    if (html.includes(tag)) return html;
+    return html.replace(/(<head[^>]*>)/i, `$1\n    ${tag}`);
 }
 
-async function walk(base, dir, extensions, excludes, results) {
+async function walk(base, dir, extensions, excludes) {
     const entries = await fs.readdir(dir, { withFileTypes: true });
-    for (const entry of entries) {
-        const abs = path.join(dir, entry.name);
-        const web = '/' + path.relative(base, abs).replace(/\\/g, '/');
-        if (entry.isDirectory()) {
-            if (!excludes.some((e) => web.startsWith(e))) {
-                await walk(base, abs, extensions, excludes, results);
+    const results = await Promise.all(
+        entries.map(async (entry) => {
+            const abs = path.join(dir, entry.name);
+            const web = '/' + path.relative(base, abs).replace(/\\/g, '/');
+            if (entry.isDirectory()) {
+                if (excludes.some((e) => web.startsWith(e))) return [];
+                return walk(base, abs, extensions, excludes);
             }
-        } else if (entry.isFile()) {
-            const ext = path.extname(entry.name).toLowerCase();
-            if (extensions.includes(ext) && !excludes.some((e) => web.startsWith(e))) {
-                results.push({ webPath: web, absPath: abs });
+            if (entry.isFile()) {
+                const ext = path.extname(entry.name).toLowerCase();
+                if (extensions.includes(ext) && !excludes.some((e) => web.startsWith(e))) {
+                    return [{ webPath: web, absPath: abs, ext }];
+                }
             }
-        }
-    }
+            return [];
+        })
+    );
+    return results.flat();
 }
 
 /**
@@ -67,7 +72,7 @@ async function walk(base, dir, extensions, excludes, results) {
  * The SW can use these patterns in the future to skip full hash verification
  * for requests that match them.
  */
-function extractDynamicRoutes(routes) {
+export function extractDynamicRoutes(routes) {
     if (!routes?.length) return [];
     return routes
         .filter((r) => !r.isPrerendered)
@@ -75,15 +80,27 @@ function extractDynamicRoutes(routes) {
         .filter(Boolean);
 }
 
+export function buildPageSet(pages) {
+    const set = new Set();
+    for (const { pathname } of pages) {
+        const base = pathname.replace(/\/$/, '');
+        set.add(base ? `${base}/index.html` : '/index.html');
+        if (base) set.add(`${base}.html`);
+    }
+    return set;
+}
+
 export async function generateManifest({
     outDir,
+    pages,
     routes,
     manifestPath,
     extensions,
     exclude,
     secretKey,
-    scriptOpts,
+    mode,
     logger,
+    scriptAttrs,
 }) {
     const exts = extensions || DEFAULT_EXTENSIONS;
     // Always exclude the manifest file itself to avoid a circular reference.
@@ -94,20 +111,19 @@ export async function generateManifest({
         logger.info(`DappFence: ${dynamicRoutes.length} dynamic (SSR) routes captured`);
     }
 
-    const files = [];
-    await walk(outDir, outDir, exts, excludes, files);
+    const files = await walk(outDir, outDir, exts, excludes);
     logger.info(`DappFence: hashing ${files.length} files`);
 
-    const scriptTag = scriptOpts ? buildScriptTag(scriptOpts) : null;
+    const pageSet = pages?.length ? buildPageSet(pages) : null;
 
     const fileHashes = {};
-    for (const { webPath, absPath } of files) {
+    for (const { webPath, absPath, ext } of files) {
         let buf = await fs.readFile(absPath);
 
-        const isHtml = absPath.endsWith('.html') || absPath.endsWith('.htm');
-        if (isHtml && scriptTag) {
+        const isPage = pageSet ? pageSet.has(webPath) : ext === '.html' || ext === '.htm';
+        if (isPage) {
             const html = buf.toString('utf8');
-            const injected = injectScriptTag(html, scriptTag);
+            const injected = injectScriptTag(html, scriptAttrs);
             if (injected !== html) {
                 await fs.writeFile(absPath, injected, 'utf8');
                 buf = Buffer.from(injected, 'utf8');
@@ -120,6 +136,7 @@ export async function generateManifest({
 
     const payload = {
         files: fileHashes,
+        mode,
         metadata: {
             extensions: exts,
             buildTime: new Date().toISOString(),

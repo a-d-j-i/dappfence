@@ -3,7 +3,7 @@
  * Pure functions for hashing files and signing manifests.
  */
 const crypto = require('crypto');
-const { sign, ethereumAddress, keccak256 } = require('./crypto');
+const { sign, ethereumAddress, getPublicKey, hexToBytes, keccak256 } = require('./crypto');
 
 /**
  * Calculate SHA-256 hash of a file buffer or path.
@@ -30,15 +30,17 @@ function calculateStringHash(content) {
  * Sign a manifest payload and return the signed JSON string.
  * @param {object} manifestData - The manifest payload (e.g. { files: { ... }, metadata: { ... } })
  * @param {object} keys
- * @param {Uint8Array} keys.publicKey
- * @param {Uint8Array} keys.secretKey
+ * @param {string|Uint8Array} keys.secretKey - Hex string (with or without 0x) or raw bytes
  * @returns {{ pay: object, sig: string, identity: string, signatureType: string }}
  */
-function signManifest(manifestData, { publicKey, secretKey }) {
-    const identity = ethereumAddress(publicKey);
+function signManifest(manifestData, { secretKey }) {
+    const skBytes =
+        typeof secretKey === 'string' ? hexToBytes(secretKey.replace(/^0x/, '')) : secretKey;
+    const pkBytes = getPublicKey(skBytes);
+    const identity = ethereumAddress(pkBytes);
     const msg = new TextEncoder('utf-8').encode(JSON.stringify(manifestData, null, 2));
     const msgHash = keccak256(msg);
-    const sig = sign(msgHash, secretKey);
+    const sig = sign(msgHash, skBytes);
     return {
         pay: manifestData,
         sig,
@@ -47,4 +49,15 @@ function signManifest(manifestData, { publicKey, secretKey }) {
     };
 }
 
-module.exports = { calculateFileHash, calculateStringHash, signManifest };
+/**
+ * Derive the Ethereum signer identity from a secret key hex string.
+ * @param {string} secretKeyHex - 64-char hex, with or without 0x prefix
+ * @returns {string} Ethereum address like "0x..."
+ */
+function deriveIdentity(secretKeyHex) {
+    const sk = hexToBytes(secretKeyHex.replace(/^0x/, ''));
+    const pk = getPublicKey(sk);
+    return ethereumAddress(pk);
+}
+
+module.exports = { calculateFileHash, calculateStringHash, signManifest, deriveIdentity };

@@ -1,0 +1,11 @@
+{
+    "name": "@dappfence/examples",
+    "private": true,
+    "type": "module",
+    "workspaces": ["*"],
+    "scripts": {
+        "lint": "npm run lint --ws --if-present",
+        "check": "npm run check --ws --if-present",
+        "format": "npm run format --ws --if-present"
+    }
+}

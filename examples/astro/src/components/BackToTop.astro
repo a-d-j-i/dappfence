@@ -1,0 +1,29 @@
+<button id="back-to-top" aria-label="Back to top" title="Back to top">↑</button>
+
+<style>
+    #back-to-top {
+        position: fixed;
+        bottom: 2rem;
+        right: 2rem;
+        background: var(--accent);
+        color: white;
+        border: none;
+        border-radius: 50%;
+        width: 2.5rem;
+        height: 2.5rem;
+        font-size: 1.2rem;
+        cursor: pointer;
+        opacity: 0;
+        transition: opacity 0.2s;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+    #back-to-top.visible {
+        opacity: 1;
+    }
+</style>
+
+<script>
+    import('../scripts/back-to-top').then(({ initBackToTop }) => initBackToTop('back-to-top'));
+</script>

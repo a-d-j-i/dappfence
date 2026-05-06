@@ -1,7 +1,7 @@
 # @dappfence/astro
 
-Astro integration for [DappFence](../../README.md) — automatically injects the security script,
-generates a signed integrity manifest at build time, and records SSR routes that cannot be hashed.
+Astro integration for [DappFence](../../README.md) — automatically injects the security script and
+generates a signed integrity manifest at build time.
 
 ## Installation
 
@@ -48,7 +48,7 @@ automatically — you only need to supply the secret key.
 2. `DAPPFENCE_SECRET_KEY` environment variable
 3. Neither provided → **build error**
 
-Prefer the environment variable in production so the key is never committed to source control. The
+Prefer the environment variable in production, so the key is never committed to source control. The
 explicit option is useful for local development fallbacks:
 
 ```js
@@ -74,6 +74,7 @@ export default defineConfig({
 | `manifestPath`              | `string`   | `'integrity-manifest.json'`                           | Output filename for the manifest relative to the build output dir.                                                                                                                  |
 | `manifestSignatureType`     | `string`   | `'noble-secp256k1-recovered-eth'`                     | Signature algorithm written into the manifest.                                                                                                                                      |
 | `manifestSignatureIdentity` | `string`   | derived from `secretKey`                              | Expected signer Ethereum address. Auto-derived if `secretKey` is set.                                                                                                               |
+| `mode`                      | `string`   | `'protected'`                                         | Enforcement mode: `'protected'` blocks requests that fail verification; `'reporting'` logs violations without blocking.                                                             |
 | `appSW`                     | `string`   | `null`                                                | Path to your app's own service worker, loaded by DappFence via `importScripts()`.                                                                                                   |
 | `warningUrl`                | `string`   | `null`                                                | URL shown on the security warning page for tamper alerts.                                                                                                                           |
 | `extensions`                | `string[]` | `['.js','.mjs','.css','.html','.htm','.json','.svg']` | File extensions included in the manifest.                                                                                                                                           |
@@ -105,62 +106,18 @@ The integration is a **no-op in `astro dev`**. Vite transforms files at request 
 never match a static manifest; DappFence is a production-only security layer. Test against the real
 build output with `astro preview`.
 
-## SSR and Hybrid Rendering
-
-DappFence hashes static files produced at build time. Pages rendered on demand (SSR) cannot be
-hashed because their content varies per request.
-
--   **Prerendered pages (SSG)**: fully hashed and verified by the service worker.
--   **SSR pages and API routes**: not included in the manifest. Their route patterns (e.g.
-    `/api/[id]`) are recorded under `dynamicRoutes` in the manifest metadata. The service worker
-    skips hash verification for these routes; it verifies only that the manifest signature is valid
-    before allowing them through.
--   **Astro server islands** (`server:defer`): the island placeholder is static HTML rendered at
-    build time, so it is hashed normally. The island content itself is fetched from an SSR endpoint
-    (excluded from the manifest), and filled in client-side.
--   **Page partials** (`export const partial = true`): if prerendered, the partial is written to
-    disk as a static HTML fragment, included in the manifest, and verified by the service worker
-    whenever it is fetched by client-side code (e.g. `fetch('/partials/recent-posts')`). No special
-    configuration is needed — the integration skips script-tag injection for fragments that have no
-    `<head>` element. SSR partials are excluded from the manifest like any other SSR route.
-
-## Manifest Format
-
-```json
-{
-    "pay": {
-        "files": {
-            "/index.html": "sha256-...",
-            "/dappfence.js": "sha256-...",
-            "/_astro/theme.LKIRd5FN.js": "sha256-..."
-        },
-        "metadata": {
-            "extensions": [".js", ".mjs", ".css", ".html", ".htm", ".json", ".svg"],
-            "buildTime": "2025-01-01T00:00:00.000Z",
-            "version": "latest",
-            "dynamicRoutes": ["/api/[id]", "/rss.xml"]
-        }
-    },
-    "sig": "0x...",
-    "identity": "0xAbC123...",
-    "signatureType": "noble-secp256k1-recovered-eth"
-}
-```
+For details on the manifest format, signature scheme, and verification internals see the
+[DappFence README](../../README.md).
 
 ## Current Limitations
 
--   **Static files only.** Only files written to disk at build time can be hashed. SSR page content,
-    API responses, and anything generated at request time are outside the verification boundary.
-
--   **No partial-page verification.** The service worker verifies entire files. There is no
-    mechanism to verify only part of an HTML page while allowing other parts to vary at runtime
-    (e.g. CDN-edge personalization or A/B injection). Supporting this would require both build-time
-    markers and corresponding service-worker logic to strip the same regions before comparing hashes
-    — that feature does not exist yet.
+-   **Static sites only (v1).** This is an initial release. Only files written to disk at build time
+    can be hashed and verified. SSR (server-side rendering) is not supported yet — pages rendered on
+    demand are outside the verification boundary. SSR support is planned for a future version.
 
 -   **Dev server is unprotected.** `astro dev` is intentionally skipped. Security testing must be
     done against `astro build` output served with `astro preview` or a static file server.
 
 -   **Initial load is trusted.** DappFence follows a bootstrap trust model: the initial HTML and
     `dappfence.js` itself are fetched before the service worker is active, so they are not verified
-    on the very first page load. All subsequent navigations and asset fetches are verified.
+    on the very first page load. All later navigations and asset fetches are verified.
