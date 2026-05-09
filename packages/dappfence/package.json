@@ -19,7 +19,11 @@
     "type": "module",
     "main": "dist/dappfence.js",
     "exports": {
-        ".": "./dist/dappfence.js",
+        ".": {
+            "development": "./dist/dappfence.dev.js",
+            "default": "./dist/dappfence.js"
+        },
+        "./dev": "./dist/dappfence.dev.js",
         "./constants": "./src/core/constants.js"
     },
     "files": [
@@ -30,7 +34,7 @@
         "node": ">=16.0.0"
     },
     "scripts": {
-        "build": "vite build --mode development",
+        "build": "vite build --mode development && vite build --mode production",
         "build:prod": "vite build --mode production",
         "build:watch": "vite build --mode development --watch",
         "clean": "rm -rf dist coverage",
