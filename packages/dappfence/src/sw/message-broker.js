@@ -45,7 +45,8 @@ export function createMessageBroker(swContext) {
             logger.log(
                 `%cBroadcasting security violation to ${allClients.length} clients`,
                 'color:red',
-                { clientIds: allClients.map((c) => c.id) }
+                'clientIds',
+                allClients.map((c) => c.id)
             );
 
             for (const client of allClients) {
