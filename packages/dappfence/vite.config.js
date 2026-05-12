@@ -19,7 +19,7 @@ export default defineConfig(({ mode }) => ({
         lib: {
             entry: resolve(__dirname, 'src/main.js'),
             name: 'DappFence',
-            fileName: () => 'dappfence.js', // Always same filename
+            fileName: () => mode === 'development' ? 'dappfence.dev.js' : 'dappfence.js',
             formats: ['iife'], // Single IIFE format
         },
 
