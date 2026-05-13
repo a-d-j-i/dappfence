@@ -19,7 +19,7 @@ async function beforeEach({ swHelper }: { swHelper: SWHelper }, testInfo: TestIn
     await expect(page1).toHaveTitle('DappFence - Manifest Mode Example');
     await expect(page2).toHaveTitle('DappFence - Manifest Mode Example');
 
-    const swCapture = testInfo.project.name === 'simple-app-sw-capture';
+    const swCapture = testInfo.project.name.startsWith('simple-app-sw-capture');
     const serviceWorkers = await swHelper.waitForServiceWorkers(swCapture ? 2 : 1);
     if (swCapture) {
         // Service worker registration behavior with multiple tabs:
@@ -53,7 +53,7 @@ async function beforeEach({ swHelper }: { swHelper: SWHelper }, testInfo: TestIn
             // console.log('Waiting activationUrl2...', activationUrl2);
             await new Promise((resolve) => setTimeout(resolve, 200));
         }
-    } else if (testInfo.project.name === 'simple-app-sw-fixed') {
+    } else if (testInfo.project.name.startsWith('simple-app-sw-fixed')) {
         const url = await swHelper.waitForServiceWorkerActivation(page1);
         expect(url).toContain('appSW=sw_app.js');
         const url2 = await swHelper.waitForServiceWorkerActivation(page2);
@@ -71,6 +71,10 @@ test.describe('should allow normal navigation after dismissing a security block 
     test('click on page1, navigate page2', async ({ swHelper }, testInfo) => {
         const { page1, page2 } = await beforeEach({ swHelper }, testInfo);
 
+        // Accept all the confirmation alerts
+        page1.on('dialog', async (dialog) => {
+            await dialog.accept();
+        });
         await page1.getByRole('button', { name: 'Remove Site Lock' }).click();
         await page1.waitForURL('/');
         await expect(page1).toHaveTitle('DappFence - Manifest Mode Example');
@@ -81,6 +85,10 @@ test.describe('should allow normal navigation after dismissing a security block 
     test('click on page2, navigate page1', async ({ swHelper }, testInfo) => {
         const { page1, page2 } = await beforeEach({ swHelper }, testInfo);
 
+        // Accept all the confirmation alerts
+        page2.on('dialog', async (dialog) => {
+            await dialog.accept();
+        });
         await page2.getByRole('button', { name: 'Remove Site Lock' }).click();
         await page2.waitForURL('/');
         await expect(page2).toHaveTitle('DappFence - Manifest Mode Example');
@@ -92,6 +100,10 @@ test.describe('should allow normal navigation after dismissing a security block 
     test('click on page1, reload page2', async ({ swHelper }, testInfo) => {
         const { page1, page2 } = await beforeEach({ swHelper }, testInfo);
 
+        // Accept all the confirmation alerts
+        page1.on('dialog', async (dialog) => {
+            await dialog.accept();
+        });
         await page1.getByRole('button', { name: 'Remove Site Lock' }).click();
         await page1.waitForURL('/');
         await expect(page1).toHaveTitle('DappFence - Manifest Mode Example');
@@ -102,6 +114,10 @@ test.describe('should allow normal navigation after dismissing a security block 
     test('click on page2, reload page1', async ({ swHelper }, testInfo) => {
         const { page1, page2 } = await beforeEach({ swHelper }, testInfo);
 
+        // Accept all the confirmation alerts
+        page2.on('dialog', async (dialog) => {
+            await dialog.accept();
+        });
         await page2.getByRole('button', { name: 'Remove Site Lock' }).click();
         await page2.waitForURL('/');
         await expect(page2).toHaveTitle('DappFence - Manifest Mode Example');

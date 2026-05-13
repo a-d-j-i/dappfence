@@ -23,7 +23,6 @@ const ROOT_DIR = path.resolve(__dirname, '..');
 const directories = {
     assetDir: path.resolve(ROOT_DIR, 'assets'),
     templateDir: path.resolve(ROOT_DIR, 'template'),
-    dappfencePath: require.resolve('@dappfence/core'),
 };
 
 // This key is used for TESTING only
@@ -43,7 +42,7 @@ const simpleAppBase = {
     htmlTemplates: { 'simple-app.html': 'index.html', 'front-page.html': 'front-page.html' },
 };
 
-const BUILD_TARGETS = {
+const BUILD_CONFIGURATIONS = {
     'simple-app': {
         ...simpleAppBase,
         templateFlags: { USE_APP_SW: false, USE_APP: true },
@@ -71,10 +70,18 @@ const BUILD_TARGETS = {
 };
 
 const OUT_DIR = path.join(ROOT_DIR, 'dist');
-Object.keys(BUILD_TARGETS).forEach((name) => {
-    BUILD_TARGETS[name].outDir = path.join(OUT_DIR, name);
-});
-
+const DAPPFENCE_PACKAGES = { dev: '@dappfence/core/dev', prod: '@dappfence/core' };
+const BUILD_TARGETS = {};
+for (const env in DAPPFENCE_PACKAGES) {
+    for (const name in BUILD_CONFIGURATIONS) {
+        const target = name + '-' + env;
+        BUILD_TARGETS[target] = {
+            ...BUILD_CONFIGURATIONS[name],
+            outDir: path.join(OUT_DIR, target),
+            dappfencePath: require.resolve(DAPPFENCE_PACKAGES[env]),
+        };
+    }
+}
 module.exports = {
     OUT_DIR,
     BUILD_TARGETS,
