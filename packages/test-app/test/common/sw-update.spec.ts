@@ -16,7 +16,7 @@ async function beforeEach(
     await page.goto('');
     await expect(page).toHaveTitle('DappFence - Manifest Mode Example');
 
-    const swCapture = testInfo.project.name === 'simple-app-sw-capture';
+    const swCapture = testInfo.project.name.startsWith('simple-app-sw-capture');
     const serviceWorkers = await swHelper.waitForServiceWorkers(swCapture ? 2 : 1);
     if (swCapture) {
         // Wait for the first service worker (sw_register.js) to close after registering sw_app.js.
@@ -27,7 +27,7 @@ async function beforeEach(
     }
     // We don't know which one is active, because sometimes the second one stays in loading state forever
     const url = await swHelper.waitForServiceWorkerActivation();
-    if (swCapture || testInfo.project.name === 'simple-app-sw-fixed') {
+    if (swCapture || testInfo.project.name.startsWith('simple-app-sw-fixed')) {
         expect(url).toContain('appSW=sw_app.js');
     }
 }

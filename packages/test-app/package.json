@@ -9,7 +9,7 @@
         "clean": "rm -rf dist test-results",
         "build": "node src/build.js --quiet",
         "build:manifest": "node src/build.js",
-        "dev": "node src/dev-server.js --with-browser -d simple-app_latest",
+        "dev": "node src/dev-server.js --with-browser -d simple-app-dev_latest",
         "dev:http": "node src/dev-server.js",
         "build:manifest:test": "node src/build.js tampering-test",
         "build:watch": "node src/watch.js",

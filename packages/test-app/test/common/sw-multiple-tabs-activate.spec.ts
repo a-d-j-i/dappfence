@@ -16,7 +16,7 @@ test("should claim pages that doesn't have dappfence installed", async ({ swHelp
     await mainPage.goto('');
     await expect(mainPage).toHaveTitle('DappFence - Manifest Mode Example');
 
-    const swCapture = testInfo.project.name === 'simple-app-sw-capture';
+    const swCapture = testInfo.project.name.startsWith('simple-app-sw-capture');
     const serviceWorkers = await swHelper.waitForServiceWorkers(swCapture ? 3 : 2);
     await serviceWorkers[0].waitUntilClosed();
     if (swCapture) {
@@ -29,7 +29,7 @@ test("should claim pages that doesn't have dappfence installed", async ({ swHelp
     // We don't know which one is active, because sometimes the second one stays in loading state forever
     const url = await swHelper.waitForServiceWorkerActivation(mainPage);
     expect(url).toContain('dappfence.js');
-    if (swCapture || testInfo.project.name === 'simple-app-sw-fixed') {
+    if (swCapture || testInfo.project.name.startsWith('simple-app-sw-fixed')) {
         expect(url).toContain('appSW=sw_app.js');
     }
 
@@ -43,8 +43,8 @@ test("should claim pages that doesn't have dappfence installed", async ({ swHelp
     expect(urlAfter).toContain('dappfence.js');
     expect(urlBefore).toContain('dappfence.js');
     if (
-        testInfo.project.name === 'simple-app-sw-capture' ||
-        testInfo.project.name === 'simple-app-sw-fixed'
+        testInfo.project.name.startsWith('simple-app-sw-capture') ||
+        testInfo.project.name.startsWith('simple-app-sw-fixed')
     ) {
         expect(urlBefore).toContain('appSW=sw_app.js');
         expect(urlAfter).toContain('appSW=sw_app.js');

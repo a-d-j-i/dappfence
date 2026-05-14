@@ -17,7 +17,7 @@ import { expect, test } from '../sw-fixtures';
             }
             await expect(page).toHaveTitle('DappFence - Manifest Mode Example');
 
-            const swCapture = testInfo.project.name === 'simple-app-sw-capture';
+            const swCapture = testInfo.project.name.startsWith('simple-app-sw-capture');
             const serviceWorkers = await swHelper.waitForServiceWorkers(swCapture ? 2 : 1);
             if (swCapture) {
                 // Wait for the first service worker (sw_register.js) to close after registering sw_app.js.
@@ -28,7 +28,7 @@ import { expect, test } from '../sw-fixtures';
             }
             // We don't know which one is active, because sometimes the second one stays in loading state forever
             const url = await swHelper.waitForServiceWorkerActivation();
-            if (swCapture || testInfo.project.name === 'simple-app-sw-fixed') {
+            if (swCapture || testInfo.project.name.startsWith('simple-app-sw-fixed')) {
                 expect(url).toContain('appSW=sw_app.js');
             }
         });
@@ -72,7 +72,7 @@ import { expect, test } from '../sw-fixtures';
             swHelper,
         }, testInfo) => {
             test.skip(
-                testInfo.project.name === 'simple-app-sw-capture',
+                testInfo.project.name.startsWith('simple-app-sw-capture'),
                 "right now we don't support this case (app.js is not loaded by the index.html)"
             );
             await swHelper.interceptAndModifyPageContent('**/app.js');
@@ -96,6 +96,10 @@ import { expect, test } from '../sw-fixtures';
             await swHelper.interceptAndModifyPageContent('**/jquery-3.7.1.min.js');
             await page.goto('');
             await page.waitForURL(/.*\/sw-api/);
+            // Accept all the confirmation alerts
+            page.on('dialog', async (dialog) => {
+                await dialog.accept();
+            });
             await page.getByRole('button', { name: 'Remove Site Lock' }).click();
             await page.waitForURL('/');
             await expect(page).toHaveTitle('DappFence - Manifest Mode Example');

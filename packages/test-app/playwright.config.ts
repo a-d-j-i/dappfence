@@ -26,6 +26,52 @@ function findLibFakeTime(searchDir: string): string | undefined {
     }
 }
 
+const projectsPerEnv = (env: string) => [
+    ...// to slow to run them all the time, they are used to measure automatic cache invalidation.
+    (process.env.RUN_FAKETIME_TESTS
+        ? [
+              {
+                  name: 'fake-time-' + env,
+                  testMatch: [`**/*.faketime.ts`],
+                  use: {
+                      ...devices['Desktop Chrome'],
+                      launchOptions: {
+                          env: {
+                              ...process.env,
+                              LD_PRELOAD: findLibFakeTime('/usr/lib'),
+                              // FAKETIME_UPDATE_TIMESTAMP_FILE: '1',
+                              // FAKETIME_CACHE_DURATION: '1',
+                              FAKETIME_DONT_RESET: '1',
+                              FAKETIME_NO_CACHE: '1',
+                              FAKETIME_DONT_FAKE_MONOTONIC: '1',
+                              FAKETIME_TIMESTAMP_FILE: path.join(
+                                  os.tmpdir(),
+                                  `faketime-${crypto.randomBytes(4).toString('hex')}.txt`
+                              ),
+                          },
+                      },
+                  },
+              },
+          ]
+        : []),
+    ...['reporting-test-' + env].map((name) => ({
+        name,
+        testMatch: [`${name}/**/*.spec.ts`],
+        use: {
+            ...devices['Desktop Chrome'],
+        },
+    })),
+    ...['simple-app-' + env, 'simple-app-sw-fixed-' + env, 'simple-app-sw-capture-' + env].map(
+        (name) => ({
+            name,
+            testMatch: [`${name}/**/*.spec.ts`, 'common/**/*.spec.ts'],
+            use: {
+                ...devices['Desktop Chrome'],
+            },
+        })
+    ),
+];
+
 /**
  * Read environment variables from a file.
  * https://github.com/motdotla/dotenv
@@ -65,47 +111,8 @@ export default defineConfig({
         : {}),
     /* Configure projects for major browsers, use fake-time project when executed via run-playwright-faketime.js script */
     projects: [
-        ...// to slow to run them all the time, they are used to measure automatic cache invalidation.
-        (process.env.RUN_FAKETIME_TESTS
-            ? [
-                  {
-                      name: 'fake-time',
-                      testMatch: [`**/*.faketime.ts`],
-                      use: {
-                          ...devices['Desktop Chrome'],
-                          launchOptions: {
-                              env: {
-                                  ...process.env,
-                                  LD_PRELOAD: findLibFakeTime('/usr/lib'),
-                                  // FAKETIME_UPDATE_TIMESTAMP_FILE: '1',
-                                  // FAKETIME_CACHE_DURATION: '1',
-                                  FAKETIME_DONT_RESET: '1',
-                                  FAKETIME_NO_CACHE: '1',
-                                  FAKETIME_DONT_FAKE_MONOTONIC: '1',
-                                  FAKETIME_TIMESTAMP_FILE: path.join(
-                                      os.tmpdir(),
-                                      `faketime-${crypto.randomBytes(4).toString('hex')}.txt`
-                                  ),
-                              },
-                          },
-                      },
-                  },
-              ]
-            : []),
-        ...['reporting-test'].map((name) => ({
-            name,
-            testMatch: [`${name}/**/*.spec.ts`],
-            use: {
-                ...devices['Desktop Chrome'],
-            },
-        })),
-        ...['simple-app', 'simple-app-sw-fixed', 'simple-app-sw-capture'].map((name) => ({
-            name,
-            testMatch: [`${name}/**/*.spec.ts`, 'common/**/*.spec.ts'],
-            use: {
-                ...devices['Desktop Chrome'],
-            },
-        })),
+        ...(process.env.PW_TEST_SKIP_DEV ? [] : projectsPerEnv('dev')),
+        ...(process.env.PW_TEST_PROD ? projectsPerEnv('prod') : []),
     ],
     /* Run your local dev server before starting the e2e */
     webServer: process.env.SKIP_WEBSERVER

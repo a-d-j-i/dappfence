@@ -63,6 +63,52 @@ Build output is written to `dist/` as a complete directory tree per scenario.
 -   This keeps the server simple while letting the test suite run multiple independent site variants
     against the same server.
 
+## DappFence build variants (dev vs prod)
+
+Every test scenario is built twice — once with the **dev** bundle (`dappfence.dev.js`) and once with
+the **prod** bundle (`dappfence.js`). The build config generates a `BUILD_TARGET` for each
+combination:
+
+| Build target              | Bundle used           | Output directory                |
+| ------------------------- | --------------------- | ------------------------------- |
+| `simple-app-dev`          | `@dappfence/core/dev` | `dist/simple-app-dev/`          |
+| `simple-app-prod`         | `@dappfence/core`     | `dist/simple-app-prod/`         |
+| `simple-app-sw-fixed-dev` | `@dappfence/core/dev` | `dist/simple-app-sw-fixed-dev/` |
+| …                         | …                     | …                               |
+
+Playwright mirrors this with a `projectsPerEnv(env)` helper that stamps the env suffix onto every
+project name and its `testMatch` globs, so `simple-app-dev` maps to `dist/simple-app-dev/` and
+`simple-app-prod` maps to `dist/simple-app-prod/` with no extra configuration.
+
+### Which projects run by default
+
+| Env vars set                        | Projects that run                            |
+| ----------------------------------- | -------------------------------------------- |
+| _(none)_                            | `dev` only                                   |
+| `PW_TEST_PROD=1`                    | `dev` + `prod`                               |
+| `PW_TEST_SKIP_DEV=1`                | _(none — useful combined with the next one)_ |
+| `PW_TEST_PROD=1 PW_TEST_SKIP_DEV=1` | `prod` only                                  |
+
+The default is **dev-only** because the dev bundle is what changes during active development. Add
+`PW_TEST_PROD=1` when you want to confirm the production bundle behaves the same, e.g. before a
+release or after a build-config change.
+
+```bash
+# Run only dev projects (default)
+npm test
+
+# Run both variants
+PW_TEST_PROD=1 npm test
+
+# Run only prod
+PW_TEST_PROD=1 PW_TEST_SKIP_DEV=1 npm test
+
+# Target a single variant + specific project
+PW_TEST_PROD=1 PW_TEST_SKIP_DEV=1 npx playwright test --project=simple-app-prod
+```
+
+---
+
 ## Time mocking with libfaketime
 
 ### Why we need it

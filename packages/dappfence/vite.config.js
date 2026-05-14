@@ -1,8 +1,8 @@
 import { defineConfig } from 'vite';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { readFileSync } from 'fs';
 import obfuscator from 'vite-plugin-bundle-obfuscator';
-import featureFlagConfig from './feature_flag.json';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -19,7 +19,7 @@ export default defineConfig(({ mode }) => ({
         lib: {
             entry: resolve(__dirname, 'src/main.js'),
             name: 'DappFence',
-            fileName: () => mode === 'development' ? 'dappfence.dev.js' : 'dappfence.js',
+            fileName: () => (mode === 'development' ? 'dappfence.dev.js' : 'dappfence.js'),
             formats: ['iife'], // Single IIFE format
         },
 
@@ -68,7 +68,6 @@ export default defineConfig(({ mode }) => ({
         __VERSION__: JSON.stringify(process.env.npm_package_version || '0.1.0'),
         __BUILD_DATE__: JSON.stringify(new Date().toISOString()),
         __DEV__: mode === 'development',
-        __FEATURES__: JSON.stringify(featureFlagConfig[mode]),
     },
 
     // Vite cache (avoid node_modules inside this package)
@@ -83,6 +82,22 @@ export default defineConfig(({ mode }) => ({
 
     // Plugins (none needed - using built-in ?raw imports)
     plugins: [
+        {
+            name: 'watch-feature-flags',
+            buildStart() {
+                this.addWatchFile(resolve(__dirname, 'feature_flag.json'));
+            },
+            renderChunk(code) {
+                if (!code.includes('__FEATURES__')) return null;
+                const flags = JSON.parse(
+                    readFileSync(resolve(__dirname, 'feature_flag.json'), 'utf-8')
+                );
+                return {
+                    code: code.replace(/__FEATURES__/g, JSON.stringify(flags[mode])),
+                    map: null,
+                };
+            },
+        },
         obfuscator({
             // Options for javascript-obfuscator
             enable: mode === 'production',

@@ -438,7 +438,7 @@ async function swHelper(
         },
     };
 
-    if (testInfo.project.name === 'fake-time' && !isValidFakeTimeLib) {
+    if (testInfo.project.name.startsWith('fake-time') && !isValidFakeTimeLib) {
         test.skip(true, `skipping the test fake time library libFakeTime not found`);
     }
     if (fakeTimeFile) {
