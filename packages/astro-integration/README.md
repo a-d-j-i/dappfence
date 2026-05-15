@@ -6,10 +6,11 @@ generates a signed integrity manifest at build time.
 ## Installation
 
 ```bash
-npm install @dappfence/astro @dappfence/core
+npm install @dappfence/astro
 ```
 
-`@dappfence/core` provides the `dappfence.js` runtime that gets copied into your build output.
+`@dappfence/core` (the browser runtime) and `@dappfence/signer` (the manifest signing library) are
+listed as dependencies and are installed automatically.
 
 ## Setup
 
@@ -70,25 +71,27 @@ export default defineConfig({
 | --------------------------- | ---------- | ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `secretKey`                 | `string`   | `DAPPFENCE_SECRET_KEY` env var                        | **Required.** Hex secret key (with or without `0x` prefix) used to sign the manifest. Falls back to the `DAPPFENCE_SECRET_KEY` environment variable; build fails if neither is set. |
 | `scriptSrc`                 | `string`   | `'/dappfence.js'`                                     | URL path where `dappfence.js` will be served.                                                                                                                                       |
-| `manifestUrl`               | `string`   | `'/integrity-manifest.json'`                          | URL path where the manifest will be served.                                                                                                                                         |
-| `manifestPath`              | `string`   | `'integrity-manifest.json'`                           | Output filename for the manifest relative to the build output dir.                                                                                                                  |
+| `manifestUrl`               | `string`   | `'/integrity-manifest.json'`                          | URL path where the manifest will be served at runtime.                                                                                                                              |
+| `manifestPath`              | `string`   | `'integrity-manifest.json'`                           | Output filename for the manifest relative to the build output directory.                                                                                                            |
 | `manifestSignatureType`     | `string`   | `'noble-secp256k1-recovered-eth'`                     | Signature algorithm written into the manifest.                                                                                                                                      |
-| `manifestSignatureIdentity` | `string`   | derived from `secretKey`                              | Expected signer Ethereum address. Auto-derived if `secretKey` is set.                                                                                                               |
+| `manifestSignatureIdentity` | `string`   | derived from `secretKey`                              | Expected signer Ethereum address. Auto-derived when `secretKey` is set.                                                                                                             |
 | `mode`                      | `string`   | `'protected'`                                         | Enforcement mode: `'protected'` blocks requests that fail verification; `'reporting'` logs violations without blocking.                                                             |
 | `appSW`                     | `string`   | `null`                                                | Path to your app's own service worker, loaded by DappFence via `importScripts()`.                                                                                                   |
 | `warningUrl`                | `string`   | `null`                                                | URL shown on the security warning page for tamper alerts.                                                                                                                           |
 | `extensions`                | `string[]` | `['.js','.mjs','.css','.html','.htm','.json','.svg']` | File extensions included in the manifest.                                                                                                                                           |
 | `exclude`                   | `string[]` | `[]`                                                  | Web paths to exclude from the manifest (e.g. `['/admin']`).                                                                                                                         |
+| `strips`                    | `string[]` | `null`                                                | Named strip rules applied before hashing (e.g. `['netlify-cdp']`). Merged with any rules auto-detected from the build environment.                                                  |
 
 ## What Happens at Build Time
 
-Running `astro build` triggers three steps in order:
+Running `astro build` triggers four steps in order:
 
 1. **`dappfence.js` is copied** from `@dappfence/core` into your output directory at `scriptSrc`
    (default `dist/dappfence.js`), so it is served as a first-party file and included in the manifest
    hash.
 
-2. **Script tag is injected** into every HTML file in the output directory:
+2. **Script tag is injected** into every HTML file that contains a `<head>` tag. Partial HTML
+   fragments without a `<head>` are skipped automatically.
 
     ```html
     <script
@@ -99,25 +102,41 @@ Running `astro build` triggers three steps in order:
     ></script>
     ```
 
-3. **`integrity-manifest.json` is generated** — SHA-256 hashes for every tracked file, signed with
-   your `secretKey`, written to the output directory.
+3. **Every tracked file is hashed** (SHA-256) after any strip rules are applied.
 
-The integration is a **no-op in `astro dev`**. Vite transforms files at request time so their bytes
-never match a static manifest; DappFence is a production-only security layer. Test against the real
-build output with `astro preview`.
+4. **`integrity-manifest.json` is signed and written** to the output directory.
+
+The integration is a **no-op in `astro dev`**. DappFence requires a static signed manifest to verify
+file hashes, which cannot exist when Astro renders pages at request time. Test against the real
+build output with `astro build && astro preview`.
 
 For details on the manifest format, signature scheme, and verification internals see the
 [DappFence README](../../README.md).
 
+## Deploying to Netlify
+
+See the [Netlify deployment guide](../netlify-integration/README.md) for the required `netlify.toml`
+configuration, post-processing pitfalls, and a deployment checklist.
+
+The one Astro-specific note: Netlify injects a CDP analytics snippet into HTML pages at CDN serve
+time. The integration detects Netlify's build environment automatically and enables the
+`netlify-cdp` strip rule. If you build outside Netlify (e.g. locally or in GitHub Actions), add it
+explicitly:
+
+```js
+dappfence({
+    strips: ['netlify-cdp'],
+});
+```
+
 ## Current Limitations
 
--   **Static sites only (v1).** This is an initial release. Only files written to disk at build time
-    can be hashed and verified. SSR (server-side rendering) is not supported yet — pages rendered on
-    demand are outside the verification boundary. SSR support is planned for a future version.
+-   **Static sites only (v1).** Only files written to disk at build time can be hashed and verified.
+    Pages rendered on demand (SSR) are outside the verification boundary.
 
--   **Dev server is unprotected.** `astro dev` is intentionally skipped. Security testing must be
-    done against `astro build` output served with `astro preview` or a static file server.
+-   **Dev server is unprotected.** `astro dev` is intentionally skipped. Test with
+    `astro build && astro preview`.
 
--   **Initial load is trusted.** DappFence follows a bootstrap trust model: the initial HTML and
-    `dappfence.js` itself are fetched before the service worker is active, so they are not verified
-    on the very first page load. All later navigations and asset fetches are verified.
+-   **Initial load is trusted.** The initial HTML and `dappfence.js` are fetched before the service
+    worker is active and are not verified on the very first page load. All subsequent navigations
+    and asset fetches are verified.

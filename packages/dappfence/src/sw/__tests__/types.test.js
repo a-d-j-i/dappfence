@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { shouldVerifyAsset } from '../manifest/operations.js';
+import { shouldVerifyAsset } from '../manifest/verification.js';
 import {
     DEFAULT_SECURITY_CONTENT_TYPES,
     DEFAULT_SECURITY_EXTENSIONS,

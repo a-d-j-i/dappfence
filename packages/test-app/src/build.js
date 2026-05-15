@@ -102,6 +102,7 @@ async function buildTarget(targetName, target, { personalSign = false }, version
     const manifestData = {
         files: {},
         mode: target.manifestMode,
+        strips: ['netlify-cdp'],
         metadata: {
             extensions: new Set(),
             contentTypes: new Set(),

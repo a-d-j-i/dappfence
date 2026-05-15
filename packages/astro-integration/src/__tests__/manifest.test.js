@@ -6,9 +6,8 @@ import {
     buildScriptAttrs,
     buildScriptTag,
     injectScriptTag,
-    buildPageSet,
     extractDynamicRoutes,
-    generateManifest,
+    buildIntegrityManifest,
     DEFAULT_EXTENSIONS,
 } from '../manifest.js';
 
@@ -126,41 +125,7 @@ describe('extractDynamicRoutes', () => {
     });
 });
 
-// ── buildPageSet ──────────────────────────────────────────────────────────────
-
-describe('buildPageSet', () => {
-    it('returns empty set for no pages', () => {
-        expect(buildPageSet([]).size).toBe(0);
-    });
-
-    it('maps root pathname to /index.html only', () => {
-        const set = buildPageSet([{ pathname: '/' }]);
-        expect(set.has('/index.html')).toBe(true);
-        expect(set.size).toBe(1);
-    });
-
-    it('maps nested pathname to both index.html and .html forms', () => {
-        const set = buildPageSet([{ pathname: '/about/' }]);
-        expect(set.has('/about/index.html')).toBe(true);
-        expect(set.has('/about.html')).toBe(true);
-        expect(set.size).toBe(2);
-    });
-
-    it('handles pathnames without trailing slash', () => {
-        const set = buildPageSet([{ pathname: '/blog' }]);
-        expect(set.has('/blog/index.html')).toBe(true);
-        expect(set.has('/blog.html')).toBe(true);
-    });
-
-    it('handles multiple pages', () => {
-        const set = buildPageSet([{ pathname: '/' }, { pathname: '/contact' }]);
-        expect(set.has('/index.html')).toBe(true);
-        expect(set.has('/contact/index.html')).toBe(true);
-        expect(set.has('/contact.html')).toBe(true);
-    });
-});
-
-// ── generateManifest (integration) ───────────────────────────────────────────
+// ── buildIntegrityManifest (integration) ───────────────────────────────────────────
 
 async function makeTmpDir() {
     return fs.mkdtemp(path.join(os.tmpdir(), 'dappfence-test-'));
@@ -172,7 +137,7 @@ const LOGGER = {
     error: () => {},
 };
 
-describe('generateManifest', () => {
+describe('buildIntegrityManifest', () => {
     const tmpDirs = [];
 
     afterEach(async () => {
@@ -194,7 +159,7 @@ describe('generateManifest', () => {
         await fs.writeFile(path.join(outDir, 'style.css'), 'body{}', 'utf8');
         await fs.writeFile(path.join(outDir, 'image.png'), 'fake png', 'utf8');
 
-        await generateManifest({
+        await buildIntegrityManifest({
             outDir,
             manifestPath: 'integrity-manifest.json',
             extensions: DEFAULT_EXTENSIONS,
@@ -215,7 +180,7 @@ describe('generateManifest', () => {
         const outDir = await setup();
         await fs.writeFile(path.join(outDir, 'app.js'), 'x', 'utf8');
 
-        await generateManifest({
+        await buildIntegrityManifest({
             outDir,
             manifestPath: 'integrity-manifest.json',
             extensions: DEFAULT_EXTENSIONS,
@@ -237,7 +202,7 @@ describe('generateManifest', () => {
         await fs.writeFile(path.join(adminDir, 'app.js'), 'secret', 'utf8');
         await fs.writeFile(path.join(outDir, 'public.js'), 'open', 'utf8');
 
-        await generateManifest({
+        await buildIntegrityManifest({
             outDir,
             manifestPath: 'integrity-manifest.json',
             extensions: DEFAULT_EXTENSIONS,
@@ -253,38 +218,21 @@ describe('generateManifest', () => {
         expect(manifest.pay.files['/public.js']).toBeDefined();
     });
 
-    it('injects script tag into HTML pages when pages list provided', async () => {
+    it('injects script tag into every HTML file', async () => {
         const outDir = await setup();
+        await fs.mkdir(path.join(outDir, 'about'), { recursive: true });
         await fs.writeFile(
             path.join(outDir, 'index.html'),
             '<html><head></head><body></body></html>',
             'utf8'
         );
-
-        await generateManifest({
-            outDir,
-            pages: [{ pathname: '/' }],
-            manifestPath: 'integrity-manifest.json',
-            extensions: DEFAULT_EXTENSIONS,
-            exclude: [],
-            mode: 'protected',
-            logger: LOGGER,
-            scriptAttrs: MINIMAL,
-        });
-
-        const html = await fs.readFile(path.join(outDir, 'index.html'), 'utf8');
-        expect(html).toContain('src="/dappfence.js"');
-    });
-
-    it('falls back to extension-based detection when no pages list', async () => {
-        const outDir = await setup();
         await fs.writeFile(
-            path.join(outDir, 'page.html'),
+            path.join(outDir, 'about', 'index.html'),
             '<html><head></head><body></body></html>',
             'utf8'
         );
 
-        await generateManifest({
+        await buildIntegrityManifest({
             outDir,
             manifestPath: 'integrity-manifest.json',
             extensions: DEFAULT_EXTENSIONS,
@@ -294,14 +242,34 @@ describe('generateManifest', () => {
             scriptAttrs: MINIMAL,
         });
 
-        const html = await fs.readFile(path.join(outDir, 'page.html'), 'utf8');
-        expect(html).toContain('src="/dappfence.js"');
+        const root = await fs.readFile(path.join(outDir, 'index.html'), 'utf8');
+        const about = await fs.readFile(path.join(outDir, 'about', 'index.html'), 'utf8');
+        expect(root).toContain('src="/dappfence.js"');
+        expect(about).toContain('src="/dappfence.js"');
+    });
+
+    it('skips HTML fragments without a <head> tag', async () => {
+        const outDir = await setup();
+        await fs.writeFile(path.join(outDir, 'partial.html'), '<div>fragment</div>', 'utf8');
+
+        await buildIntegrityManifest({
+            outDir,
+            manifestPath: 'integrity-manifest.json',
+            extensions: DEFAULT_EXTENSIONS,
+            exclude: [],
+            mode: 'protected',
+            logger: LOGGER,
+            scriptAttrs: MINIMAL,
+        });
+
+        const html = await fs.readFile(path.join(outDir, 'partial.html'), 'utf8');
+        expect(html).not.toContain('src="/dappfence.js"');
     });
 
     it('writes mode into the manifest payload', async () => {
         const outDir = await setup();
 
-        await generateManifest({
+        await buildIntegrityManifest({
             outDir,
             manifestPath: 'integrity-manifest.json',
             extensions: DEFAULT_EXTENSIONS,
@@ -320,7 +288,7 @@ describe('generateManifest', () => {
         const outDir = await setup();
         const secretKey = 'a'.repeat(64);
 
-        await generateManifest({
+        await buildIntegrityManifest({
             outDir,
             manifestPath: 'integrity-manifest.json',
             extensions: DEFAULT_EXTENSIONS,
@@ -344,7 +312,7 @@ describe('generateManifest', () => {
             { pattern: '/api/[id]', isPrerendered: false },
         ];
 
-        await generateManifest({
+        await buildIntegrityManifest({
             outDir,
             routes,
             manifestPath: 'integrity-manifest.json',

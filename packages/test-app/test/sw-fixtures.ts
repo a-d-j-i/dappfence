@@ -37,7 +37,9 @@ export type ServiceWorkerWithClose = {
 export type InterceptPattern =
     | { pattern: string; formula?: 'default'; args?: never }
     | { pattern: string; formula: 'replace'; args: string }
-    | { pattern: string; formula: 'empty'; args: string };
+    | { pattern: string; formula: 'empty'; args: string }
+    | { pattern: string; formula: 'cdn-inject'; args?: never }
+    | { pattern: string; formula: 'cdn-inject-malicious'; args?: never };
 
 export type ServerTestParameters = {
     appName?: string;
@@ -67,7 +69,7 @@ export type SWHelper = {
     waitForServiceWorkerMessage: (msg: string) => Promise<Worker>;
     interceptAndModifyPageContent: (
         pattern: string | InterceptPattern | InterceptPattern[],
-        formula?: 'default' | 'replace' | 'empty',
+        formula?: 'default' | 'replace' | 'empty' | 'cdn-inject' | 'cdn-inject-malicious',
         args?: string
     ) => Promise<void>;
     clearIntercept(): Promise<void>;
@@ -324,7 +326,7 @@ async function swHelper(
         },
         interceptAndModifyPageContent: async (
             pattern: string | InterceptPattern | InterceptPattern[],
-            formula?: 'default' | 'replace' | 'empty',
+            formula?: 'default' | 'replace' | 'empty' | 'cdn-inject' | 'cdn-inject-malicious',
             args?: string
         ) => {
             const intercept: InterceptPattern | InterceptPattern[] =

@@ -1,11 +1,3 @@
-/**
- * Post-build manifest generation.
- *
- * 1. Walks the output directory and collects security-critical files.
- * 2. Injects the dappfence.js script tag into every HTML file.
- * 3. Computes SRI hashes and optionally signs the manifest.
- * 4. Writes integrity-manifest.json to the output directory.
- */
 import { createRequire } from 'node:module';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
@@ -63,15 +55,6 @@ async function walk(base, dir, extensions, excludes) {
     return results.flat();
 }
 
-/**
- * Extract server-rendered route patterns from the Astro routes array.
- * Returns route strings like '/blog/[slug]' and '/_server-islands/[name]'.
- *
- * Astro marks every route with `isPrerendered`. Routes that are not
- * prerendered are rendered on demand (SSR pages, server islands, API routes).
- * The SW can use these patterns in the future to skip full hash verification
- * for requests that match them.
- */
 export function extractDynamicRoutes(routes) {
     if (!routes?.length) return [];
     return routes
@@ -80,25 +63,15 @@ export function extractDynamicRoutes(routes) {
         .filter(Boolean);
 }
 
-export function buildPageSet(pages) {
-    const set = new Set();
-    for (const { pathname } of pages) {
-        const base = pathname.replace(/\/$/, '');
-        set.add(base ? `${base}/index.html` : '/index.html');
-        if (base) set.add(`${base}.html`);
-    }
-    return set;
-}
-
-export async function generateManifest({
+export async function buildIntegrityManifest({
     outDir,
-    pages,
     routes,
     manifestPath,
     extensions,
     exclude,
     secretKey,
     mode,
+    strips,
     logger,
     scriptAttrs,
 }) {
@@ -114,14 +87,12 @@ export async function generateManifest({
     const files = await walk(outDir, outDir, exts, excludes);
     logger.info(`DappFence: hashing ${files.length} files`);
 
-    const pageSet = pages?.length ? buildPageSet(pages) : null;
-
     const fileHashes = {};
     for (const { webPath, absPath, ext } of files) {
         let buf = await fs.readFile(absPath);
 
-        const isPage = pageSet ? pageSet.has(webPath) : ext === '.html' || ext === '.htm';
-        if (isPage) {
+        // Partials without a <head> tag are naturally skipped by injectScriptTag.
+        if (ext === '.html' || ext === '.htm') {
             const html = buf.toString('utf8');
             const injected = injectScriptTag(html, scriptAttrs);
             if (injected !== html) {
@@ -137,6 +108,7 @@ export async function generateManifest({
     const payload = {
         files: fileHashes,
         mode,
+        ...(strips?.length && { strips }),
         metadata: {
             extensions: exts,
             buildTime: new Date().toISOString(),

@@ -1,10 +1,6 @@
-import { describe, it, expect } from 'vitest';
-import {
-    verifyFilePath,
-    normalizeManifestData,
-    getFileKey,
-    verifyManifestSignature,
-} from '../manifest/operations.js';
+import { describe, expect, it } from 'vitest';
+import { getFileKey, verifyFilePath, verifyManifestSignature } from '../manifest/verification.js';
+import { normalizeManifestData } from '../storage/manifest-store.js';
 import { createSingleFlight } from '../../core/utils.js';
 import { VERIFICATION_STATUS } from '../../core/constants.js';
 

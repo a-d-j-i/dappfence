@@ -82,43 +82,6 @@ export const verifyFilePath = (trustedManifest, fileKey, actualHash, isNavigatio
 };
 
 /**
- * Normalize manifest data from external sources (pure function).
- * Handles both enhanced format ({ files: {...}, metadata, mode, ... }) and
- * legacy flat format. Hashes are stored as-is in SRI form (the same format
- * the signer emits and HTML's Subresource Integrity uses), so no encoding
- * conversion happens here. Top-level fields other than `files` (mode,
- * metadata, and any future fields) are preserved as-is so consumers can
- * read them.
- * @param {object} manifestData - Raw manifest data
- * @returns {object} Normalized manifest with `files` map of fileKey -> SRI hash
- */
-export const normalizeManifestData = (manifestData) => {
-    const normalizedFiles = {};
-
-    if (typeof manifestData === 'object') {
-        // Enhanced format: { "files": { "/path/file.js": "sha256-..." }, "metadata": {...} }
-        if (manifestData.files && typeof manifestData.files === 'object') {
-            for (const [filePath, entry] of Object.entries(manifestData.files)) {
-                const hashValue = typeof entry === 'string' ? entry : entry?.hash;
-                if (hashValue) {
-                    normalizedFiles[filePath] = hashValue;
-                }
-            }
-            return { ...manifestData, files: normalizedFiles };
-        }
-        // Legacy flat format: { "/path/file.js": "sha256-..." | { hash: "sha256-..." } }
-        for (const [filePath, entry] of Object.entries(manifestData)) {
-            const hashValue = typeof entry === 'string' ? entry : entry?.hash;
-            if (hashValue) {
-                normalizedFiles[filePath] = hashValue;
-            }
-        }
-    }
-
-    return { files: normalizedFiles };
-};
-
-/**
  * Determine a file key from URL (pure function).
  * Same-origin URLs return the pathname; external URLs return the full href.
  * @param {string} url - The asset URL

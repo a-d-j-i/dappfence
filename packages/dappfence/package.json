@@ -41,6 +41,9 @@
         "test": "vitest run",
         "test:coverage": "vitest run --coverage"
     },
+    "publishConfig": {
+        "access": "public"
+    },
     "devDependencies": {
         "@noble/hashes": "2.0.1",
         "@noble/secp256k1": "3.0.0",

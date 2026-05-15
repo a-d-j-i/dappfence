@@ -17,7 +17,8 @@ import {
     shouldVerifyAsset,
     verifyFilePath,
     verifyManifestSignature,
-} from './operations.js';
+} from './verification.js';
+import { applyStrips } from './strips.js';
 import { createLogger } from '../../core/logger.js';
 
 const logger = createLogger();
@@ -124,10 +125,10 @@ export const createManifestService = ({ swContext, appStore, config }) => {
      * this function takes that pinned `{appVersion, manifest}` and verifies
      * against it, falling back to `findByHash` only when there's no pin yet.
      */
-    const verifyResponse = async (fileKey, response, isNavigation, clientId) => {
-        // Hash the raw bytes — avoids a UTF-8 round-trip that would silently
-        // corrupt non-UTF-8 content and produce a hash the signer never saw.
-        const fileHash = await calculateHash(await response.arrayBuffer());
+    const verifyResponse = async (fileKey, response, isNavigation, clientId, strips) => {
+        const rawBuffer = await response.arrayBuffer();
+        const normalizedBuffer = applyStrips(rawBuffer, strips, fileKey, isNavigation);
+        const fileHash = await calculateHash(normalizedBuffer);
         logger.log(`Verifying file: ${fileKey} hash ${fileHash}`);
         let manifestInfo;
         if (clientId && !isNavigation) {
@@ -206,6 +207,7 @@ export const createManifestService = ({ swContext, appStore, config }) => {
             latestManifest?.manifest?.metadata?.extensions || DEFAULT_SECURITY_EXTENSIONS;
         const contentTypes =
             latestManifest?.manifest?.metadata?.contentTypes || DEFAULT_SECURITY_CONTENT_TYPES;
+        const strips = latestManifest?.manifest?.strips || [];
         logger.log(
             `Resolved manifest ${latestManifest?.appVersion} with mode ${mode}, extensions [${extensions.join(', ')}], content-types [${contentTypes.join(', ')}]`
         );
@@ -217,7 +219,7 @@ export const createManifestService = ({ swContext, appStore, config }) => {
                     logger.log(`⏭️  Skipping verification: ${fileKey}`);
                     return { status: VERIFICATION_STATUS.SKIPPED, fileKey };
                 }
-                return verifyResponse(fileKey, response, isNavigation, clientId);
+                return verifyResponse(fileKey, response, isNavigation, clientId, strips);
             },
         };
     };

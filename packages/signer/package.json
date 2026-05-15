@@ -10,7 +10,8 @@
         "./crypto": "./src/crypto.js"
     },
     "files": [
-        "src"
+        "src",
+        "!src/__tests__"
     ],
     "repository": {
         "type": "git",
@@ -24,6 +25,9 @@
         "sha256",
         "signing"
     ],
+    "publishConfig": {
+        "access": "public"
+    },
     "dependencies": {
         "@noble/hashes": "2.0.1",
         "@noble/secp256k1": "3.0.0"

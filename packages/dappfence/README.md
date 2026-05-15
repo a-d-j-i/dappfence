@@ -53,8 +53,9 @@ src/
 │   ├── message-broker.js     # Security message queuing to clients
 │   ├── response.js      # Block response and navigation redirect builders
 │   ├── manifest/
-│   │   ├── operations.js    # Hash verification, signature checks, verifyLocation, shouldVerifyAsset
-│   │   └── manifest-service.js  # Manifest lifecycle, loading, file verification
+│   │   ├── verification.js      # Pure verification: verifyFilePath, verifyManifestSignature, shouldVerifyAsset
+│   │   ├── strips.js            # Named strip rules — removes known CDN injections before hashing
+│   │   └── manifest-service.js  # Manifest lifecycle, loading, file verification with strip application
 │   ├── storage/
 │   │   ├── indexeddb.js       # Low-level IndexedDB wrapper
 │   │   ├── index.js           # App store facade (recordSecurityViolation)
@@ -78,8 +79,9 @@ main.js
         │     ├── manifest-store.js
         │     └── security-stores.js
         ├── manifest/
-        │     ├── operations.js (hash verification, signature checks, verifyLocation, shouldVerifyAsset)
-        │     └── manifest-service.js (manifest lifecycle, file verification, manifest loading)
+        │     ├── verification.js (pure verification: verifyFilePath, signature checks, shouldVerifyAsset)
+        │     ├── strips.js (named strip rules for CDN injection normalization)
+        │     └── manifest-service.js (manifest lifecycle, strip application, file verification)
         ├── message-broker.js
         ├── appsw-hooks.js
         ├── fetch-handler.js
@@ -113,7 +115,8 @@ All handlers receive a shared `core` object:
 `{ swContext, appStore, manifestService, onSecurityViolation }`.
 
 -   **`fetch-handler.js`** — main request interceptor. Checks active blocks, routes `/sw-api/*` to
-    the API handler, verifies assets via `manifestService.verifyFile`, broadcasts violations.
+    the API handler, calls `manifestService.resolveManifest` to get the active `verifyFile`
+    function, verifies assets, broadcasts violations.
 -   **`lifecycle-handlers.js`** — `install` initializes the manifest, loads the app SW via
     `importScripts`, signals `onInstallDone`. `activate` claims clients and re-broadcasts
     violations.
@@ -127,17 +130,24 @@ All handlers receive a shared `core` object:
 `VERIFICATION_STATUS` and `ASSET_TYPE` constants live in `core/constants.js` alongside the other
 cross-module contract strings.
 
-**`manifest/operations.js`** contains pure verification functions: `verifyFilePath` (manifest lookup
-and hash compare), `verifyManifestSignature` (secp256k1 recovery), `normalizeManifestData`,
-`getFileKey` (URL to manifest key), `shouldVerifyAsset` (extension/navigation predicate),
-`verifyLocation` (fetch + verify), `verifyImportedScript` (delegates to `verifyLocation`, records
-violations).
+**`manifest/verification.js`** contains pure verification functions: `verifyFilePath` (manifest
+lookup and hash compare), `verifyManifestSignature` (secp256k1 recovery), `getFileKey` (URL to
+manifest key), `shouldVerifyAsset` (extension/navigation predicate), `verifyLocation` (fetch +
+verify), `verifyImportedScript` (delegates to `verifyLocation`, records violations).
+`normalizeManifestData` was moved to `storage/manifest-store.js` where it is used.
+
+**`manifest/strips.js`** is a closed set of named content-normalization rules. Each rule removes a
+known CDN injection (e.g. the Netlify CDP analytics snippet) from file bytes before hashing so the
+hash matches the pre-injection content stored in the manifest. Rules are referenced by name only —
+the manifest carries `strips: ['netlify-cdp']`, never raw patterns. Each rule declares which file
+extensions it applies to, so an HTML rule never touches JS or CSS.
 
 **`manifest/manifest-service.js`** is the stateful manifest lifecycle manager. Contains
 `loadManifestFromUrl` (fetch + signature verification + normalization + storage) as a private
-function with single-flight deduplication. Exposes `verifyFile(url, content)` which computes hashes
-and orchestrates verification with retry. Returns results with a `status` field (`MATCH`,
-`MISMATCH`, `NOT_FOUND_IN_MANIFEST`, `VERIFICATION_ERROR`).
+function with single-flight deduplication. Exposes `resolveManifest({ clientId, isNavigation })`
+which returns `{ mode, verifyFile }`. `verifyFile(url, response)` applies strip rules, computes the
+hash, and verifies against the stored manifest. Results carry a `status` field (`MATCH`, `MISMATCH`,
+`NOT_FOUND_IN_MANIFEST`, `SKIPPED`, `ERROR`).
 
 ### Storage
 
@@ -153,8 +163,8 @@ and orchestrates verification with retry. Returns results with a `status` field 
 
 The manifest structure follows the [Coze specification](https://github.com/Cyphrme/Coze). It
 consists of a signed JSON document with a `pay` (payload) and `sig` (signature) field. The payload
-contains a `files` map of file paths to their SHA-256 hashes. Signature verification uses
-Ethereum-style secp256k1 key recovery.
+contains a `files` map of file paths to their SHA-256 hashes, optional `strips` naming CDN-injection
+rules, `mode`, and `metadata`. Signature verification uses Ethereum-style secp256k1 key recovery.
 
 ### Why a Centralized Manifest
 
@@ -168,10 +178,12 @@ Ethereum-style secp256k1 key recovery.
 
 ### Manifest Lifecycle
 
-1. At build time, `@dappfence/signer` hashes all files and signs the manifest payload.
-2. At runtime, `manifest-service.js` fetches the manifest, verifies the signature, normalizes hashes
-   to hex, and stores it in IndexedDB.
-3. Subsequent file requests are verified against the stored manifest via `verifyFile`.
+1. At build time, `@dappfence/signer` hashes all files and signs the manifest payload. The payload
+   may include a `strips` array naming CDN-injection rules to apply at verification time.
+2. At runtime, `manifest-service.js` fetches the manifest, verifies the signature, normalizes it,
+   and stores it in IndexedDB.
+3. On each file request, `verifyFile` applies any declared strip rules to the raw bytes before
+   hashing, then compares the resulting hash against the stored manifest entry.
 
 ## Design Patterns
 
