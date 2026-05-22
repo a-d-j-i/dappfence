@@ -1,7 +1,6 @@
-import { ASSET_TYPE, VERIFICATION_STATUS } from '../../core/constants.js';
+import { VERIFICATION_STATUS } from '../../core/constants.js';
 import { recoverEthereumAddress, recoverPersonalSign } from '../../core/crypto.js';
 import { createLogger } from '../../core/logger.js';
-import { isFeatureEnabled } from '../../core/utils.js';
 
 const logger = createLogger();
 
@@ -237,55 +236,3 @@ export const verifyManifestSignature = (
         };
     }
 };
-
-/**
- * Fetch a URL and verify its content against the trusted manifest.
- * Returns a verifyFile-compatible result so callers can decide what to do.
- * @param {object} deps
- * @param {object} deps.swContext
- * @param {object} deps.manifestService
- * @param {string} url
- * @returns {Promise<object>} Verification result with at least { status }; verifyFile populates fileKey/expectedHash/actualHash on success.
- */
-export async function verifyLocation({ swContext, manifestService }, url) {
-    try {
-        const response = await swContext.fetch(
-            url,
-            isFeatureEnabled('mark_request')
-                ? { headers: { 'x-dappfence': 'sw-verification' } }
-                : {}
-        );
-        if (response && response.ok) {
-            const ctx = await manifestService.resolveManifest();
-            return await ctx.verifyFile(url, response);
-        }
-        logger.error(`Failed to fetch ${url}: ${response.status} ${response.statusText}`);
-    } catch (error) {
-        logger.error(`Error verifying ${url}:`, error);
-    }
-    return { status: VERIFICATION_STATUS.ERROR };
-}
-
-/**
- * Verify an imported script against the trusted manifest.
- * @param {object} deps
- * @param {object} deps.manifestService
- * @param {object} deps.appStore
- * @param {object} deps.swContext
- * @param {string} scriptPath
- */
-export async function verifyImportedScript(deps, scriptPath) {
-    const verificationResult = await verifyLocation(deps, scriptPath);
-    if (verificationResult.status.isViolation) {
-        await deps.appStore.recordSecurityViolation({
-            ...verificationResult,
-            assetType: ASSET_TYPE.SERVICE_WORKER,
-            url: scriptPath,
-        });
-        logger.log(
-            `Security violation detected for ${scriptPath}: ${verificationResult.status.description}`
-        );
-        return;
-    }
-    logger.log(`Script verified: ${scriptPath}`);
-}

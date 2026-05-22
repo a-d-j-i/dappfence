@@ -1,11 +1,9 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import {
     verifyFilePath,
     normalizeManifestData,
     getFileKey,
     verifyManifestSignature,
-    verifyImportedScript,
-    verifyLocation,
 } from '../manifest/operations.js';
 import { createSingleFlight } from '../../core/utils.js';
 import { VERIFICATION_STATUS } from '../../core/constants.js';
@@ -167,154 +165,6 @@ describe('verifyManifestSignature', () => {
     it('returns UNSUPPORTED_SIGNATURE for unknown signature types', () => {
         const result = verifyManifestSignature('unknown-type', '0xABC', { pay: {}, sig: 'sig' });
         expect(result.status).toBe(VERIFICATION_STATUS.UNSUPPORTED_SIGNATURE);
-    });
-});
-
-const mockManifestService = (verifyFileMock) => ({
-    resolveManifest: vi.fn().mockResolvedValue({ verifyFile: verifyFileMock }),
-});
-
-describe('verifyLocation', () => {
-    beforeEach(() => {
-        globalThis.__FEATURES__ = { mark_request: true };
-    });
-    afterEach(() => {
-        delete globalThis.__FEATURES__;
-    });
-
-    it('fetches the URL and returns the verifyFile result', async () => {
-        const verifyFileResult = {
-            status: 'MATCH',
-            fileKey: '/lib.js',
-            expectedHash: 'abc',
-            actualHash: 'abc',
-            timestamp: '2026-01-01T00:00:00.000Z',
-        };
-        const verifyFile = vi.fn().mockResolvedValue(verifyFileResult);
-        const response = new Response('file content');
-        const deps = {
-            swContext: {
-                fetch: vi.fn().mockResolvedValue(response),
-            },
-            manifestService: mockManifestService(verifyFile),
-        };
-
-        const result = await verifyLocation(deps, '/lib.js');
-
-        expect(deps.swContext.fetch).toHaveBeenCalledWith('/lib.js', {
-            headers: { 'x-dappfence': 'sw-verification' },
-        });
-        expect(verifyFile).toHaveBeenCalledWith('/lib.js', response);
-        expect(result).toEqual(verifyFileResult);
-    });
-
-    it('returns verifyFile-compatible error on fetch failure', async () => {
-        const verifyFile = vi.fn();
-        const deps = {
-            swContext: {
-                fetch: vi.fn().mockResolvedValue({ ok: false, status: 500, statusText: 'Error' }),
-            },
-            manifestService: mockManifestService(verifyFile),
-        };
-
-        const result = await verifyLocation(deps, '/missing.js');
-
-        expect(verifyFile).not.toHaveBeenCalled();
-        expect(result).toEqual({ status: VERIFICATION_STATUS.ERROR });
-    });
-});
-
-describe('verifyImportedScript', () => {
-    beforeEach(() => {
-        globalThis.__FEATURES__ = { mark_request: true };
-    });
-    afterEach(() => {
-        delete globalThis.__FEATURES__;
-    });
-
-    it('calls verifyFile with script URL and the fetched response', async () => {
-        const verifyFile = vi.fn().mockResolvedValue({ status: 'MATCH' });
-        const response = new Response('script content');
-        const core = {
-            manifestService: mockManifestService(verifyFile),
-            appStore: { recordSecurityViolation: vi.fn() },
-            swContext: {
-                fetch: vi.fn().mockResolvedValue(response),
-            },
-        };
-
-        await verifyImportedScript(core, 'https://example.com/lib.js');
-
-        expect(core.swContext.fetch).toHaveBeenCalledWith('https://example.com/lib.js', {
-            headers: { 'x-dappfence': 'sw-verification' },
-        });
-        expect(verifyFile).toHaveBeenCalledWith('https://example.com/lib.js', response);
-        expect(core.appStore.recordSecurityViolation).not.toHaveBeenCalled();
-    });
-
-    it('records violation on mismatch', async () => {
-        const verifyFile = vi.fn().mockResolvedValue({
-            status: VERIFICATION_STATUS.MISMATCH,
-            fileKey: '/lib.js',
-        });
-        const core = {
-            manifestService: mockManifestService(verifyFile),
-            appStore: { recordSecurityViolation: vi.fn() },
-            swContext: {
-                fetch: vi.fn().mockResolvedValue(new Response('bad content')),
-            },
-        };
-
-        await verifyImportedScript(core, 'https://example.com/lib.js');
-
-        expect(core.appStore.recordSecurityViolation).toHaveBeenCalledWith(
-            expect.objectContaining({
-                assetType: 'service-worker',
-                url: 'https://example.com/lib.js',
-            })
-        );
-    });
-
-    it('records violation on fetch failure', async () => {
-        const verifyFile = vi.fn();
-        const core = {
-            manifestService: mockManifestService(verifyFile),
-            appStore: { recordSecurityViolation: vi.fn() },
-            swContext: {
-                fetch: vi
-                    .fn()
-                    .mockResolvedValue({ ok: false, status: 404, statusText: 'Not Found' }),
-            },
-        };
-
-        await verifyImportedScript(core, 'https://example.com/missing.js');
-
-        expect(verifyFile).not.toHaveBeenCalled();
-        expect(core.appStore.recordSecurityViolation).toHaveBeenCalledWith(
-            expect.objectContaining({
-                status: VERIFICATION_STATUS.ERROR,
-                assetType: 'service-worker',
-                url: 'https://example.com/missing.js',
-            })
-        );
-    });
-
-    it('treats SKIPPED results as non-violations', async () => {
-        const verifyFile = vi.fn().mockResolvedValue({
-            status: VERIFICATION_STATUS.SKIPPED,
-            fileKey: '/lib.js',
-        });
-        const core = {
-            manifestService: mockManifestService(verifyFile),
-            appStore: { recordSecurityViolation: vi.fn() },
-            swContext: {
-                fetch: vi.fn().mockResolvedValue(new Response('content')),
-            },
-        };
-
-        await verifyImportedScript(core, 'https://example.com/lib.js');
-
-        expect(core.appStore.recordSecurityViolation).not.toHaveBeenCalled();
     });
 });
 
