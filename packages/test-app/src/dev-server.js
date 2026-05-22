@@ -411,7 +411,7 @@ const server = http.createServer((req, res) => {
 
     if (testParams.app) {
         const htmlRoot = path.join(PROJECT_ROOT, testParams.app);
-        for (const p of ['', '.html', 'index.html']) {
+        for (const p of ['', '.html', '/index.html']) {
             const filePath = path.join(htmlRoot, testParams.requestPath + p);
             if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
                 return serveFile(filePath, res, req, testParams);
