@@ -18,17 +18,32 @@ const DEFAULTS = {
     manifestPath: 'integrity-manifest.json',
     extensions: null,
     exclude: [],
-    filters: null,
-    knownHashes: null,
+    contentRules: null,
 };
 
 // Known-good hashes for Netlify's CDP script served at /.netlify/scripts/cdp.
-// When the netlify-cdp filter is active and the user has not provided their own
-// hashes for this URL, these are merged in so the SW can verify the real script
-// rather than replacing it with an empty stub.
 // Add new entries here when Netlify rolls a new CDP script version.
 const NETLIFY_CDP_KNOWN_HASHES = [
     'sha256-pTgm3D8vQpOitZlnprm7whsvUg/r487ILpgWI9NblUQ=', // 2026-05-18
+];
+
+// contentRules emitted when building for Netlify:
+//   1. Strip CDP injection from HTML before hashing (transform on documents).
+//   2. Verify the CDP script against known hashes; rewrite it as an empty stub
+//      if the hash is unknown (fallback chain via ordered rules).
+const NETLIFY_CONTENT_RULES = [
+    {
+        condition: { resourceTypes: ['document'] },
+        action: { type: 'transform', transform: 'netlify-cdp' },
+    },
+    {
+        condition: { urlFilter: '/.netlify/scripts/cdp' },
+        action: { type: 'verify' },
+    },
+    {
+        condition: { urlFilter: '/.netlify/scripts/cdp' },
+        action: { type: 'rewrite' },
+    },
 ];
 
 // Multiple signals: NETLIFY_SITE_ID and NETLIFY_BUILD_BASE are present even
@@ -52,6 +67,7 @@ export default function dappfence(options = {}) {
 
     // Astro 6 moved routes out of astro:build:done; capture them here instead.
     let resolvedRoutes = [];
+    let buildFormat;
 
     return {
         name: '@dappfence/astro',
@@ -69,6 +85,10 @@ export default function dappfence(options = {}) {
                 }
             },
 
+            'astro:config:done'({ config }) {
+                buildFormat = config.build?.format;
+            },
+
             'astro:routes:resolved'({ routes }) {
                 resolvedRoutes = routes;
             },
@@ -82,18 +102,24 @@ export default function dappfence(options = {}) {
                 await fs.copyFile(DAPPFENCE_JS_PATH, destAbs);
                 logger.info(`DappFence: copied dappfence.js → ${destRel}`);
 
-                const autoFilters = detectNetlify() ? ['netlify-cdp'] : [];
-                const filters = [...new Set([...(opts.filters ?? []), ...autoFilters])];
+                // Merge user-provided contentRules with platform-detected rules.
+                const userContentRules = opts.contentRules || [];
+                let platformContentRules = [];
+                const additionalFiles = {};
 
-                const knownHashes = { ...(opts.knownHashes || {}) };
-                if (filters.includes('netlify-cdp') && !knownHashes['/.netlify/scripts/cdp']) {
-                    knownHashes['/.netlify/scripts/cdp'] = NETLIFY_CDP_KNOWN_HASHES;
+                if (detectNetlify()) {
+                    platformContentRules = NETLIFY_CONTENT_RULES;
+                    additionalFiles['/.netlify/scripts/cdp'] = NETLIFY_CDP_KNOWN_HASHES;
+                    logger.info('DappFence: Netlify detected — emitting netlify-cdp contentRules');
                 }
+
+                const contentRules = [...userContentRules, ...platformContentRules];
 
                 await buildIntegrityManifest({
                     ...opts,
-                    filters,
-                    knownHashes,
+                    contentRules: contentRules.length ? contentRules : null,
+                    additionalFiles: Object.keys(additionalFiles).length ? additionalFiles : null,
+                    buildFormat,
                     outDir,
                     routes: resolvedRoutes,
                     scriptAttrs: opts,

@@ -55,12 +55,49 @@ async function walk(base, dir, extensions, excludes) {
     return results.flat();
 }
 
+/**
+ * Extract patterns for non-prerendered (SSR) routes.
+ * @param {Array} routes
+ * @returns {string[]}
+ */
 export function extractDynamicRoutes(routes) {
     if (!routes?.length) return [];
     return routes
         .filter((r) => !r.isPrerendered)
         .map((r) => r.pattern)
         .filter(Boolean);
+}
+
+/**
+ * Build contentRule allow entries for dynamic (SSR) routes.
+ * Uses the longest non-parameterized prefix of each route pattern as urlFilter.
+ * Routes whose first segment is already dynamic (prefix = '/') are skipped —
+ * a single-character urlFilter would match everything.
+ *
+ * @param {string[]} dynamicRoutes - Route patterns e.g. ['/_server-islands/[name]']
+ * @returns {Array} contentRule objects
+ */
+export function buildDynamicRouteAllowRules(dynamicRoutes) {
+    return dynamicRoutes
+        .map((pattern) => {
+            const idx = pattern.search(/\[|\*/);
+            const prefix = idx === -1 ? pattern : pattern.slice(0, idx);
+            // Skip if the prefix is trivially short (just '/' matches everything).
+            if (prefix.length <= 1) return null;
+            return { condition: { urlFilter: prefix }, action: { type: 'allow' } };
+        })
+        .filter(Boolean);
+}
+
+/**
+ * Derive pathRules from Astro's build.format setting.
+ * @param {'directory'|'file'|'preserve'|undefined} buildFormat
+ * @returns {Array}
+ */
+export function buildPathRules(buildFormat) {
+    if (buildFormat === 'directory') return [{ type: 'directory-index' }];
+    if (buildFormat === 'file') return [{ type: 'html-extension' }];
+    return [];
 }
 
 export async function buildIntegrityManifest({
@@ -71,8 +108,9 @@ export async function buildIntegrityManifest({
     exclude,
     secretKey,
     mode,
-    filters,
-    knownHashes,
+    buildFormat,
+    contentRules,
+    additionalFiles,
     logger,
     scriptAttrs,
 }) {
@@ -106,22 +144,29 @@ export async function buildIntegrityManifest({
         fileHashes[webPath] = calculateFileHash(buf);
     }
 
-    if (knownHashes) {
-        for (const [url, hashes] of Object.entries(knownHashes)) {
+    // Merge any additional file hash entries (e.g. known CDN script hashes).
+    if (additionalFiles) {
+        for (const [url, hashes] of Object.entries(additionalFiles)) {
             fileHashes[url] = hashes;
         }
-        logger.info(`DappFence: added ${Object.keys(knownHashes).length} known-hash entries`);
+        logger.info(`DappFence: added ${Object.keys(additionalFiles).length} additional file entries`);
     }
+
+    const pathRules = buildPathRules(buildFormat);
+
+    // Combine caller-provided contentRules with allow rules for SSR routes.
+    const dynamicAllowRules = buildDynamicRouteAllowRules(dynamicRoutes);
+    const allContentRules = [...(contentRules || []), ...dynamicAllowRules];
 
     const payload = {
         files: fileHashes,
+        ...(pathRules.length && { pathRules }),
+        ...(allContentRules.length && { contentRules: allContentRules }),
         mode,
-        ...(filters?.length && { filters }),
         metadata: {
             extensions: exts,
             buildTime: new Date().toISOString(),
             version: 'latest',
-            ...(dynamicRoutes.length && { dynamicRoutes }),
         },
     };
 

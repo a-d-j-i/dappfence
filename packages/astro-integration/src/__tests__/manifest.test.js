@@ -7,6 +7,8 @@ import {
     buildScriptTag,
     injectScriptTag,
     extractDynamicRoutes,
+    buildDynamicRouteAllowRules,
+    buildPathRules,
     buildIntegrityManifest,
     DEFAULT_EXTENSIONS,
 } from '../manifest.js';
@@ -125,7 +127,58 @@ describe('extractDynamicRoutes', () => {
     });
 });
 
-// ── buildIntegrityManifest (integration) ───────────────────────────────────────────
+// ── buildDynamicRouteAllowRules ───────────────────────────────────────────────
+
+describe('buildDynamicRouteAllowRules', () => {
+    it('returns empty array for no dynamic routes', () => {
+        expect(buildDynamicRouteAllowRules([])).toEqual([]);
+    });
+
+    it('emits allow rule for server-islands prefix', () => {
+        const rules = buildDynamicRouteAllowRules(['/_server-islands/[name]']);
+        expect(rules).toEqual([
+            { condition: { urlFilter: '/_server-islands/' }, action: { type: 'allow' } },
+        ]);
+    });
+
+    it('emits allow rule for /blog/[slug]', () => {
+        const rules = buildDynamicRouteAllowRules(['/blog/[slug]']);
+        expect(rules).toEqual([
+            { condition: { urlFilter: '/blog/' }, action: { type: 'allow' } },
+        ]);
+    });
+
+    it('skips routes whose prefix is only "/"', () => {
+        const rules = buildDynamicRouteAllowRules(['/[lang]']);
+        expect(rules).toEqual([]);
+    });
+
+    it('emits literal route as urlFilter when no dynamic segment', () => {
+        const rules = buildDynamicRouteAllowRules(['/api/data']);
+        expect(rules).toEqual([
+            { condition: { urlFilter: '/api/data' }, action: { type: 'allow' } },
+        ]);
+    });
+});
+
+// ── buildPathRules ────────────────────────────────────────────────────────────
+
+describe('buildPathRules', () => {
+    it('emits directory-index for format=directory', () => {
+        expect(buildPathRules('directory')).toEqual([{ type: 'directory-index' }]);
+    });
+
+    it('emits html-extension for format=file', () => {
+        expect(buildPathRules('file')).toEqual([{ type: 'html-extension' }]);
+    });
+
+    it('returns empty array for unknown/undefined format', () => {
+        expect(buildPathRules(undefined)).toEqual([]);
+        expect(buildPathRules('preserve')).toEqual([]);
+    });
+});
+
+// ── buildIntegrityManifest (integration) ──────────────────────────────────────
 
 async function makeTmpDir() {
     return fs.mkdtemp(path.join(os.tmpdir(), 'dappfence-test-'));
@@ -305,7 +358,7 @@ describe('buildIntegrityManifest', () => {
         expect(manifest.pay).toBeDefined();
     });
 
-    it('merges knownHashes entries into manifest files', async () => {
+    it('merges additionalFiles entries into manifest files', async () => {
         const outDir = await setup();
 
         await buildIntegrityManifest({
@@ -314,7 +367,7 @@ describe('buildIntegrityManifest', () => {
             extensions: DEFAULT_EXTENSIONS,
             exclude: [],
             mode: 'protected',
-            knownHashes: {
+            additionalFiles: {
                 '/.netlify/scripts/cdp': ['sha256-aaa=', 'sha256-bbb='],
             },
             logger: LOGGER,
@@ -326,11 +379,89 @@ describe('buildIntegrityManifest', () => {
         expect(manifest.pay.files['/.netlify/scripts/cdp']).toEqual(['sha256-aaa=', 'sha256-bbb=']);
     });
 
-    it('includes dynamicRoutes in metadata when routes provided', async () => {
+    it('emits pathRules for buildFormat=directory', async () => {
+        const outDir = await setup();
+
+        await buildIntegrityManifest({
+            outDir,
+            manifestPath: 'integrity-manifest.json',
+            extensions: DEFAULT_EXTENSIONS,
+            exclude: [],
+            mode: 'protected',
+            buildFormat: 'directory',
+            logger: LOGGER,
+            scriptAttrs: MINIMAL,
+        });
+
+        const raw = await fs.readFile(path.join(outDir, 'integrity-manifest.json'), 'utf8');
+        const manifest = JSON.parse(raw);
+        expect(manifest.pay.pathRules).toEqual([{ type: 'directory-index' }]);
+    });
+
+    it('emits pathRules for buildFormat=file', async () => {
+        const outDir = await setup();
+
+        await buildIntegrityManifest({
+            outDir,
+            manifestPath: 'integrity-manifest.json',
+            extensions: DEFAULT_EXTENSIONS,
+            exclude: [],
+            mode: 'protected',
+            buildFormat: 'file',
+            logger: LOGGER,
+            scriptAttrs: MINIMAL,
+        });
+
+        const raw = await fs.readFile(path.join(outDir, 'integrity-manifest.json'), 'utf8');
+        const manifest = JSON.parse(raw);
+        expect(manifest.pay.pathRules).toEqual([{ type: 'html-extension' }]);
+    });
+
+    it('omits pathRules when buildFormat is not set', async () => {
+        const outDir = await setup();
+
+        await buildIntegrityManifest({
+            outDir,
+            manifestPath: 'integrity-manifest.json',
+            extensions: DEFAULT_EXTENSIONS,
+            exclude: [],
+            mode: 'protected',
+            logger: LOGGER,
+            scriptAttrs: MINIMAL,
+        });
+
+        const raw = await fs.readFile(path.join(outDir, 'integrity-manifest.json'), 'utf8');
+        const manifest = JSON.parse(raw);
+        expect(manifest.pay.pathRules).toBeUndefined();
+    });
+
+    it('emits contentRules when provided', async () => {
+        const outDir = await setup();
+        const contentRules = [
+            { condition: { resourceTypes: ['document'] }, action: { type: 'transform', transform: 'netlify-cdp' } },
+        ];
+
+        await buildIntegrityManifest({
+            outDir,
+            manifestPath: 'integrity-manifest.json',
+            extensions: DEFAULT_EXTENSIONS,
+            exclude: [],
+            mode: 'protected',
+            contentRules,
+            logger: LOGGER,
+            scriptAttrs: MINIMAL,
+        });
+
+        const raw = await fs.readFile(path.join(outDir, 'integrity-manifest.json'), 'utf8');
+        const manifest = JSON.parse(raw);
+        expect(manifest.pay.contentRules).toEqual(contentRules);
+    });
+
+    it('includes SSR route allow rules in contentRules', async () => {
         const outDir = await setup();
         const routes = [
             { pattern: '/', isPrerendered: true },
-            { pattern: '/api/[id]', isPrerendered: false },
+            { pattern: '/_server-islands/[name]', isPrerendered: false },
         ];
 
         await buildIntegrityManifest({
@@ -346,6 +477,46 @@ describe('buildIntegrityManifest', () => {
 
         const raw = await fs.readFile(path.join(outDir, 'integrity-manifest.json'), 'utf8');
         const manifest = JSON.parse(raw);
-        expect(manifest.pay.metadata.dynamicRoutes).toEqual(['/api/[id]']);
+        expect(manifest.pay.contentRules).toContainEqual(
+            expect.objectContaining({ condition: { urlFilter: '/_server-islands/' }, action: { type: 'allow' } })
+        );
+    });
+
+    it('does not emit contentRules when no rules exist', async () => {
+        const outDir = await setup();
+
+        await buildIntegrityManifest({
+            outDir,
+            manifestPath: 'integrity-manifest.json',
+            extensions: DEFAULT_EXTENSIONS,
+            exclude: [],
+            mode: 'protected',
+            logger: LOGGER,
+            scriptAttrs: MINIMAL,
+        });
+
+        const raw = await fs.readFile(path.join(outDir, 'integrity-manifest.json'), 'utf8');
+        const manifest = JSON.parse(raw);
+        expect(manifest.pay.contentRules).toBeUndefined();
+    });
+
+    it('does not include dynamicRoutes in metadata', async () => {
+        const outDir = await setup();
+        const routes = [{ pattern: '/api/[id]', isPrerendered: false }];
+
+        await buildIntegrityManifest({
+            outDir,
+            routes,
+            manifestPath: 'integrity-manifest.json',
+            extensions: DEFAULT_EXTENSIONS,
+            exclude: [],
+            mode: 'protected',
+            logger: LOGGER,
+            scriptAttrs: MINIMAL,
+        });
+
+        const raw = await fs.readFile(path.join(outDir, 'integrity-manifest.json'), 'utf8');
+        const manifest = JSON.parse(raw);
+        expect(manifest.pay.metadata.dynamicRoutes).toBeUndefined();
     });
 });

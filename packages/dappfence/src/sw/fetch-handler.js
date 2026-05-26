@@ -149,7 +149,7 @@ export function createSecurityFetchHandler({
 
     async function applyIntegrityPolicy(ctx, request, response, isNavigation) {
         logger.log('Verifying security-critical asset:', request.url);
-        const verificationResult = await ctx.verifyFile(request.url, response.clone());
+        const verificationResult = await ctx.verifyFile(request, response.clone());
         if (verificationResult.status === VERIFICATION_STATUS.REWRITE) {
             const contentType = response.headers.get('content-type')?.split(';')[0].trim() || '';
             return new Response(REWRITE_STUB_BODIES[contentType] || '', {
@@ -200,9 +200,14 @@ export function createSecurityFetchHandler({
                 }
             }
 
+            // Add tracking markers to request BEFORE any handlers to see it
+            const markedRequest = isFeatureEnabled('mark_request')
+                ? addMarkToRequest(event, originalRequest, isNavigation)
+                : originalRequest;
+
             // Resolve the manifest context once per request — mode, verifyFile, and enforce
             // share the single IndexedDB lookup done here.
-            const ctx = await manifestService.resolveManifest({ clientId, isNavigation });
+            const ctx = await manifestService.resolveManifest({ clientId, request: markedRequest });
             logger.log(`Client mode: ${clientId} ${ctx.mode}`);
 
             // Site-wide block gate only fires in protected mode. In other modes we
@@ -211,11 +216,6 @@ export function createSecurityFetchHandler({
             if (ctx.mode === MODE.PROTECTED && (await activeBlocksStore.isBlocked())) {
                 return createBlockResponse(isNavigation, originalRequest.url, locationHref);
             }
-
-            // Add tracking markers to request BEFORE any handlers to see it
-            const markedRequest = isFeatureEnabled('mark_request')
-                ? addMarkToRequest(event, originalRequest, isNavigation)
-                : originalRequest;
 
             // Delegate to child SW and capture its response
             const response = await handleAppServiceWorkerFetch(

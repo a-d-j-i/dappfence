@@ -102,7 +102,8 @@ async function buildTarget(targetName, target, { personalSign = false }, version
     const manifestData = {
         files: {},
         mode: target.manifestMode,
-        filters: target.filters || [],
+        pathRules: target.pathRules || [],
+        contentRules: target.contentRules || null,
         metadata: {
             extensions: new Set(),
             contentTypes: new Set(),
@@ -178,10 +179,9 @@ async function buildTarget(targetName, target, { personalSign = false }, version
         manifestData.metadata.contentTypes.add('text/javascript');
     }
 
-    // Merge hashes: for each primary asset, hash it together with its declared variants.
-    // The manifest key is the primary's web path without extension; the value is an array, so
-    // the SW can MATCH-verify against any known-good variant.
-    for (const [manifestKey, relPaths] of Object.entries(target.knownHashes || {})) {
+    // Merge additionalFiles: hash each declared file variant and store as an array
+    // so the SW can MATCH-verify against any known-good variant.
+    for (const [manifestKey, relPaths] of Object.entries(target.additionalFiles || {})) {
         const hashes = relPaths.map((p) => calculateFileHash(path.join(target.assetDir, p)));
         manifestData.files[manifestKey] = hashes;
         log(`  ${manifestKey}: ${hashes.join(', ')}`);

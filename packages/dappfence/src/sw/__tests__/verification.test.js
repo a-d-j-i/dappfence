@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
     verifyFilePath,
-    getFileKey,
+    toPathname,
+    resolveManifestKey,
     verifyManifestSignature,
     verifyImportedScript,
     verifyLocation,
@@ -9,6 +10,8 @@ import {
 import { normalizeManifestData } from '../storage/manifest-store.js';
 import { createSingleFlight } from '../../core/utils.js';
 import { VERIFICATION_STATUS } from '../../core/constants.js';
+
+// ── verifyFilePath ────────────────────────────────────────────────────────────
 
 describe('verifyFilePath', () => {
     const manifest = {
@@ -18,7 +21,7 @@ describe('verifyFilePath', () => {
             '/index.html': 'idx111',
             '/docs/index.html': 'idx222',
             '/about.html': 'about111',
-            '/.netlify/scripts/cdp.js': 'cdp111',
+            '/.netlify/scripts/cdp': 'cdp111',
             '/api/config.json': 'cfg111',
             '/legacy/index.htm': 'htm111',
         },
@@ -49,67 +52,13 @@ describe('verifyFilePath', () => {
         expect(result.status).toBe(VERIFICATION_STATUS.NOT_FOUND_IN_MANIFEST);
     });
 
-    it('remaps "/" to "/index.html"', () => {
-        const result = verifyFilePath(manifest, '/', 'idx111');
-        expect(result.status).toBe(VERIFICATION_STATUS.MATCH);
-        expect(result.fileKey).toBe('/index.html');
-        expect(result.expectedHash).toBe('idx111');
-    });
-
-    it('remaps "/docs/" to "/docs/index.html"', () => {
-        const result = verifyFilePath(manifest, '/docs/', 'idx222');
-        expect(result.status).toBe(VERIFICATION_STATUS.MATCH);
-        expect(result.fileKey).toBe('/docs/index.html');
-    });
-
-    it('remaps extensionless "/docs" to "/docs/index.html"', () => {
+    it('returns NOT_FOUND for extensionless path not explicitly in files (no remapping)', () => {
         const result = verifyFilePath(manifest, '/docs', 'idx222');
-        expect(result.status).toBe(VERIFICATION_STATUS.MATCH);
-        expect(result.fileKey).toBe('/docs/index.html');
+        expect(result.status).toBe(VERIFICATION_STATUS.NOT_FOUND_IN_MANIFEST);
     });
 
-    it('remaps extensionless "/about" to "/about.html"', () => {
-        const result = verifyFilePath(manifest, '/about', 'about111');
-        expect(result.status).toBe(VERIFICATION_STATUS.MATCH);
-        expect(result.fileKey).toBe('/about.html');
-    });
-
-    it('remaps extensionless "/.netlify/scripts/cdp" to "/.netlify/scripts/cdp.js"', () => {
-        const result = verifyFilePath(manifest, '/.netlify/scripts/cdp', 'cdp111');
-        expect(result.status).toBe(VERIFICATION_STATUS.MATCH);
-        expect(result.fileKey).toBe('/.netlify/scripts/cdp.js');
-    });
-
-    it('remaps extensionless "/api/config" to "/api/config.json"', () => {
-        const result = verifyFilePath(manifest, '/api/config', 'cfg111');
-        expect(result.status).toBe(VERIFICATION_STATUS.MATCH);
-        expect(result.fileKey).toBe('/api/config.json');
-    });
-
-    it('remaps "/legacy/" to "/legacy/index.htm"', () => {
-        const result = verifyFilePath(manifest, '/legacy/', 'htm111');
-        expect(result.status).toBe(VERIFICATION_STATUS.MATCH);
-        expect(result.fileKey).toBe('/legacy/index.htm');
-    });
-
-    it('knownHashes: extensionless key with array of hashes matched directly (no candidate expansion needed)', () => {
-        // knownHashes stores the URL as-is; the array covers multiple known-good CDN versions
-        const m = { files: { '/.netlify/scripts/cdp': ['hash-v1', 'hash-v2'] } };
-        const result = verifyFilePath(m, '/.netlify/scripts/cdp', 'hash-v2');
-        expect(result.status).toBe(VERIFICATION_STATUS.MATCH);
-        expect(result.fileKey).toBe('/.netlify/scripts/cdp');
-    });
-
-    it('picks the hash-matching candidate even when an earlier candidate exists in the manifest', () => {
-        // manifest has both /page.html and /page.js; server serves the .js variant
-        const m = { files: { '/page.html': 'html-hash', '/page.js': 'js-hash' } };
-        const result = verifyFilePath(m, '/page', 'js-hash');
-        expect(result.status).toBe(VERIFICATION_STATUS.MATCH);
-        expect(result.fileKey).toBe('/page.js');
-    });
-
-    it('does not remap paths that already have an extension', () => {
-        const result = verifyFilePath(manifest, '/unknown.js', 'xxx');
+    it('does not remap paths — direct lookup only', () => {
+        const result = verifyFilePath(manifest, '/', 'idx111');
         expect(result.status).toBe(VERIFICATION_STATUS.NOT_FOUND_IN_MANIFEST);
     });
 
@@ -122,7 +71,16 @@ describe('verifyFilePath', () => {
         const m = { files: { '/lib.js': ['hash-a', 'hash-b'] } };
         expect(verifyFilePath(m, '/lib.js', 'hash-c').status).toBe(VERIFICATION_STATUS.MISMATCH);
     });
+
+    it('matches extensionless key stored directly in files (e.g. CDN scripts)', () => {
+        const m = { files: { '/.netlify/scripts/cdp': ['hash-v1', 'hash-v2'] } };
+        const result = verifyFilePath(m, '/.netlify/scripts/cdp', 'hash-v2');
+        expect(result.status).toBe(VERIFICATION_STATUS.MATCH);
+        expect(result.fileKey).toBe('/.netlify/scripts/cdp');
+    });
 });
+
+// ── normalizeManifestData ─────────────────────────────────────────────────────
 
 describe('normalizeManifestData', () => {
     it('handles enhanced format with files section', () => {
@@ -162,7 +120,6 @@ describe('normalizeManifestData', () => {
     });
 
     it('returns empty files for non-object input', () => {
-        // Note: null passes typeof === 'object' so it throws — only test primitives
         expect(normalizeManifestData(42)).toEqual({ files: {} });
         expect(normalizeManifestData(undefined)).toEqual({ files: {} });
     });
@@ -202,32 +159,150 @@ describe('normalizeManifestData', () => {
     });
 });
 
-describe('getFileKey', () => {
+// ── toPathname ────────────────────────────────────────────────────────────────
+
+describe('toPathname', () => {
     const baseUrl = 'https://example.com/dappfence.js';
 
-    it('returns pathname for same-origin URLs', () => {
-        expect(getFileKey('https://example.com/app.js', baseUrl)).toBe('/app.js');
+    it('returns pathname for same-origin absolute URLs', () => {
+        expect(toPathname('https://example.com/app.js', baseUrl)).toBe('/app.js');
     });
 
     it('returns pathname for relative URLs', () => {
-        expect(getFileKey('/app.js', baseUrl)).toBe('/app.js');
+        expect(toPathname('/app.js', baseUrl)).toBe('/app.js');
     });
 
     it('returns full href for cross-origin URLs', () => {
-        expect(getFileKey('https://cdn.other.com/lib.js', baseUrl)).toBe(
+        expect(toPathname('https://cdn.other.com/lib.js', baseUrl)).toBe(
             'https://cdn.other.com/lib.js'
         );
     });
 
     it('prepends / for bare relative paths', () => {
-        // When URL parsing fails, falls back to prepending /
-        expect(getFileKey('app.js', 'not-a-valid-url')).toBe('/app.js');
+        expect(toPathname('app.js', 'not-a-valid-url')).toBe('/app.js');
     });
 
     it('returns absolute URL as-is on parse failure', () => {
-        expect(getFileKey('https://cdn.com/lib.js', 'bad-base')).toBe('https://cdn.com/lib.js');
+        expect(toPathname('https://cdn.com/lib.js', 'bad-base')).toBe('https://cdn.com/lib.js');
     });
 });
+
+// ── resolveManifestKey ────────────────────────────────────────────────────────
+
+describe('resolveManifestKey', () => {
+    const base = 'https://example.com/dappfence.js';
+
+    describe('no pathRules', () => {
+        it('returns pathname for same-origin URL', () => {
+            expect(resolveManifestKey('https://example.com/app.js', base)).toBe('/app.js');
+        });
+
+        it('returns full URL for cross-origin', () => {
+            expect(resolveManifestKey('https://cdn.other.com/lib.js', base)).toBe(
+                'https://cdn.other.com/lib.js'
+            );
+        });
+
+        it('falls back to pathname when no rule matches', () => {
+            const files = { '/about/index.html': 'h' };
+            expect(resolveManifestKey('/about', base, [], files)).toBe('/about');
+        });
+
+        it('returns pathname for relative path', () => {
+            expect(resolveManifestKey('/style.css', base)).toBe('/style.css');
+        });
+    });
+
+    describe('directory-index rule', () => {
+        const files = { '/index.html': 'h', '/docs/index.html': 'h', '/about/index.html': 'h' };
+        const pathRules = [{ type: 'directory-index' }];
+
+        it('resolves "/" to "/index.html"', () => {
+            expect(resolveManifestKey('/', base, pathRules, files)).toBe('/index.html');
+        });
+
+        it('resolves "/docs/" to "/docs/index.html"', () => {
+            expect(resolveManifestKey('/docs/', base, pathRules, files)).toBe('/docs/index.html');
+        });
+
+        it('resolves extensionless "/docs" to "/docs/index.html"', () => {
+            expect(resolveManifestKey('/docs', base, pathRules, files)).toBe('/docs/index.html');
+        });
+
+        it('resolves "/about" to "/about/index.html"', () => {
+            expect(resolveManifestKey('/about', base, pathRules, files)).toBe('/about/index.html');
+        });
+
+        it('does not remap paths that already have an extension', () => {
+            expect(resolveManifestKey('/app.js', base, pathRules, files)).toBe('/app.js');
+        });
+
+        it('falls back to pathname when candidate not in files', () => {
+            expect(resolveManifestKey('/missing', base, pathRules, files)).toBe('/missing');
+        });
+
+        it('never applies to cross-origin URLs', () => {
+            expect(resolveManifestKey('https://cdn.com/lib.js', base, pathRules, files)).toBe(
+                'https://cdn.com/lib.js'
+            );
+        });
+    });
+
+    describe('html-extension rule', () => {
+        const files = { '/about.html': 'h', '/contact.html': 'h' };
+        const pathRules = [{ type: 'html-extension' }];
+
+        it('resolves "/about" to "/about.html"', () => {
+            expect(resolveManifestKey('/about', base, pathRules, files)).toBe('/about.html');
+        });
+
+        it('does not remap paths with extension', () => {
+            expect(resolveManifestKey('/app.js', base, pathRules, files)).toBe('/app.js');
+        });
+
+        it('does not remap trailing-slash paths', () => {
+            expect(resolveManifestKey('/about/', base, pathRules, files)).toBe('/about/');
+        });
+
+        it('falls back to pathname when candidate not in files', () => {
+            expect(resolveManifestKey('/missing', base, pathRules, files)).toBe('/missing');
+        });
+    });
+
+    describe('match/resolveAs override', () => {
+        const files = { '/campaigns/landing/index.html': 'h' };
+        const pathRules = [{ match: '/landing', resolveAs: '/campaigns/landing/index.html' }];
+
+        it('returns resolveAs for exact match', () => {
+            expect(resolveManifestKey('/landing', base, pathRules, files)).toBe(
+                '/campaigns/landing/index.html'
+            );
+        });
+
+        it('falls through for non-matching paths', () => {
+            expect(resolveManifestKey('/other', base, pathRules, files)).toBe('/other');
+        });
+    });
+
+    describe('condition.urlFilter scoping', () => {
+        const files = { '/docs/index.html': 'h' };
+        const pathRules = [
+            { condition: { urlFilter: '/docs/' }, type: 'directory-index' },
+            { type: 'html-extension' },
+        ];
+
+        it('applies scoped rule only to matching prefix', () => {
+            expect(resolveManifestKey('/docs/', base, pathRules, files)).toBe('/docs/index.html');
+        });
+
+        it('falls through to next rule when prefix does not match', () => {
+            const files2 = { ...files, '/about.html': 'h2' };
+            expect(resolveManifestKey('/about', base, pathRules, files2)).toBe('/about.html');
+        });
+    });
+});
+
+// ── verifyManifestSignature ───────────────────────────────────────────────────
 
 describe('verifyManifestSignature', () => {
     it('returns UNSUPPORTED_SIGNATURE for unknown signature types', () => {
@@ -235,6 +310,8 @@ describe('verifyManifestSignature', () => {
         expect(result.status).toBe(VERIFICATION_STATUS.UNSUPPORTED_SIGNATURE);
     });
 });
+
+// ── verifyLocation ────────────────────────────────────────────────────────────
 
 const mockManifestService = (verifyFileMock) => ({
     resolveManifest: vi.fn().mockResolvedValue({ verifyFile: verifyFileMock }),
@@ -289,6 +366,8 @@ describe('verifyLocation', () => {
         expect(result).toEqual({ status: VERIFICATION_STATUS.ERROR });
     });
 });
+
+// ── verifyImportedScript ──────────────────────────────────────────────────────
 
 describe('verifyImportedScript', () => {
     beforeEach(() => {
@@ -383,6 +462,8 @@ describe('verifyImportedScript', () => {
         expect(core.appStore.recordSecurityViolation).not.toHaveBeenCalled();
     });
 });
+
+// ── createSingleFlight ────────────────────────────────────────────────────────
 
 describe('createSingleFlight', () => {
     it('returns the result of the function', async () => {
