@@ -1,10 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { shouldVerifyAsset } from '../manifest/verification.js';
-import {
-    DEFAULT_SECURITY_CONTENT_TYPES,
-    DEFAULT_SECURITY_EXTENSIONS,
-    VERIFICATION_STATUS,
-} from '../../core/constants.js';
+import { VERIFICATION_STATUS } from '../../core/constants.js';
 
 const EMPTY_RESPONSE = new Response('');
 const responseWithType = (mime) => new Response('', { headers: { 'content-type': mime } });
@@ -14,6 +10,8 @@ describe('VERIFICATION_STATUS', () => {
         expect(VERIFICATION_STATUS.MATCH.description).toBe('MATCH');
         expect(VERIFICATION_STATUS.MATCH.isViolation).toBe(false);
         expect(VERIFICATION_STATUS.SKIPPED.isViolation).toBe(false);
+        expect(VERIFICATION_STATUS.REWRITE.description).toBe('REWRITE');
+        expect(VERIFICATION_STATUS.REWRITE.isViolation).toBe(false);
         expect(VERIFICATION_STATUS.MISMATCH.isViolation).toBe(true);
         expect(VERIFICATION_STATUS.NOT_FOUND_IN_MANIFEST.isViolation).toBe(true);
         expect(VERIFICATION_STATUS.ERROR.description).toBe('VERIFICATION_ERROR');
@@ -25,122 +23,107 @@ describe('VERIFICATION_STATUS', () => {
 
 describe('shouldVerifyAsset', () => {
     it('always verifies navigation requests', () => {
-        expect(
-            shouldVerifyAsset(
-                'https://example.com/image.png',
-                true,
-                EMPTY_RESPONSE,
-                DEFAULT_SECURITY_EXTENSIONS,
-                DEFAULT_SECURITY_CONTENT_TYPES
-            )
-        ).toBe(true);
+        expect(shouldVerifyAsset('https://example.com/image.png', true, EMPTY_RESPONSE)).toBe(true);
     });
 
-    it('verifies JS files with default extensions', () => {
-        expect(
-            shouldVerifyAsset(
-                'https://example.com/app.js',
-                false,
-                EMPTY_RESPONSE,
-                DEFAULT_SECURITY_EXTENSIONS,
-                DEFAULT_SECURITY_CONTENT_TYPES
-            )
-        ).toBe(true);
+    it('verifies JS files by default extension', () => {
+        expect(shouldVerifyAsset('https://example.com/app.js', false, EMPTY_RESPONSE)).toBe(true);
     });
 
-    it('verifies CSS files with default extensions', () => {
-        expect(
-            shouldVerifyAsset(
-                'https://example.com/style.css',
-                false,
-                EMPTY_RESPONSE,
-                DEFAULT_SECURITY_EXTENSIONS,
-                DEFAULT_SECURITY_CONTENT_TYPES
-            )
-        ).toBe(true);
+    it('verifies MJS files by default extension', () => {
+        expect(shouldVerifyAsset('https://example.com/app.mjs', false, EMPTY_RESPONSE)).toBe(true);
     });
 
-    it('verifies HTML files with default extensions', () => {
-        expect(
-            shouldVerifyAsset(
-                'https://example.com/page.html',
-                false,
-                EMPTY_RESPONSE,
-                DEFAULT_SECURITY_EXTENSIONS,
-                DEFAULT_SECURITY_CONTENT_TYPES
-            )
-        ).toBe(true);
+    it('verifies CSS files by default extension', () => {
+        expect(shouldVerifyAsset('https://example.com/style.css', false, EMPTY_RESPONSE)).toBe(
+            true
+        );
     });
 
-    it('does not verify images with default extensions and a non-text content-type', () => {
+    it('verifies HTML files by default extension', () => {
+        expect(shouldVerifyAsset('https://example.com/page.html', false, EMPTY_RESPONSE)).toBe(
+            true
+        );
+    });
+
+    it('verifies HTM files by default extension', () => {
+        expect(shouldVerifyAsset('https://example.com/page.htm', false, EMPTY_RESPONSE)).toBe(true);
+    });
+
+    it('verifies JSON files by default extension', () => {
+        expect(shouldVerifyAsset('https://example.com/app.json', false, EMPTY_RESPONSE)).toBe(true);
+    });
+
+    it('verifies WASM files by default extension', () => {
+        expect(shouldVerifyAsset('https://example.com/module.wasm', false, EMPTY_RESPONSE)).toBe(
+            true
+        );
+    });
+
+    it('does not verify images', () => {
         expect(
-            shouldVerifyAsset(
-                'https://example.com/logo.png',
-                false,
-                responseWithType('image/png'),
-                DEFAULT_SECURITY_EXTENSIONS,
-                DEFAULT_SECURITY_CONTENT_TYPES
-            )
+            shouldVerifyAsset('https://example.com/logo.png', false, responseWithType('image/png'))
         ).toBe(false);
     });
 
-    it('does not verify fonts with default extensions and a non-text content-type', () => {
+    it('does not verify fonts', () => {
         expect(
             shouldVerifyAsset(
                 'https://example.com/font.woff2',
                 false,
-                responseWithType('font/woff2'),
-                DEFAULT_SECURITY_EXTENSIONS,
-                DEFAULT_SECURITY_CONTENT_TYPES
+                responseWithType('font/woff2')
             )
         ).toBe(false);
     });
 
-    it('matches files against the provided extensions list', () => {
+    it('verifies extensionless URL served as text/javascript', () => {
+        expect(
+            shouldVerifyAsset('/.netlify/scripts/cdp', false, responseWithType('text/javascript'))
+        ).toBe(true);
+    });
+
+    it('verifies extensionless URL served as application/javascript', () => {
         expect(
             shouldVerifyAsset(
-                'https://example.com/module.wasm',
+                '/.netlify/scripts/cdp',
                 false,
-                EMPTY_RESPONSE,
-                ['.wasm', '.js'],
-                []
+                responseWithType('application/javascript')
             )
         ).toBe(true);
     });
 
-    it('rejects files not in the provided extensions or content-type lists', () => {
-        expect(
-            shouldVerifyAsset(
-                'https://example.com/app.js',
-                false,
-                EMPTY_RESPONSE,
-                ['.wasm'],
-                ['image/png']
-            )
-        ).toBe(false);
+    it('verifies extensionless URL served as application/wasm', () => {
+        expect(shouldVerifyAsset('/module', false, responseWithType('application/wasm'))).toBe(
+            true
+        );
     });
 
-    it('verifies .json with default extensions', () => {
-        expect(
-            shouldVerifyAsset(
-                'https://example.com/app.json',
-                false,
-                EMPTY_RESPONSE,
-                DEFAULT_SECURITY_EXTENSIONS,
-                DEFAULT_SECURITY_CONTENT_TYPES
-            )
-        ).toBe(true);
-    });
-
-    it('verifies extensionless URLs when content-type is in the list', () => {
+    it('verifies extensionless URL when content-type is in the default list', () => {
         expect(
             shouldVerifyAsset(
                 'https://example.com/api/config',
                 false,
-                responseWithType('application/json'),
-                [],
-                ['application/json']
+                responseWithType('application/json')
             )
+        ).toBe(true);
+    });
+
+    it('verifies extensionless URL when content-type is in meta extras', () => {
+        expect(
+            shouldVerifyAsset(
+                'https://example.com/api/config',
+                false,
+                responseWithType('application/x-custom'),
+                { contentTypes: ['application/x-custom'] }
+            )
+        ).toBe(true);
+    });
+
+    it('verifies file matching a meta extra extension', () => {
+        expect(
+            shouldVerifyAsset('https://example.com/module.ts', false, EMPTY_RESPONSE, {
+                extensions: ['.ts'],
+            })
         ).toBe(true);
     });
 
@@ -149,9 +132,7 @@ describe('shouldVerifyAsset', () => {
             shouldVerifyAsset(
                 'https://example.com/api/config',
                 false,
-                responseWithType('application/json; charset=utf-8'),
-                [],
-                ['application/json']
+                responseWithType('application/json; charset=utf-8')
             )
         ).toBe(true);
     });
@@ -161,9 +142,7 @@ describe('shouldVerifyAsset', () => {
             shouldVerifyAsset(
                 'https://example.com/api/config',
                 false,
-                responseWithType('Application/JSON'),
-                [],
-                ['application/json']
+                responseWithType('Application/JSON')
             )
         ).toBe(true);
     });
@@ -173,22 +152,14 @@ describe('shouldVerifyAsset', () => {
             shouldVerifyAsset(
                 'https://example.com/data.bin',
                 false,
-                responseWithType('application/octet-stream'),
-                DEFAULT_SECURITY_EXTENSIONS,
-                DEFAULT_SECURITY_CONTENT_TYPES
+                responseWithType('application/octet-stream')
             )
         ).toBe(false);
     });
 
     it('falls through when content-type header is missing', () => {
-        expect(
-            shouldVerifyAsset(
-                'https://example.com/extensionless',
-                false,
-                EMPTY_RESPONSE,
-                ['.js'],
-                ['application/json']
-            )
-        ).toBe(false);
+        expect(shouldVerifyAsset('https://example.com/extensionless', false, EMPTY_RESPONSE)).toBe(
+            false
+        );
     });
 });

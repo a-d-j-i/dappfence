@@ -80,7 +80,7 @@ export default defineConfig({
 | `warningUrl`                | `string`   | `null`                                                | URL shown on the security warning page for tamper alerts.                                                                                                                           |
 | `extensions`                | `string[]` | `['.js','.mjs','.css','.html','.htm','.json','.svg']` | File extensions included in the manifest.                                                                                                                                           |
 | `exclude`                   | `string[]` | `[]`                                                  | Web paths to exclude from the manifest (e.g. `['/admin']`).                                                                                                                         |
-| `strips`                    | `string[]` | `null`                                                | Named strip rules applied before hashing (e.g. `['netlify-cdp']`). Merged with any rules auto-detected from the build environment.                                                  |
+| `filters`                   | `string[]` | `null`                                                | Named filter rules applied before hashing (e.g. `['netlify-cdp']`). Merged with any rules auto-detected from the build environment.                                                 |
 
 ## What Happens at Build Time
 
@@ -102,7 +102,7 @@ Running `astro build` triggers four steps in order:
     ></script>
     ```
 
-3. **Every tracked file is hashed** (SHA-256) after any strip rules are applied.
+3. **Every tracked file is hashed** (SHA-256) after any filter rules are applied.
 
 4. **`integrity-manifest.json` is signed and written** to the output directory.
 
@@ -118,14 +118,22 @@ For details on the manifest format, signature scheme, and verification internals
 See the [Netlify deployment guide](../netlify-integration/README.md) for the required `netlify.toml`
 configuration, post-processing pitfalls, and a deployment checklist.
 
-The one Astro-specific note: Netlify injects a CDP analytics snippet into HTML pages at CDN serve
-time. The integration detects Netlify's build environment automatically and enables the
-`netlify-cdp` strip rule. If you build outside Netlify (e.g. locally or in GitHub Actions), add it
-explicitly:
+Netlify injects a CDP analytics snippet into HTML pages at CDN serve time and loads it from
+`/.netlify/scripts/cdp` — a URL not present in your build output. The `netlify-cdp` filter rule
+handles both problems:
+
+-   The HTML snippet is stripped from page bytes before hashing, so the computed hash matches the
+    pre-injection content in the manifest.
+-   `/.netlify/scripts/cdp` is intercepted by the service worker and its response replaced with a
+    safe empty stub, so CDN-injected JS never executes regardless of what Netlify serves there. If
+    you want to allow the real script, add its SHA-256 hash(es) to `manifest.files` for that path.
+
+The integration detects Netlify's build environment automatically and enables `netlify-cdp`. If you
+build outside Netlify (e.g. locally or in GitHub Actions targeting Netlify), add it explicitly:
 
 ```js
 dappfence({
-    strips: ['netlify-cdp'],
+    filters: ['netlify-cdp'],
 });
 ```
 

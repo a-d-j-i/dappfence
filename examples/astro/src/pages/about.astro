@@ -1,0 +1,108 @@
+---
+import BaseHead from '../components/BaseHead.astro';
+import Footer from '../components/Footer.astro';
+import Header from '../components/Header.astro';
+import { SITE_TITLE } from '../consts';
+---
+
+<!doctype html>
+<html lang="en">
+    <head>
+        <BaseHead title={`About — ${SITE_TITLE}`} description="About this DappFence example." />
+        <style>
+            .page-header {
+                margin-bottom: 1.4em;
+            }
+            .page-header h1 {
+                font-size: 1.5em;
+                font-weight: 800;
+                color: var(--text);
+                margin: 0 0 0.3em;
+                letter-spacing: -0.02em;
+            }
+            .page-header p {
+                color: var(--text-muted);
+                font-size: 0.9em;
+                margin: 0;
+                line-height: 1.6;
+            }
+            .card {
+                background: var(--bg);
+                border: 1px solid var(--border);
+                border-radius: var(--radius-lg);
+                box-shadow: var(--shadow);
+                padding: 1.2em 1.4em;
+                margin-bottom: 0.9em;
+            }
+            .dark .card {
+                background: var(--bg-2);
+            }
+            .card h2 {
+                font-size: 0.95em;
+                font-weight: 700;
+                margin: 0 0 0.5em;
+                color: var(--text);
+            }
+            .card p {
+                font-size: 0.85em;
+                color: var(--text-muted);
+                margin: 0 0 0.6em;
+                line-height: 1.6;
+            }
+            .card p:last-child {
+                margin-bottom: 0;
+            }
+            .back {
+                display: inline-flex;
+                align-items: center;
+                gap: 0.4em;
+                font-size: 0.85em;
+                color: var(--accent);
+                text-decoration: none;
+                margin-bottom: 1.2em;
+            }
+            .back:hover {
+                text-decoration: underline;
+            }
+        </style>
+    </head>
+    <body>
+        <Header />
+        <main>
+            <a href="/" class="back">← Back to demo</a>
+            <div class="page-header">
+                <h1>About this example</h1>
+                <p>
+                    This page exists to verify that DappFence injects its security script into
+                    subpages, not just the root <code>index.html</code>.
+                </p>
+            </div>
+
+            <div class="card">
+                <h2>What DappFence does</h2>
+                <p>
+                    DappFence registers a service worker that intercepts every fetch request and
+                    verifies the response against a signed integrity manifest generated at build
+                    time. Any file whose SHA-256 hash does not match the manifest is blocked before
+                    it reaches the browser.
+                </p>
+                <p>
+                    The manifest is signed with a secp256k1 key at build time. The signing key never
+                    leaves the build environment — only the derived Ethereum address is embedded in
+                    the page as the expected signer identity.
+                </p>
+            </div>
+
+            <div class="card">
+                <h2>How to verify this page is protected</h2>
+                <p>
+                    Open DevTools → Application → Service Workers. You should see
+                    <code>dappfence.js</code> registered at scope <code>/</code>. The
+                    <code>&lt;head&gt;</code> of this page contains the DappFence script tag injected
+                    by <code>@dappfence/astro</code> at build time.
+                </p>
+            </div>
+        </main>
+        <Footer />
+    </body>
+</html>

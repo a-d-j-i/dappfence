@@ -71,7 +71,8 @@ export async function buildIntegrityManifest({
     exclude,
     secretKey,
     mode,
-    strips,
+    filters,
+    knownHashes,
     logger,
     scriptAttrs,
 }) {
@@ -105,10 +106,17 @@ export async function buildIntegrityManifest({
         fileHashes[webPath] = calculateFileHash(buf);
     }
 
+    if (knownHashes) {
+        for (const [url, hashes] of Object.entries(knownHashes)) {
+            fileHashes[url] = hashes;
+        }
+        logger.info(`DappFence: added ${Object.keys(knownHashes).length} known-hash entries`);
+    }
+
     const payload = {
         files: fileHashes,
         mode,
-        ...(strips?.length && { strips }),
+        ...(filters?.length && { filters }),
         metadata: {
             extensions: exts,
             buildTime: new Date().toISOString(),

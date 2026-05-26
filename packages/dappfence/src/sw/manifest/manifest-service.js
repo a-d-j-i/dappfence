@@ -4,13 +4,7 @@
  */
 
 import { calculateHash } from '../../core/crypto.js';
-import {
-    ASSET_TYPE,
-    DEFAULT_SECURITY_CONTENT_TYPES,
-    DEFAULT_SECURITY_EXTENSIONS,
-    MODE,
-    VERIFICATION_STATUS,
-} from '../../core/constants.js';
+import { ASSET_TYPE, MODE, VERIFICATION_STATUS } from '../../core/constants.js';
 import { createSingleFlight, hasConfigManifest, isFeatureEnabled } from '../../core/utils.js';
 import {
     getFileKey,
@@ -18,7 +12,7 @@ import {
     verifyFilePath,
     verifyManifestSignature,
 } from './verification.js';
-import { applyStrips } from './strips.js';
+import { applyFilters, isFilterRewrite } from './filters.js';
 import { createLogger } from '../../core/logger.js';
 
 const logger = createLogger();
@@ -89,31 +83,6 @@ export const createManifestService = ({ swContext, appStore, config }) => {
     };
 
     /**
-     * Fetch a URL and verify its content against the trusted manifest.
-     * Returns a verifyFile-compatible result so callers can decide what to do.
-     * @param {string} url
-     * @returns {Promise<object>} Verification result with at least { status }; verifyFile populates fileKey/expectedHash/actualHash on success.
-     */
-    const verifyLocation = async (url) => {
-        try {
-            const response = await swContext.fetch(
-                url,
-                isFeatureEnabled('mark_request')
-                    ? { headers: { 'x-dappfence': 'sw-verification' } }
-                    : {}
-            );
-            if (response && response.ok) {
-                const fileKey = getFileKey(url, swContext.getLocationHref());
-                return await verifyResponse(fileKey, response);
-            }
-            logger.error(`Failed to fetch ${url}: ${response.status} ${response.statusText}`);
-        } catch (error) {
-            logger.error(`Error verifying ${url}:`, error);
-        }
-        return { status: VERIFICATION_STATUS.ERROR };
-    };
-
-    /**
      * Verify a file against a (possibly pre-resolved) manifest. When
      * `manifest` is undefined, runs the cold-start path: identify the app
      * from a stored manifest by file hash, or fetch a fresh one. Once a
@@ -125,9 +94,21 @@ export const createManifestService = ({ swContext, appStore, config }) => {
      * this function takes that pinned `{appVersion, manifest}` and verifies
      * against it, falling back to `findByHash` only when there's no pin yet.
      */
-    const verifyResponse = async (fileKey, response, isNavigation, clientId, strips) => {
+    const manifestFileKey = getFileKey(config.manifestUrl, swContext.getLocationHref());
+
+    const verifyFileWithContext = async (url, isNavigation, response, latestManifest, clientId) => {
+        const meta = latestManifest?.manifest?.metadata;
+        const fileKey = getFileKey(url, swContext.getLocationHref());
+        if (
+            fileKey === manifestFileKey ||
+            !shouldVerifyAsset(fileKey, isNavigation, response, meta)
+        ) {
+            logger.log(`⏭️  Skipping verification: ${fileKey}`);
+            return { status: VERIFICATION_STATUS.SKIPPED, fileKey };
+        }
         const rawBuffer = await response.arrayBuffer();
-        const normalizedBuffer = applyStrips(rawBuffer, strips, fileKey, isNavigation);
+        const filters = latestManifest?.manifest?.filters || [];
+        const normalizedBuffer = applyFilters(rawBuffer, filters, fileKey, isNavigation);
         const fileHash = await calculateHash(normalizedBuffer);
         logger.log(`Verifying file: ${fileKey} hash ${fileHash}`);
         let manifestInfo;
@@ -155,10 +136,11 @@ export const createManifestService = ({ swContext, appStore, config }) => {
         logger.log(
             `Using manifest ${manifestInfo.appVersion} for ${fileKey} hash ${fileHash} clientId ${clientId} ${isNavigation ? 'navigation' : 'no-navigation'}`
         );
-        const result = verifyFilePath(manifestInfo.manifest, fileKey, fileHash, isNavigation);
-        // Persist as the description string — structuredClone won't reattach
-        // the verdict object's identity, and downstream UI/JSON consumers
-        // expect a plain status name.
+        const result = verifyFilePath(manifestInfo.manifest, fileKey, fileHash);
+        if (result.status.isViolation && isFilterRewrite(filters, fileKey)) {
+            logger.log(`↩️  Rewriting: ${fileKey}`);
+            return { ...result, status: VERIFICATION_STATUS.REWRITE };
+        }
         await verificationResultsStore.add(manifestInfo.appVersion, {
             ...result,
             status: result.status.description,
@@ -183,7 +165,6 @@ export const createManifestService = ({ swContext, appStore, config }) => {
      * resolves the global manifest. Pass `{}` (or nothing) for operations
      * outside the fetch pipeline such as importScripts.
      */
-
     const resolveManifest = async ({ clientId, isNavigation } = {}) => {
         // The latest stored manifest drives policy; on a cold start we fetch one.
         // On fetch failure the result has no `manifest` field, so policy
@@ -203,30 +184,16 @@ export const createManifestService = ({ swContext, appStore, config }) => {
         const mode =
             latestManifest?.manifest?.mode ||
             (isFeatureEnabled('default-to-protected-mode') ? MODE.PROTECTED : MODE.REPORTING);
-        const extensions =
-            latestManifest?.manifest?.metadata?.extensions || DEFAULT_SECURITY_EXTENSIONS;
-        const contentTypes =
-            latestManifest?.manifest?.metadata?.contentTypes || DEFAULT_SECURITY_CONTENT_TYPES;
-        const strips = latestManifest?.manifest?.strips || [];
-        logger.log(
-            `Resolved manifest ${latestManifest?.appVersion} with mode ${mode}, extensions [${extensions.join(', ')}], content-types [${contentTypes.join(', ')}]`
-        );
+        logger.log(`Resolved manifest ${latestManifest?.appVersion} with mode ${mode}`);
         return {
             mode,
-            verifyFile: (url, response) => {
-                const fileKey = getFileKey(url, swContext.getLocationHref());
-                if (!shouldVerifyAsset(fileKey, isNavigation, response, extensions, contentTypes)) {
-                    logger.log(`⏭️  Skipping verification: ${fileKey}`);
-                    return { status: VERIFICATION_STATUS.SKIPPED, fileKey };
-                }
-                return verifyResponse(fileKey, response, isNavigation, clientId, strips);
-            },
+            verifyFile: (url, response) =>
+                verifyFileWithContext(url, isNavigation, response, latestManifest, clientId),
         };
     };
 
     return {
         fetchAndStoreManifest,
         resolveManifest,
-        verifyLocation,
     };
 };

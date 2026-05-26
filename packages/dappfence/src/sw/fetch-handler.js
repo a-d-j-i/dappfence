@@ -5,10 +5,18 @@
 
 import { createBlockResponse } from './response.js';
 import { createLogger } from '../core/logger.js';
-import { API_PREFIX, ASSET_TYPE, MODE } from '../core/constants.js';
+import { API_PREFIX, ASSET_TYPE, MODE, VERIFICATION_STATUS } from '../core/constants.js';
 import { isFeatureEnabled } from '../core/utils.js';
 
 const logger = createLogger();
+
+const REWRITE_STUB_BODIES = {
+    'text/javascript': '/* replaced by dappfence */',
+    'application/javascript': '/* replaced by dappfence */',
+    'text/css': '/* replaced by dappfence */',
+    'application/json': '{}',
+    'text/html': '',
+};
 
 /**
  * @param {object} deps
@@ -139,26 +147,31 @@ export function createSecurityFetchHandler({
         return await swContext.fetch(request);
     }
 
-    /**
-     * Run the manifest-aware verification for an asset response. `verifyFile`
-     * decides whether to actually verify (returns SKIPPED for non-applicable
-     * assets) or hashes and compares. Only true violations reach
-     * recordSecurityViolation; SKIPPED and MATCH pass through.
-     */
-    async function verifyAssetIntegrity(ctx, request, response) {
+    async function applyIntegrityPolicy(ctx, request, response, isNavigation) {
         logger.log('Verifying security-critical asset:', request.url);
-
-        // Clone so the original body is still available to forward to the page;
-        // verifyFile consumes the clone via arrayBuffer().
         const verificationResult = await ctx.verifyFile(request.url, response.clone());
+        if (verificationResult.status === VERIFICATION_STATUS.REWRITE) {
+            const contentType = response.headers.get('content-type')?.split(';')[0].trim() || '';
+            return new Response(REWRITE_STUB_BODIES[contentType] || '', {
+                headers: { 'content-type': contentType },
+            });
+        }
         if (verificationResult.status.isViolation) {
-            return await appStore.recordSecurityViolation({
+            const mustBlock = await appStore.recordSecurityViolation({
                 ...verificationResult,
                 assetType: ASSET_TYPE.ASSET,
                 url: request.url,
             });
+            if (ctx.mode === MODE.PROTECTED && mustBlock) {
+                // Navigation requests get the warning inline via createBlockResponse;
+                // so broadcasting to the client would double-notify.
+                if (!isNavigation) {
+                    await onSecurityViolation();
+                }
+                return createBlockResponse(isNavigation, request.url, locationHref);
+            }
         }
-        return false;
+        return response;
     }
 
     return async (event, callChildHandlers) => {
@@ -187,7 +200,7 @@ export function createSecurityFetchHandler({
                 }
             }
 
-            // Resolve the manifest context once per request — mode and verifyFile
+            // Resolve the manifest context once per request — mode, verifyFile, and enforce
             // share the single IndexedDB lookup done here.
             const ctx = await manifestService.resolveManifest({ clientId, isNavigation });
             logger.log(`Client mode: ${clientId} ${ctx.mode}`);
@@ -214,16 +227,7 @@ export function createSecurityFetchHandler({
                 return response;
             }
 
-            const mustBlock = await verifyAssetIntegrity(ctx, markedRequest, response);
-            if (ctx.mode === MODE.PROTECTED && mustBlock) {
-                // Navigation requests get the warning inline via createBlockResponse;
-                // so broadcasting to the client would double-notify.
-                if (!isNavigation) {
-                    await onSecurityViolation();
-                }
-                return createBlockResponse(isNavigation, markedRequest.url, locationHref);
-            }
-            return response;
+            return await applyIntegrityPolicy(ctx, markedRequest, response, isNavigation);
         } catch (error) {
             logger.error('Error processing:', originalRequest.url, error);
         }

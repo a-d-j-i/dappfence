@@ -102,7 +102,7 @@ async function buildTarget(targetName, target, { personalSign = false }, version
     const manifestData = {
         files: {},
         mode: target.manifestMode,
-        strips: ['netlify-cdp'],
+        filters: target.filters || [],
         metadata: {
             extensions: new Set(),
             contentTypes: new Set(),
@@ -162,7 +162,12 @@ async function buildTarget(targetName, target, { personalSign = false }, version
         if (exclude.some((e) => webPath.startsWith(e))) {
             continue;
         }
-        fs.copyFileSync(filePath, path.join(outDir, webPath));
+        const destPath = path.join(outDir, webPath);
+        const destDir = path.dirname(destPath);
+        if (!fs.existsSync(destDir)) {
+            fs.mkdirSync(destDir, { recursive: true });
+        }
+        fs.copyFileSync(filePath, destPath);
         addToManifest(webPath, extension, contentType);
     }
 
@@ -171,6 +176,15 @@ async function buildTarget(targetName, target, { personalSign = false }, version
         manifestData.files[url] = hash;
         manifestData.metadata.extensions.add('.js');
         manifestData.metadata.contentTypes.add('text/javascript');
+    }
+
+    // Merge hashes: for each primary asset, hash it together with its declared variants.
+    // The manifest key is the primary's web path without extension; the value is an array, so
+    // the SW can MATCH-verify against any known-good variant.
+    for (const [manifestKey, relPaths] of Object.entries(target.knownHashes || {})) {
+        const hashes = relPaths.map((p) => calculateFileHash(path.join(target.assetDir, p)));
+        manifestData.files[manifestKey] = hashes;
+        log(`  ${manifestKey}: ${hashes.join(', ')}`);
     }
 
     manifestData.metadata.extensions = Array.from(manifestData.metadata.extensions);

@@ -16,8 +16,14 @@ import { calculateHash } from '../../core/crypto.js';
  * conversion happens here. Top-level fields other than `files` (mode,
  * metadata, and any future fields) are preserved as-is so consumers can
  * read them.
+ *
+ * Each entry in `files` may be a single hash string or an array of hash
+ * strings. Arrays are used for CDN-served assets (e.g. analytics scripts)
+ * whose content is not a build artifact and may vary across CDN regions or
+ * provider releases — listing all known-good hashes lets any current version
+ * pass verification while still blocking unexpected content.
  * @param {object} manifestData - Raw manifest data
- * @returns {object} Normalized manifest with `files` map of fileKey -> SRI hash
+ * @returns {object} Normalized manifest with `files` map of fileKey -> hash or hash[]
  */
 export const normalizeManifestData = (manifestData) => {
     const normalizedFiles = {};
@@ -26,8 +32,12 @@ export const normalizeManifestData = (manifestData) => {
         // Enhanced format: { "files": { "/path/file.js": "sha256-..." }, "metadata": {...} }
         if (manifestData.files && typeof manifestData.files === 'object') {
             for (const [filePath, entry] of Object.entries(manifestData.files)) {
-                const hashValue = typeof entry === 'string' ? entry : entry?.hash;
-                if (hashValue) {
+                const hashValue = Array.isArray(entry)
+                    ? entry
+                    : typeof entry === 'string'
+                      ? entry
+                      : entry?.hash;
+                if (hashValue && (!Array.isArray(hashValue) || hashValue.length > 0)) {
                     normalizedFiles[filePath] = hashValue;
                 }
             }
@@ -35,8 +45,12 @@ export const normalizeManifestData = (manifestData) => {
         }
         // Legacy flat format: { "/path/file.js": "sha256-..." | { hash: "sha256-..." } }
         for (const [filePath, entry] of Object.entries(manifestData)) {
-            const hashValue = typeof entry === 'string' ? entry : entry?.hash;
-            if (hashValue) {
+            const hashValue = Array.isArray(entry)
+                ? entry
+                : typeof entry === 'string'
+                  ? entry
+                  : entry?.hash;
+            if (hashValue && (!Array.isArray(hashValue) || hashValue.length > 0)) {
                 normalizedFiles[filePath] = hashValue;
             }
         }
@@ -102,8 +116,11 @@ export function createManifestStore(database) {
         // findByHash can return both appVersion and manifest in one lookup.
         for (let i = list.length - 1; i >= 0; i--) {
             const entry = list[i];
-            for (const hash of Object.values(entry.manifest.files || {})) {
-                index[hash] = entry;
+            for (const hashOrArray of Object.values(entry.manifest.files || {})) {
+                const hashes = Array.isArray(hashOrArray) ? hashOrArray : [hashOrArray];
+                for (const hash of hashes) {
+                    index[hash] = entry;
+                }
             }
         }
         return index;

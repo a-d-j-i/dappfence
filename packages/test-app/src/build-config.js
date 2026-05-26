@@ -40,6 +40,10 @@ const simpleAppBase = {
     indexCopies: ['index_copy.html', path.join('some_subdirectory', 'index_copy.html')],
     versions: ['1.0.1'],
     htmlTemplates: { 'simple-app.html': 'index.html', 'front-page.html': 'front-page.html' },
+    filters: ['netlify-cdp'],
+    knownHashes: {
+        '/.netlify/scripts/cdp': ['.netlify/scripts/cdp.js', '.netlify/scripts/cdp-alt.js'],
+    },
 };
 
 const BUILD_CONFIGURATIONS = {

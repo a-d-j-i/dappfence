@@ -18,8 +18,18 @@ const DEFAULTS = {
     manifestPath: 'integrity-manifest.json',
     extensions: null,
     exclude: [],
-    strips: null,
+    filters: null,
+    knownHashes: null,
 };
+
+// Known-good hashes for Netlify's CDP script served at /.netlify/scripts/cdp.
+// When the netlify-cdp filter is active and the user has not provided their own
+// hashes for this URL, these are merged in so the SW can verify the real script
+// rather than replacing it with an empty stub.
+// Add new entries here when Netlify rolls a new CDP script version.
+const NETLIFY_CDP_KNOWN_HASHES = [
+    'sha256-pTgm3D8vQpOitZlnprm7whsvUg/r487ILpgWI9NblUQ=', // 2026-05-18
+];
 
 // Multiple signals: NETLIFY_SITE_ID and NETLIFY_BUILD_BASE are present even
 // when building in third-party CI (e.g. GitHub Actions) deploying to Netlify.
@@ -72,12 +82,18 @@ export default function dappfence(options = {}) {
                 await fs.copyFile(DAPPFENCE_JS_PATH, destAbs);
                 logger.info(`DappFence: copied dappfence.js → ${destRel}`);
 
-                const autoStrips = detectNetlify() ? ['netlify-cdp'] : [];
-                const strips = [...new Set([...(opts.strips ?? []), ...autoStrips])];
+                const autoFilters = detectNetlify() ? ['netlify-cdp'] : [];
+                const filters = [...new Set([...(opts.filters ?? []), ...autoFilters])];
+
+                const knownHashes = { ...(opts.knownHashes || {}) };
+                if (filters.includes('netlify-cdp') && !knownHashes['/.netlify/scripts/cdp']) {
+                    knownHashes['/.netlify/scripts/cdp'] = NETLIFY_CDP_KNOWN_HASHES;
+                }
 
                 await buildIntegrityManifest({
                     ...opts,
-                    strips,
+                    filters,
+                    knownHashes,
                     outDir,
                     routes: resolvedRoutes,
                     scriptAttrs: opts,

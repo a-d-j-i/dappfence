@@ -39,11 +39,13 @@ required separately — it prevents Netlify from rewriting link hrefs in HTML fi
 ## Netlify CDP analytics snippet
 
 Netlify injects a CDP analytics `<div>` into every HTML page **at CDN serve time**, after the build
-completes. DappFence handles this via the built-in `netlify-cdp` strip rule, which removes the
+completes. DappFence handles this via the built-in `netlify-cdp` filter rule, which removes the
 snippet from fetched HTML before hashing at verification time — so the hash still matches the
-pre-injection content recorded in the manifest.
+pre-injection content recorded in the manifest. The rule also covers the CDP script itself
+(`/.netlify/scripts/cdp`): known-good hashes are verified and allowed through; unknown content is
+replaced with an empty stub rather than blocking the page.
 
-Strip rules are a closed set defined in the DappFence source. The manifest only references them by
+Filter rules are a closed set defined in the DappFence source. The manifest only references them by
 name; arbitrary patterns cannot be injected through the manifest. See the
 [DappFence README](../../README.md) for details.
 
@@ -57,7 +59,7 @@ DappFence configuration:
 ```js
 // e.g. in astro.config.mjs, vite.config.js, or however you invoke DappFence
 dappfence({
-    strips: ['netlify-cdp'],
+    filters: ['netlify-cdp'],
 });
 ```
 

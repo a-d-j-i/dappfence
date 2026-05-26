@@ -17,6 +17,8 @@ declare global {
     interface Window {
         // unique identifier used to log messages
         pageId: string;
+        // set by the Netlify CDP stub script; used to assert MATCH vs MISMATCH in filter tests
+        __cdnScriptLoaded?: string;
     }
 }
 
@@ -37,9 +39,9 @@ export type ServiceWorkerWithClose = {
 export type InterceptPattern =
     | { pattern: string; formula?: 'default'; args?: never }
     | { pattern: string; formula: 'replace'; args: string }
-    | { pattern: string; formula: 'empty'; args: string }
-    | { pattern: string; formula: 'cdn-inject'; args?: never }
-    | { pattern: string; formula: 'cdn-inject-malicious'; args?: never };
+    | { pattern: string; formula: 'empty'; args?: never }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    | { pattern: string; formula: 'inject'; args: any };
 
 export type ServerTestParameters = {
     appName?: string;
@@ -67,11 +69,11 @@ export type SWHelper = {
     getServiceWorkerState(serviceWorker: ServiceWorkerWithClose): Promise<string>;
     waitForServiceWorkerActivation: (onPage?: Page) => Promise<string>;
     waitForServiceWorkerMessage: (msg: string) => Promise<Worker>;
-    interceptAndModifyPageContent: (
-        pattern: string | InterceptPattern | InterceptPattern[],
-        formula?: 'default' | 'replace' | 'empty' | 'cdn-inject' | 'cdn-inject-malicious',
-        args?: string
-    ) => Promise<void>;
+    interceptAndModifyPageContent: {
+        (pattern: InterceptPattern | InterceptPattern[]): Promise<void>;
+        // Flat params are intentionally unchecked — use InterceptPattern[] for type safety
+        (pattern: string, formula?: string, args?: string): Promise<void>;
+    };
     clearIntercept(): Promise<void>;
     consoleLogDebug: (onPage?: Page) => void;
     playwrightDebug: (onPage?: Page) => void;
@@ -326,14 +328,12 @@ async function swHelper(
         },
         interceptAndModifyPageContent: async (
             pattern: string | InterceptPattern | InterceptPattern[],
-            formula?: 'default' | 'replace' | 'empty' | 'cdn-inject' | 'cdn-inject-malicious',
+            formula?: string,
             args?: string
         ) => {
             const intercept: InterceptPattern | InterceptPattern[] =
                 typeof pattern === 'string'
-                    ? formula === 'replace' || formula === 'empty'
-                        ? { pattern, formula, args: args! }
-                        : { pattern, formula }
+                    ? ({ pattern, formula, args } as InterceptPattern)
                     : pattern;
             await swHelper.setServerTestParameters({ intercept });
         },

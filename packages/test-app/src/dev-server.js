@@ -16,6 +16,12 @@ const pIndex = process.argv.indexOf('-p');
 const port = pIndex > 0 && pIndex < process.argv.length ? parseInt(process.argv[pIndex + 1]) : 3333;
 const dIndex = process.argv.indexOf('-d');
 const defaultApp = dIndex > 0 && dIndex < process.argv.length && process.argv[dIndex + 1];
+const rootIndex = process.argv.indexOf('--root');
+const ROOT_OVERRIDE = rootIndex > 0 ? path.resolve(process.argv[rootIndex + 1]) : null;
+const formulaIndex = process.argv.indexOf('--formula');
+const DEFAULT_FORMULA = formulaIndex > 0 ? process.argv[formulaIndex + 1] : null;
+const virtualFilesIndex = process.argv.indexOf('--virtual-files');
+const VIRTUAL_FILES_GROUP = virtualFilesIndex > 0 ? process.argv[virtualFilesIndex + 1] : null;
 
 // MIME types mapping
 const MIME_TYPES = {
@@ -68,24 +74,28 @@ const INTERCEPT_FORMULAS = {
     empty: () => {
         return '';
     },
-    'cdn-inject': (data, _testParams, filePath) => {
-        const p = filePath.trim().toLowerCase();
-        if (!p.endsWith('.html') && !p.endsWith('.htm')) {
-            return data;
+    inject: (data, _testParams, _filePath, _pattern, args) => {
+        const html = data.toString('utf8');
+        const [content, target] = Array.isArray(args) ? args : [args];
+        if (target && html.includes(target)) {
+            console.log(`[${getTimestamp()}]  \x1b[31m[INJECT] ${content} in ${target}\x1b[0m`);
+            return html.replace(target, content + target);
         }
-        const deployId = crypto.randomBytes(8).toString('hex');
-        const snippet = `<div data-netlify-deploy-id="${deployId}" data-netlify-site-id="00000000-0000-0000-0000-000000000000" data-vcs="github" style="position:fixed">\n  \n  <script async src="/.netlify/scripts/cdp"></script>\n</div>`;
-        return data.toString('utf8') + snippet;
+        console.log(
+            `[${getTimestamp()}]  \x1b[31m[INJECT] ${content} at the end of the file\x1b[0m`
+        );
+        return html + content;
     },
-    'cdn-inject-malicious': (data, _testParams, filePath) => {
-        const p = filePath.trim().toLowerCase();
-        if (!p.endsWith('.html') && !p.endsWith('.htm')) {
+    'netlify-cdp': (data, _testParams, filePath) => {
+        if (!filePath.toLowerCase().endsWith('.html')) {
             return data;
         }
-        const deployId = crypto.randomBytes(8).toString('hex');
-        // Extra content inside the div makes the pattern non-matching so it won't be stripped.
-        const snippet = `<div data-netlify-deploy-id="${deployId}" data-netlify-site-id="00000000-0000-0000-0000-000000000000" data-vcs="github" style="position:fixed"><script>evil()</script><script async src="/.netlify/scripts/cdp"></script></div>`;
-        return data.toString('utf8') + snippet;
+        const snippet =
+            '<div data-netlify-deploy-id="abcdef1234567890" data-netlify-site-id="00000000-0000-0000-0000-000000000000" data-vcs="github" style="position:fixed">\n  <script async src="/.netlify/scripts/cdp"></script>\n</div>';
+        const html = data.toString('utf8');
+        return html.includes('</body>')
+            ? html.replace('</body>', snippet + '</body>')
+            : html + snippet;
     },
     replace: (data, testParams, filePath, pattern, args) => {
         const replacement = path.join(PROJECT_ROOT, testParams.app, args);
@@ -96,6 +106,15 @@ const INTERCEPT_FORMULAS = {
             `[${getTimestamp()}]  \x1b[31m[REPLACE] skipping, file not found ${replacement}\x1b[0m`
         );
         return data;
+    },
+};
+
+const VIRTUAL_FILE_GROUPS = {
+    'netlify-cdp': {
+        '/.netlify/scripts/cdp': {
+            content: Buffer.from('/* Netlify CDP (dev simulation) */\n'),
+            mimeType: 'application/javascript',
+        },
     },
 };
 
@@ -313,21 +332,17 @@ function serveFile(filePath, res, req, testParams) {
             params.intercept.find(
                 (i) => i.pattern && checkPattern(i.pattern, testParams.requestPath)
             );
-        const resData = intercept
-            ? INTERCEPT_FORMULAS[intercept.formula](
-                  data,
-                  testParams,
-                  filePath,
-                  intercept.pattern,
-                  intercept.args
-              )
+        const formulaName = intercept?.formula ?? DEFAULT_FORMULA;
+        const transform = formulaName && INTERCEPT_FORMULAS[formulaName];
+        const resData = transform
+            ? transform(data, testParams, filePath, intercept?.pattern, intercept?.args)
             : data;
 
         saveTestResponse(testParams, 'ok', filePath, extraHeaders, intercept);
         logRequestToConsole(
             req,
             testParams,
-            `🔑 ${relativeFilePath}: ${sriHash} (${data.length} bytes) ${extraHeaders['Cache-Control'] || 'no-cache-header'}${intercept ? ` applied ${intercept.formula}` : ''}`
+            `🔑 ${relativeFilePath}: ${sriHash} (${data.length} bytes) ${extraHeaders['Cache-Control'] || 'no-cache-header'}${formulaName ? ` applied ${formulaName}` : ''}`
         );
         res.sendDate = false;
         res.writeHead(200, {
@@ -383,7 +398,9 @@ function getTestParameters(req) {
     // or from the 'Origin' header (for cross-origin requests to external assets).
     const host = req.headers.host;
     const origin = URL.parse(req.headers.origin) || URL.parse(`http://${host}`);
-    const testKey = origin && origin.port;
+    // Proxy requests (Host: example.com) carry no port; fall back to this server's port
+    // so test-API configuration at /api/test-config still resolves correctly.
+    const testKey = (origin && origin.port) || String(port);
     const params = testParameters[testKey];
 
     const baseUrl = new URL(req.url, host ? `http://${host}` : 'http://localhost:' + port);
@@ -444,9 +461,9 @@ const server = http.createServer((req, res) => {
         return serveFile(DAPPFENCE_DIST, res, req, testParams); // Always log hash for dappfence.js
     }
 
-    if (testParams.app) {
-        const htmlRoot = path.join(PROJECT_ROOT, testParams.app);
-        for (const p of ['', '.html', '/index.html']) {
+    if (ROOT_OVERRIDE || testParams.app) {
+        const htmlRoot = ROOT_OVERRIDE || path.join(PROJECT_ROOT, testParams.app);
+        for (const p of ['', '.html', '/index.html', '.js']) {
             const filePath = path.join(htmlRoot, testParams.requestPath + p);
             if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
                 return serveFile(filePath, res, req, testParams);
@@ -458,6 +475,22 @@ const server = http.createServer((req, res) => {
     const filePath = path.join(ASSET_ROOT, testParams.requestPath);
     if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
         return serveFile(filePath, res, req, testParams);
+    }
+
+    // Before giving up, check if --virtual-files provide a synthetic response for this path.
+    const virtualFile =
+        VIRTUAL_FILES_GROUP && VIRTUAL_FILE_GROUPS[VIRTUAL_FILES_GROUP]?.[testParams.requestPath];
+    if (virtualFile) {
+        const extraHeaders = getExtraResponseHeaders(testParams);
+        saveTestResponse(testParams, 'virtual', testParams.requestPath, extraHeaders);
+        logRequestToConsole(
+            req,
+            testParams,
+            `📦 virtual file [${VIRTUAL_FILES_GROUP}] (${testParams.requestPath})`
+        );
+        res.writeHead(200, { 'Content-Type': virtualFile.mimeType, ...extraHeaders });
+        res.end(virtualFile.content);
+        return;
     }
 
     saveTestResponse(testParams, 'file not found');

@@ -305,6 +305,27 @@ describe('buildIntegrityManifest', () => {
         expect(manifest.pay).toBeDefined();
     });
 
+    it('merges knownHashes entries into manifest files', async () => {
+        const outDir = await setup();
+
+        await buildIntegrityManifest({
+            outDir,
+            manifestPath: 'integrity-manifest.json',
+            extensions: DEFAULT_EXTENSIONS,
+            exclude: [],
+            mode: 'protected',
+            knownHashes: {
+                '/.netlify/scripts/cdp': ['sha256-aaa=', 'sha256-bbb='],
+            },
+            logger: LOGGER,
+            scriptAttrs: MINIMAL,
+        });
+
+        const raw = await fs.readFile(path.join(outDir, 'integrity-manifest.json'), 'utf8');
+        const manifest = JSON.parse(raw);
+        expect(manifest.pay.files['/.netlify/scripts/cdp']).toEqual(['sha256-aaa=', 'sha256-bbb=']);
+    });
+
     it('includes dynamicRoutes in metadata when routes provided', async () => {
         const outDir = await setup();
         const routes = [

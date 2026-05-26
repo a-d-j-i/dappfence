@@ -536,6 +536,44 @@ import { SITE_DESCRIPTION, SITE_TITLE } from '../consts';
                 </div>
             </details>
 
+            <!-- ── Non-navigation page fetch ─────────────────────── -->
+            <details class="card" open>
+                <summary class="card-summary">
+                    <span class="card-icon">🔗</span>
+                    <div class="card-info">
+                        <h2>Non-navigation page fetch</h2>
+                        <p class="desc">
+                            <code>fetch('/about')</code> — extensionless URL resolved to
+                            <code>/about/index.html</code> in the manifest by the service worker.
+                        </p>
+                    </div>
+                    <svg
+                        class="card-chevron"
+                        viewBox="0 0 24 24"
+                        width="16"
+                        height="16"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2.5"
+                        aria-hidden="true"
+                    >
+                        <path d="M6 9l6 6 6-6"></path>
+                    </svg>
+                </summary>
+                <div class="card-body">
+                    <div class="btn-row">
+                        <button class="btn" id="fetch-about">fetch('/about')</button>
+                        <button class="btn" id="fetch-root">fetch('/')</button>
+                    </div>
+                    <div class="panel" id="page-fetch-output">
+                        <em style="color:var(--text-muted)"
+                            >Click a button — the SW intercepts the fetch and verifies the response
+                            against the manifest entry for the resolved path.</em
+                        >
+                    </div>
+                </div>
+            </details>
+
             <!-- ── Lazy JavaScript ────────────────────────────────── -->
             <details class="card" open>
                 <summary class="card-summary">
@@ -710,6 +748,33 @@ import { SITE_DESCRIPTION, SITE_TITLE } from '../consts';
                 jsOutput.innerHTML =
                     '<p style="margin:0"><code>back-to-top.ts</code> re-initialised — scroll down to see the button.</p>';
             });
+
+            // ── Non-navigation page fetch ────────────────────────
+            const pageFetchOutput = document.getElementById('page-fetch-output')!;
+
+            async function fetchPage(url: string) {
+                pageFetchOutput.innerHTML = `<em style="color:var(--text-muted)">Fetching ${url}…</em>`;
+                try {
+                    const res = await fetch(url);
+                    const html = await res.text();
+                    const titleMatch = html.match(/<title[^>]*>([^<]+)<\/title>/i);
+                    const title = titleMatch ? titleMatch[1].trim() : '(no title)';
+                    pageFetchOutput.innerHTML = `
+                        <p style="margin:0">
+                            <strong style="color:var(--accent)">${url}</strong>
+                            resolved to <code>${url.endsWith('/') ? url : url + '/'}index.html</code>
+                            in the manifest.<br>
+                            Response: HTTP ${res.status} · <em>${title}</em>
+                        </p>`;
+                } catch (err) {
+                    pageFetchOutput.innerHTML = `<span style="color:var(--danger)">Error: ${err}</span>`;
+                }
+            }
+
+            document
+                .getElementById('fetch-about')
+                ?.addEventListener('click', () => fetchPage('/about'));
+            document.getElementById('fetch-root')?.addEventListener('click', () => fetchPage('/'));
 
             // ── Security Monitor ─────────────────────────────────────
             const { fetchStatus, renderMonitor, startAutoRefresh } = await import(

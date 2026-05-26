@@ -54,8 +54,8 @@ src/
 │   ├── response.js      # Block response and navigation redirect builders
 │   ├── manifest/
 │   │   ├── verification.js      # Pure verification: verifyFilePath, verifyManifestSignature, shouldVerifyAsset
-│   │   ├── strips.js            # Named strip rules — removes known CDN injections before hashing
-│   │   └── manifest-service.js  # Manifest lifecycle, loading, file verification with strip application
+│   │   ├── filters.js           # Named filter rules — normalizes CDN injections before hashing, rewrites CDN-only scripts
+│   │   └── manifest-service.js  # Manifest lifecycle, loading, file verification with filter application
 │   ├── storage/
 │   │   ├── indexeddb.js       # Low-level IndexedDB wrapper
 │   │   ├── index.js           # App store facade (recordSecurityViolation)
@@ -80,8 +80,8 @@ main.js
         │     └── security-stores.js
         ├── manifest/
         │     ├── verification.js (pure verification: verifyFilePath, signature checks, shouldVerifyAsset)
-        │     ├── strips.js (named strip rules for CDN injection normalization)
-        │     └── manifest-service.js (manifest lifecycle, strip application, file verification)
+        │     ├── filters.js (named filter rules for CDN injection normalization and script rewriting)
+        │     └── manifest-service.js (manifest lifecycle, filter application, file verification)
         ├── message-broker.js
         ├── appsw-hooks.js
         ├── fetch-handler.js
@@ -136,18 +136,29 @@ manifest key), `shouldVerifyAsset` (extension/navigation predicate), `verifyLoca
 verify), `verifyImportedScript` (delegates to `verifyLocation`, records violations).
 `normalizeManifestData` was moved to `storage/manifest-store.js` where it is used.
 
-**`manifest/strips.js`** is a closed set of named content-normalization rules. Each rule removes a
-known CDN injection (e.g. the Netlify CDP analytics snippet) from file bytes before hashing so the
-hash matches the pre-injection content stored in the manifest. Rules are referenced by name only —
-the manifest carries `strips: ['netlify-cdp']`, never raw patterns. Each rule declares which file
-extensions it applies to, so an HTML rule never touches JS or CSS.
+**`manifest/filters.js`** is a closed set of named rules that handle CDN content injected at serve
+time. Each rule solves two related problems:
+
+-   **HTML mutation** (`pattern` + `appliesTo`): the CDN injects a snippet into HTML pages. The
+    pattern is stripped from the raw bytes before hashing so the computed hash matches the
+    pre-injection content recorded in the manifest.
+-   **External script loading** (`rewriteUrls`): the injected snippet loads a script from a URL
+    outside the build output. Simply skipping verification would let an attacker serve arbitrary JS
+    there. Instead the SW applies a tiered policy: if the URL appears in `manifest.files` with
+    known-good hashes and the served content matches one, it is allowed through (`MATCH`). If the
+    content does not match — or the URL has no manifest entry at all — the response body is replaced
+    with a safe empty stub (`REWRITE`), neutralizing the script while keeping the page functional.
+
+Rules are referenced by name only — the manifest carries `filters: ['netlify-cdp']`, never raw
+patterns. Each rule declares which file extensions it applies to, so an HTML rule never touches JS
+or CSS.
 
 **`manifest/manifest-service.js`** is the stateful manifest lifecycle manager. Contains
 `loadManifestFromUrl` (fetch + signature verification + normalization + storage) as a private
 function with single-flight deduplication. Exposes `resolveManifest({ clientId, isNavigation })`
-which returns `{ mode, verifyFile }`. `verifyFile(url, response)` applies strip rules, computes the
+which returns `{ mode, verifyFile }`. `verifyFile(url, response)` applies filter rules, computes the
 hash, and verifies against the stored manifest. Results carry a `status` field (`MATCH`, `MISMATCH`,
-`NOT_FOUND_IN_MANIFEST`, `SKIPPED`, `ERROR`).
+`NOT_FOUND_IN_MANIFEST`, `SKIPPED`, `REWRITE`, `ERROR`).
 
 ### Storage
 
@@ -163,8 +174,14 @@ hash, and verifies against the stored manifest. Results carry a `status` field (
 
 The manifest structure follows the [Coze specification](https://github.com/Cyphrme/Coze). It
 consists of a signed JSON document with a `pay` (payload) and `sig` (signature) field. The payload
-contains a `files` map of file paths to their SHA-256 hashes, optional `strips` naming CDN-injection
-rules, `mode`, and `metadata`. Signature verification uses Ethereum-style secp256k1 key recovery.
+contains a `files` map of file paths to their SHA-256 hashes, optional `filters` naming
+CDN-injection rules, `mode`, and `metadata`. Signature verification uses Ethereum-style secp256k1
+key recovery.
+
+Each entry in `files` may be a single hash string or an array of hash strings. Arrays are used for
+CDN-served assets (such as analytics scripts) whose content is not a build artifact and may vary
+across CDN regions or provider releases. Listing all known-good hashes lets any current version pass
+verification while still blocking unexpected content.
 
 ### Why a Centralized Manifest
 
@@ -179,11 +196,14 @@ rules, `mode`, and `metadata`. Signature verification uses Ethereum-style secp25
 ### Manifest Lifecycle
 
 1. At build time, `@dappfence/signer` hashes all files and signs the manifest payload. The payload
-   may include a `strips` array naming CDN-injection rules to apply at verification time.
+   may include a `filters` array naming CDN-injection rules to apply at verification time.
 2. At runtime, `manifest-service.js` fetches the manifest, verifies the signature, normalizes it,
    and stores it in IndexedDB.
-3. On each file request, `verifyFile` applies any declared strip rules to the raw bytes before
-   hashing, then compares the resulting hash against the stored manifest entry.
+3. On each file request, `verifyFile` applies any declared filter rules to the raw bytes before
+   hashing, then compares the resulting hash against the stored manifest entry. For URLs listed in a
+   filter rule's `rewriteUrls`: a matching known-good hash allows the response through (`MATCH`);
+   any verification failure (mismatch or no manifest entry) replaces the body with a safe empty stub
+   (`REWRITE`) rather than blocking, keeping the page functional.
 
 ## Design Patterns
 

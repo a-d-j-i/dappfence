@@ -7,7 +7,8 @@
         "node": ">=22.12.0"
     },
     "scripts": {
-        "dev": "astro dev",
+        "dev": "astro build && astro preview",
+        "dev:netlify": "NETLIFY=true npm run build && node ../../packages/test-app/src/dev-server.js --root dist --formula netlify-cdp --virtual-files netlify-cdp -p 3333",
         "build": "astro build",
         "preview": "astro preview",
         "astro": "astro",
