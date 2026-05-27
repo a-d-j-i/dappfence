@@ -9,11 +9,12 @@ vi.mock('../../core/utils.js', () => ({
     isFeatureEnabled: vi.fn(() => false),
 }));
 
+const req = (url, mode = 'no-cors') => ({ url, mode });
+
 describe('createBlockResponse', () => {
     it('returns JS redirect when request targets the SW script', () => {
         const response = createBlockResponse(
-            false,
-            'https://example.com/sw.js',
+            req('https://example.com/sw.js'),
             'https://example.com/sw.js'
         );
         expect(response.headers.get('Content-Type')).toContain('javascript');
@@ -21,8 +22,7 @@ describe('createBlockResponse', () => {
 
     it('returns 302 redirect to the warning page for navigation requests', () => {
         const response = createBlockResponse(
-            true,
-            'https://example.com/app.js',
+            req('https://example.com/app.js', 'navigate'),
             'https://example.com/sw.js'
         );
         expect(response.status).toBe(302);
@@ -31,8 +31,7 @@ describe('createBlockResponse', () => {
 
     it('returns plain text warning for non-navigation subresource requests', () => {
         const response = createBlockResponse(
-            false,
-            'https://example.com/app.js',
+            req('https://example.com/app.js'),
             'https://example.com/sw.js'
         );
         expect(response.headers.get('Content-Type')).toContain('text/plain');
@@ -41,8 +40,7 @@ describe('createBlockResponse', () => {
 
     it('does not treat a cross-origin same-pathname URL as the SW script', () => {
         const response = createBlockResponse(
-            false,
-            'https://evil.com/sw.js',
+            req('https://evil.com/sw.js'),
             'https://example.com/sw.js'
         );
         expect(response.headers.get('Content-Type')).toContain('text/plain');
@@ -71,11 +69,7 @@ describe('security-warning template', () => {
 
 describe('createBlockResponse edge cases', () => {
     it('handles invalid locationHref gracefully in SW path check', () => {
-        const response = createBlockResponse(
-            false,
-            'https://example.com/app.js',
-            'not-a-valid-url'
-        );
+        const response = createBlockResponse(req('https://example.com/app.js'), 'not-a-valid-url');
         expect(response.status).toBe(403);
     });
 });

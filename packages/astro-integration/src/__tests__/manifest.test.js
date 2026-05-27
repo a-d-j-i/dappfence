@@ -143,9 +143,7 @@ describe('buildDynamicRouteAllowRules', () => {
 
     it('emits allow rule for /blog/[slug]', () => {
         const rules = buildDynamicRouteAllowRules(['/blog/[slug]']);
-        expect(rules).toEqual([
-            { condition: { urlFilter: '/blog/' }, action: { type: 'allow' } },
-        ]);
+        expect(rules).toEqual([{ condition: { urlFilter: '/blog/' }, action: { type: 'allow' } }]);
     });
 
     it('skips routes whose prefix is only "/"', () => {
@@ -438,7 +436,10 @@ describe('buildIntegrityManifest', () => {
     it('emits contentRules when provided', async () => {
         const outDir = await setup();
         const contentRules = [
-            { condition: { resourceTypes: ['document'] }, action: { type: 'transform', transform: 'netlify-cdp' } },
+            {
+                condition: { resourceTypes: ['document'] },
+                action: { type: 'transform', transform: 'netlify-cdp' },
+            },
         ];
 
         await buildIntegrityManifest({
@@ -478,7 +479,10 @@ describe('buildIntegrityManifest', () => {
         const raw = await fs.readFile(path.join(outDir, 'integrity-manifest.json'), 'utf8');
         const manifest = JSON.parse(raw);
         expect(manifest.pay.contentRules).toContainEqual(
-            expect.objectContaining({ condition: { urlFilter: '/_server-islands/' }, action: { type: 'allow' } })
+            expect.objectContaining({
+                condition: { urlFilter: '/_server-islands/' },
+                action: { type: 'allow' },
+            })
         );
     });
 

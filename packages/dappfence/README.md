@@ -155,9 +155,9 @@ or CSS.
 
 **`manifest/manifest-service.js`** is the stateful manifest lifecycle manager. Contains
 `loadManifestFromUrl` (fetch + signature verification + normalization + storage) as a private
-function with single-flight deduplication. Exposes `resolveManifest({ clientId, isNavigation })`
-which returns `{ mode, verifyFile }`. `verifyFile(url, response)` applies filter rules, computes the
-hash, and verifies against the stored manifest. Results carry a `status` field (`MATCH`, `MISMATCH`,
+function with single-flight deduplication. Exposes `resolveManifest(clientId)` which returns
+`{ mode, verifyFile }`. `verifyFile(request, response)` applies content rules, computes the hash,
+and verifies against the stored manifest. Results carry a `status` field (`MATCH`, `MISMATCH`,
 `NOT_FOUND_IN_MANIFEST`, `SKIPPED`, `REWRITE`, `ERROR`).
 
 ### Storage

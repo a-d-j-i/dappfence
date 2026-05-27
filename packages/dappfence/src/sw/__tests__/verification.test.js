@@ -347,7 +347,10 @@ describe('verifyLocation', () => {
         expect(deps.swContext.fetch).toHaveBeenCalledWith('/lib.js', {
             headers: { 'x-dappfence': 'sw-verification' },
         });
-        expect(verifyFile).toHaveBeenCalledWith('/lib.js', response);
+        expect(verifyFile).toHaveBeenCalledWith(
+            { url: '/lib.js', destination: 'script', method: 'GET', mode: '' },
+            response
+        );
         expect(result).toEqual(verifyFileResult);
     });
 
@@ -393,7 +396,10 @@ describe('verifyImportedScript', () => {
         expect(core.swContext.fetch).toHaveBeenCalledWith('https://example.com/lib.js', {
             headers: { 'x-dappfence': 'sw-verification' },
         });
-        expect(verifyFile).toHaveBeenCalledWith('https://example.com/lib.js', response);
+        expect(verifyFile).toHaveBeenCalledWith(
+            { url: 'https://example.com/lib.js', destination: 'script', method: 'GET', mode: '' },
+            response
+        );
         expect(core.appStore.recordSecurityViolation).not.toHaveBeenCalled();
     });
 

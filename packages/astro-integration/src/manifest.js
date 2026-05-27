@@ -149,7 +149,9 @@ export async function buildIntegrityManifest({
         for (const [url, hashes] of Object.entries(additionalFiles)) {
             fileHashes[url] = hashes;
         }
-        logger.info(`DappFence: added ${Object.keys(additionalFiles).length} additional file entries`);
+        logger.info(
+            `DappFence: added ${Object.keys(additionalFiles).length} additional file entries`
+        );
     }
 
     const pathRules = buildPathRules(buildFormat);

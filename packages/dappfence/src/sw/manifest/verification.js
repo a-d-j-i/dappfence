@@ -207,7 +207,10 @@ export async function verifyLocation({ swContext, manifestService }, url) {
         );
         if (response && response.ok) {
             const ctx = await manifestService.resolveManifest();
-            return await ctx.verifyFile(url, response);
+            return await ctx.verifyFile(
+                { url, destination: 'script', method: 'GET', mode: '' },
+                response
+            );
         }
         logger.error(`Failed to fetch ${url}: ${response.status} ${response.statusText}`);
     } catch (error) {

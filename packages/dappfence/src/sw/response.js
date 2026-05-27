@@ -108,15 +108,14 @@ const isServiceWorkerPath = (requestUrl, locationHref) => {
  * whether the blocked asset is the service worker script itself, a navigation
  * request, or a regular subresource request.
  *
- * @param {boolean} isNavigation - Whether this is a navigation request
- * @param {string} requestUrl - The URL of the blocked request (absolute or relative)
+ * @param {Request} request - The blocked request
  * @param {string} locationHref - The service worker's location.href
  */
-export function createBlockResponse(isNavigation, requestUrl, locationHref) {
-    if (isNavigation) {
+export function createBlockResponse(request, locationHref) {
+    if (request.mode === 'navigate') {
         return createRedirectResponse(API.SECURITY_WARNING);
     }
-    if (isServiceWorkerPath(requestUrl, locationHref)) {
+    if (isServiceWorkerPath(request.url, locationHref)) {
         return createJavascriptRedirectResponse();
     }
     return createSecurityWarningResponse();

@@ -2,8 +2,8 @@
 
 ## Problem
 
-When DappFence's SW loads the app service worker via `importScripts(config.appSW)`, and when
-the app SW itself calls `importScripts()` for additional scripts, verification is currently
+When DappFence's SW loads the app service worker via `importScripts(config.appSW)`, and when the app
+SW itself calls `importScripts()` for additional scripts, verification is currently
 **fire-and-forget**: the script is fetched and executed synchronously by the browser before the
 async hash check completes. A compromised script runs before DappFence can do anything about it.
 
@@ -16,14 +16,13 @@ remaining gap.
 `importScripts` is synchronous. Inside the monkey-patch handler, there is no way to await an async
 operation. The constraints in SW scope are:
 
-- No `XMLHttpRequest` (sync mode available in dedicated Workers but excluded from
-  `ServiceWorkerGlobalScope`)
-- No sub-Workers (`new Worker()` is not exposed in `ServiceWorkerGlobalScope`)
-- `importScripts` itself rejects blob and data URLs in SW context — the browser's update
-  algorithm needs to re-fetch imported scripts to check for changes, so ephemeral URLs are
-  rejected
-- `Atomics.wait` is available (SW has `AgentCanBlock = true`) but requires another thread to
-  call `Atomics.notify` to unblock it — no such thread can be created from within the SW
+-   No `XMLHttpRequest` (sync mode available in dedicated Workers but excluded from
+    `ServiceWorkerGlobalScope`)
+-   No sub-Workers (`new Worker()` is not exposed in `ServiceWorkerGlobalScope`)
+-   `importScripts` itself rejects blob and data URLs in SW context — the browser's update algorithm
+    needs to re-fetch imported scripts to check for changes, so ephemeral URLs are rejected
+-   `Atomics.wait` is available (SW has `AgentCanBlock = true`) but requires another thread to call
+    `Atomics.notify` to unblock it — no such thread can be created from within the SW
 
 The only synchronous blocking primitive in SW scope is `Atomics.wait`. Any solution that truly
 blocks `importScripts` must flow through it.
@@ -32,9 +31,9 @@ blocks `importScripts` must flow through it.
 
 ### Overview
 
-A **SharedWorker** spawned from the page that calls `register()` acts as the persistent
-verification thread. It holds a `SharedArrayBuffer`, performs async fetch and hash, and calls
-`Atomics.notify` to unblock the SW.
+A **SharedWorker** spawned from the page that calls `register()` acts as the persistent verification
+thread. It holds a `SharedArrayBuffer`, performs async fetch and hash, and calls `Atomics.notify` to
+unblock the SW.
 
 ### Sequence
 
@@ -62,21 +61,20 @@ importScripts(url) called (monkey-patched)
 
 ### Why SharedWorker and not dedicated Worker
 
-A dedicated Worker is owned by its document and is terminated on page reload or navigation.
-A SharedWorker lives as long as at least one document from the same origin holds a connection.
-In practice, browsers preserve the SharedWorker across single-tab reloads during the brief
-reconnection window (implementation behavior, not spec-guaranteed, but reliable in Chrome and
-Firefox).
+A dedicated Worker is owned by its document and is terminated on page reload or navigation. A
+SharedWorker lives as long as at least one document from the same origin holds a connection. In
+practice, browsers preserve the SharedWorker across single-tab reloads during the brief reconnection
+window (implementation behavior, not spec-guaranteed, but reliable in Chrome and Firefox).
 
-This means the SAB and port established during the first installation remain valid across normal page
-reloads without re-handshaking, which is important for SW update events.
+This means the SAB and port established during the first installation remain valid across normal
+page reloads without re-handshaking, which is important for SW update events.
 
 ### Direct SW ↔ SharedWorker communication
 
 A SharedWorker created by a controlled page is itself a **client** of the SW — it appears in
-`clients.matchAll()`. Once a `MessageChannel` port is exchanged (SW sends port to SharedWorker
-via the clients API, or the page acts as broker), communication is direct and bidirectional
-without the page as intermediary.
+`clients.matchAll()`. Once a `MessageChannel` port is exchanged (SW sends port to SharedWorker via
+the clients API, or the page acts as broker), communication is direct and bidirectional without the
+page as intermediary.
 
 The SharedWorker cannot call `navigator.serviceWorker.register()` — `WorkerNavigator` does not
 expose `ServiceWorkerContainer`. The page must still own the registration.
@@ -92,22 +90,22 @@ Cross-Origin-Opener-Policy: same-origin
 Cross-Origin-Embedder-Policy: require-corp
 ```
 
-This is a deployment requirement the site owner must opt into. Without it the entire mechanism
-is unavailable, and the fallback is current fire-and-forget behavior.
+This is a deployment requirement the site owner must opt into. Without it the entire mechanism is
+unavailable, and the fallback is current fire-and-forget behavior.
 
 ### Background SW update (24-hour check)
 
-The browser performs a periodic SW update check even with **zero pages open**. If a new SW
-version is found, the `install` event fires and `importScripts` is called with no page present,
-meaning no SharedWorker, no SAB. This case falls back to fire-and-forget.
+The browser performs a periodic SW update check even with **zero pages open**. If a new SW version
+is found, the `install` event fires and `importScripts` is called with no page present, meaning no
+SharedWorker, no SAB. This case falls back to fire-and-forget.
 
 Navigation-triggered updates (the common case) always have a page open and are covered.
 
 ### First page load bootstrap gap
 
-On the very first page load, no SW exists yet. All `<script>` tags on that page are fetched
-and executed before the SW is installed and active. This is the accepted bootstrap trust
-constraint — it applies equally here and is not specific to `importScripts` blocking.
+On the very first page load, no SW exists yet. All `<script>` tags on that page are fetched and
+executed before the SW is installed and active. This is the accepted bootstrap trust constraint — it
+applies equally here and is not specific to `importScripts` blocking.
 
 ## Alternative: throw-then-retry
 
@@ -131,10 +129,10 @@ Browser retries install
 
 ### Advantages over SharedWorker + Atomics
 
-- No COOP+COEP headers required
-- Works for background SW updates (no page present)
-- No SharedWorker, no `Atomics.wait`, no MessageChannel handshake
-- Simpler to implement and reason about
+-   No COOP+COEP headers required
+-   Works for background SW updates (no page present)
+-   No SharedWorker, no `Atomics.wait`, no MessageChannel handshake
+-   Simpler to implement and reason about
 
 ### TOCTOU
 
@@ -147,15 +145,16 @@ original `importScripts` makes a second browser-level fetch.
 ### When to prefer throw-then-retry over pure async eval
 
 Throw-then-retry maintains the synchronous contract: on the retry attempt, `importScripts` returns
-only after `eval` completes, so imported symbols are available on the next line. Use it when the
-app SW uses imported symbols in top-level synchronous code immediately after `importScripts`.
-For standard event-handler-based SW code, the simpler async eval approach (below) is enough.
+only after `eval` completes, so imported symbols are available on the next line. Use it when the app
+SW uses imported symbols in top-level synchronous code immediately after `importScripts`. For
+standard event-handler-based SW code, the simpler async eval approach (below) is enough.
 
 ### Constraints
 
-- The first `install` always fails and requires a browser retry — adds latency to initial SW installation.
-- In-memory content cache must be preloaded from IndexedDB at the start of each `install` event,
-  before the app SW runs and its `importScripts` calls fire.
+-   The first `install` always fails and requires a browser retry — adds latency to initial SW
+    installation.
+-   In-memory content cache must be preloaded from IndexedDB at the start of each `install` event,
+    before the app SW runs and its `importScripts` calls fire.
 
 ## Alternative: fetch + eval
 
@@ -179,18 +178,17 @@ global variable and function declarations become properties of `self`.
 
 ### Advantages
 
-- **No TOCTOU**: the bytes verified are the bytes executed.
-- No SharedWorker, no Atomics, no COOP+COEP.
-- Works for background updates (no page needed).
-- No throw-then-retry needed — see below.
+-   **No TOCTOU**: the bytes verified are the bytes executed.
+-   No SharedWorker, no Atomics, no COOP+COEP.
+-   Works for background updates (no page needed).
+-   No throw-then-retry needed — see below.
 
 ### Why throw-then-retry is not needed
 
-`addEventListener` is already monkey-patched globally by DappFence. App SW code registers its
-event listeners through the patch, which queues them in a Map rather than forwarding them to the
-real `addEventListener` immediately. Event handlers only fire after DappFence's own `install`
-handler completes — and `event.waitUntil` keeps the `install` event alive until all async work
-finishes.
+`addEventListener` is already monkey-patched globally by DappFence. App SW code registers its event
+listeners through the patch, which queues them in a Map rather than forwarding them to the real
+`addEventListener` immediately. Event handlers only fire after DappFence's own `install` handler
+completes — and `event.waitUntil` keeps the `install` event alive until all async work finishes.
 
 This means the monkey-patched `importScripts` can return synchronously without having eval'd the
 content yet:
@@ -210,7 +208,7 @@ install event waitUntil resolves when all pending verifications complete
 Nested `importScripts` calls within eval'd app SW code hit the same global monkey-patch and follow
 the same async path. No retry, no cache warm-up step.
 
-**One real constraint**: top-level synchronous use of an imported symbol on the next line fails 
+**One real constraint**: top-level synchronous use of an imported symbol on the next line fails
 because the eval hasn't happened yet when that line runs:
 
 ```js
@@ -239,16 +237,16 @@ content, but it is not identical.
 
 ## Summary of protection coverage
 
-| Scenario                              | Verified?                        | Mechanism                                 |
-|---------------------------------------|----------------------------------|-------------------------------------------|
-| `<script>` tags (SW active)           | Yes                              | SW fetch handler + `respondWith()`        |
-| First page load (no SW yet)           | No                               | Bootstrap trust — platform constraint     |
-| `importScripts` — first install       | Yes (with COOP+COEP)             | SharedWorker + Atomics                    |
-| `importScripts` — navigation update   | Yes (with COOP+COEP)             | SharedWorker + Atomics                    |
-| `importScripts` — background update   | No                               | No client present — fire-and-forget       |
-| `importScripts` — no COOP+COEP        | No                               | Fire-and-forget fallback                  |
-| `importScripts` — throw-then-retry    | Yes (all cases)                  | Fail install, verify async, eval on retry |
-| `importScripts` — async eval          | Yes (if `'unsafe-eval'` allowed) | async fetch + eval via waitUntil, no TOCTOU, no retry |
+| Scenario                            | Verified?                        | Mechanism                                             |
+| ----------------------------------- | -------------------------------- | ----------------------------------------------------- |
+| `<script>` tags (SW active)         | Yes                              | SW fetch handler + `respondWith()`                    |
+| First page load (no SW yet)         | No                               | Bootstrap trust — platform constraint                 |
+| `importScripts` — first install     | Yes (with COOP+COEP)             | SharedWorker + Atomics                                |
+| `importScripts` — navigation update | Yes (with COOP+COEP)             | SharedWorker + Atomics                                |
+| `importScripts` — background update | No                               | No client present — fire-and-forget                   |
+| `importScripts` — no COOP+COEP      | No                               | Fire-and-forget fallback                              |
+| `importScripts` — throw-then-retry  | Yes (all cases)                  | Fail install, verify async, eval on retry             |
+| `importScripts` — async eval        | Yes (if `'unsafe-eval'` allowed) | async fetch + eval via waitUntil, no TOCTOU, no retry |
 
 ## Why deferred
 
@@ -260,8 +258,8 @@ Implementation requires:
 4. Graceful fallback detection (is SharedWorker available? is SAB usable?)
 
 The throw-then-retry and fetch+eval approaches are simpler alternatives that cover more scenarios
-without COOP+COEP. The primary remaining tradeoff is eval's `'unsafe-eval'` CSP requirement and
-the two-attempt install latency of throw-then-retry.
+without COOP+COEP. The primary remaining tradeoff is eval's `'unsafe-eval'` CSP requirement and the
+two-attempt install latency of throw-then-retry.
 
 The security gain is real but bounded — the background update gap and first-load bootstrap gap
 remain regardless, and most practical attacks against `importScripts` content fall within the
