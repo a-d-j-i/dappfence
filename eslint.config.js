@@ -14,11 +14,12 @@ export default [
     },
     js.configs.recommended,
     prettier,
-    // Node scripts (CommonJS)
+    // Node scripts (CommonJS + ESM)
     {
         files: [
             'packages/test-app/src/**/*.js',
             'packages/signer/src/**/*.js',
+            'packages/astro-integration/src/**/*.js',
             'packages/dappfence/vite.config.js',
         ],
         languageOptions: {
