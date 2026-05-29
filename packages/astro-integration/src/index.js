@@ -18,7 +18,6 @@ import { createRequire } from 'node:module';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createDappFenceVitePlugin } from './vite-plugin.js';
 import { generateManifest } from './manifest.js';
 
 const _require = createRequire(import.meta.url);
@@ -54,14 +53,7 @@ export default function dappfence(options = {}) {
     return {
         name: '@dappfence/astro',
         hooks: {
-            // Runs once at startup (dev and build).
-            // Registers the Vite plugin so that Vite's transformIndexHtml pipeline
-            // can inject the script tag during Vite-controlled builds. In practice
-            // Astro bypasses this for its own SSG output, so the real injection
-            // happens in astro:build:done (prod). DappFence is intentionally a
-            // no-op in dev — Vite transforms files at request time, so hash
-            // verification cannot work against a static manifest.
-            'astro:config:setup'({ updateConfig, logger }) {
+            'astro:config:setup'({ logger }) {
                 if (!opts.secretKey) {
                     logger.error(
                         'DappFence: secretKey is required. ' +
@@ -69,11 +61,6 @@ export default function dappfence(options = {}) {
                     );
                     throw new Error('[@dappfence/astro] secretKey is required');
                 }
-                updateConfig({
-                    vite: {
-                        plugins: [createDappFenceVitePlugin(opts)],
-                    },
-                });
             },
 
             // Fires after Astro resolves all routes (dev and build).
