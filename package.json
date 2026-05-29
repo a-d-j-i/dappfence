@@ -13,7 +13,9 @@
         "check": "eslint packages/ && prettier --check packages/ *.md",
         "format": "prettier --write packages/ *.md",
         "publish:core": "npm run check && npm run build:prod && npm publish -w @dappfence/core --access public",
-        "prepare": "npm run check && npm run build:prod"
+        "prepare": "npm run check && npm run build:prod",
+        "ci:install": "npm ci --ignore-scripts && npx playwright install chromium",
+        "ci:local": "npm run ci:install && npm run check && npm test"
     },
     "devDependencies": {
         "eslint": "9.39.4",
