@@ -14,12 +14,13 @@
     ],
     "scripts": {
         "test": "vitest run",
-        "test:coverage": "vitest run --coverage"
+        "test:coverage": "vitest run --coverage",
+        "publish:local": "npm pack --pack-destination ../../dist"
     },
     "repository": {
         "type": "git",
         "url": "git+https://github.com/coinspect/dappfence.git",
-        "directory": "packages/astro-integration"
+        "directory": "packages/astro"
     },
     "keywords": [
         "astro",
@@ -35,10 +36,6 @@
     },
     "dependencies": {
         "@dappfence/core": "*",
-        "@dappfence/signer": "*"
-    },
-    "devDependencies": {
-        "@vitest/coverage-v8": "4.1.4",
-        "vitest": "4.1.4"
+        "@dappfence/manifest-tools": "*"
     }
 }

@@ -188,7 +188,10 @@ describe('resolveManifest', () => {
             status: 200,
             headers: { 'content-type': 'text/plain' },
         });
-        const result = ctx.verifyFile('/app.txt', fakeResponse);
+        const result = ctx.verifyFile(
+            { mode: 'no-cors', url: 'https://app.example.com/app.txt' },
+            fakeResponse
+        );
 
         expect(result).toEqual({ status: VERIFICATION_STATUS.SKIPPED, fileKey: '/app.txt' });
     });
@@ -382,12 +385,16 @@ describe('resolveManifest', () => {
             manifest: { files: { '/app.js': fileHash } },
         });
 
-        const ctx = await manifestService.resolveManifest({ clientId: 'client-1' });
+        const ctx = await manifestService.resolveManifest();
         const jsResponse = new Response(body, {
             status: 200,
             headers: { 'content-type': 'text/javascript' },
         });
-        const result = await ctx.verifyFile('/app.js', jsResponse);
+        const result = await ctx.verifyFile(
+            { mode: 'no-cors', url: 'https://app.example.com/app.js' },
+            jsResponse,
+            'client-1'
+        );
 
         expect(result.status).toBe(VERIFICATION_STATUS.MATCH);
     });
@@ -408,18 +415,16 @@ describe('resolveManifest', () => {
         });
         trustedManifestStore.findByHash.mockResolvedValue(manifestEntry);
 
-        const ctx = await manifestService.resolveManifest({
-            clientId: 'client-pin',
-            isNavigation: false,
-        });
+        const ctx = await manifestService.resolveManifest();
         const jsResponse = () =>
             new Response(body, { status: 200, headers: { 'content-type': 'text/javascript' } });
+        const jsRequest = { mode: 'no-cors', url: 'https://app.example.com/app.js' };
 
-        const result1 = await ctx.verifyFile('/app.js', jsResponse());
+        const result1 = await ctx.verifyFile(jsRequest, jsResponse(), 'client-pin');
         expect(result1.status).toBe(VERIFICATION_STATUS.MATCH);
 
         trustedManifestStore.findByHash.mockClear();
-        const result2 = await ctx.verifyFile('/app.js', jsResponse());
+        const result2 = await ctx.verifyFile(jsRequest, jsResponse(), 'client-pin');
         expect(result2.status).toBe(VERIFICATION_STATUS.MATCH);
         expect(appStore.verificationResultsStore.add).toHaveBeenCalled();
     });
@@ -469,17 +474,15 @@ describe('resolveManifest', () => {
         });
         trustedManifestStore.findByHash.mockResolvedValue(manifestEntry);
 
-        const ctx = await manifestService.resolveManifest({
-            clientId: 'client-store',
-            isNavigation: false,
-        });
+        const ctx = await manifestService.resolveManifest();
         const jsResponse = () =>
             new Response(body, { status: 200, headers: { 'content-type': 'text/javascript' } });
+        const jsRequest = { mode: 'no-cors', url: 'https://app.example.com/app.js' };
 
-        await ctx.verifyFile('/app.js', jsResponse());
+        await ctx.verifyFile(jsRequest, jsResponse(), 'client-store');
         const callsAfterFirst = trustedManifestStore.findByHash.mock.calls.length;
 
-        await ctx.verifyFile('/app.js', jsResponse());
+        await ctx.verifyFile(jsRequest, jsResponse(), 'client-store');
         expect(trustedManifestStore.findByHash.mock.calls.length).toBe(callsAfterFirst);
     });
 
@@ -504,13 +507,13 @@ describe('resolveManifest', () => {
         });
         trustedManifestStore.findByHash.mockResolvedValue(manifestEntry);
 
-        const ctx = await manifestService.resolveManifest({});
+        const ctx = await manifestService.resolveManifest();
         const jsResponse = new Response(body, {
             status: 200,
             headers: { 'content-type': 'text/javascript' },
         });
 
-        const result = await ctx.verifyFile(externalUrl, jsResponse);
+        const result = await ctx.verifyFile({ mode: 'no-cors', url: externalUrl }, jsResponse);
         expect(result.status).toBe(VERIFICATION_STATUS.MATCH);
     });
 
