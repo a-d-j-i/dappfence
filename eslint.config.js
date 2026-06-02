@@ -14,9 +14,9 @@ export default [
     },
     js.configs.recommended,
     prettier,
-    // All Node.js packages (everything except dappfence core source)
+    // All Node.js packages and repo scripts (everything except dappfence core source)
     {
-        files: ['packages/**/*.js'],
+        files: ['packages/**/*.js', 'scripts/**/*.js'],
         ignores: ['packages/dappfence/src/**/*.js'],
         languageOptions: {
             globals: globals.node,
