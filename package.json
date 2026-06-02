@@ -5,6 +5,7 @@
     "scripts": {
         "dev": "npm run build && npm run dev -w @dappfence/test-app",
         "test": "npm run build && npm test --ws --if-present",
+        "test:coverage": "npm run build && npm run test:coverage --ws --if-present",
         "build": "npm run build --ws --if-present",
         "build:prod": "npm run build:prod -w @dappfence/core",
         "build:watch": "npm run build:watch -w @dappfence/core & npm run build:watch -w @dappfence/test-app",
@@ -12,6 +13,7 @@
         "lint": "eslint packages/ --fix",
         "check": "eslint packages/ && prettier --check packages/ *.md",
         "format": "prettier --write packages/ *.md",
+        "publish:local": "npm run build:prod -w @dappfence/core && npm pack -w @dappfence/core --pack-destination dist && npm pack -w @dappfence/signer --pack-destination dist && npm pack -w @dappfence/astro --pack-destination dist",
         "publish:core": "npm run check && npm run build:prod && npm publish -w @dappfence/core --access public",
         "prepare": "npm run check && npm run build:prod",
         "ci:install": "npm ci --ignore-scripts && npx playwright install chromium",
