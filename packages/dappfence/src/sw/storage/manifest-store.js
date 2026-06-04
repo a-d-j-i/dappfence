@@ -7,7 +7,57 @@
  */
 
 import { calculateHash } from '../../core/crypto.js';
-import { normalizeManifestData } from '../manifest/operations.js';
+
+/**
+ * Normalize manifest data from external sources (pure function).
+ * Handles both enhanced format ({ files: {...}, metadata, mode, ... }) and
+ * legacy flat format. Hashes are stored as-is in SRI form (the same format
+ * the signer emits and HTML's Subresource Integrity uses), so no encoding
+ * conversion happens here. Top-level fields other than `files` (mode,
+ * metadata, and any future fields) are preserved as-is so consumers can
+ * read them.
+ *
+ * Each entry in `files` may be a single hash string or an array of hash
+ * strings. Arrays are used for CDN-served assets (e.g. analytics scripts)
+ * whose content is not a build artifact and may vary across CDN regions or
+ * provider releases — listing all known-good hashes lets any current version
+ * pass verification while still blocking unexpected content.
+ * @param {object} manifestData - Raw manifest data
+ * @returns {object} Normalized manifest with `files` map of fileKey -> hash or hash[]
+ */
+export const normalizeManifestData = (manifestData) => {
+    const normalizedFiles = {};
+
+    if (typeof manifestData === 'object') {
+        // Enhanced format: { "files": { "/path/file.js": "sha256-..." }, "metadata": {...} }
+        if (manifestData.files && typeof manifestData.files === 'object') {
+            for (const [filePath, entry] of Object.entries(manifestData.files)) {
+                const hashValue = Array.isArray(entry)
+                    ? entry
+                    : typeof entry === 'string'
+                      ? entry
+                      : entry?.hash;
+                if (hashValue && (!Array.isArray(hashValue) || hashValue.length > 0)) {
+                    normalizedFiles[filePath] = hashValue;
+                }
+            }
+            return { ...manifestData, files: normalizedFiles };
+        }
+        // Legacy flat format: { "/path/file.js": "sha256-..." | { hash: "sha256-..." } }
+        for (const [filePath, entry] of Object.entries(manifestData)) {
+            const hashValue = Array.isArray(entry)
+                ? entry
+                : typeof entry === 'string'
+                  ? entry
+                  : entry?.hash;
+            if (hashValue && (!Array.isArray(hashValue) || hashValue.length > 0)) {
+                normalizedFiles[filePath] = hashValue;
+            }
+        }
+    }
+
+    return { files: normalizedFiles };
+};
 
 // Trusted Manifest System constants
 const TRUSTED_MANIFEST_KEY = 'trusted-manifest';
@@ -66,8 +116,11 @@ export function createManifestStore(database) {
         // findByHash can return both appVersion and manifest in one lookup.
         for (let i = list.length - 1; i >= 0; i--) {
             const entry = list[i];
-            for (const hash of Object.values(entry.manifest.files || {})) {
-                index[hash] = entry;
+            for (const hashOrArray of Object.values(entry.manifest.files || {})) {
+                const hashes = Array.isArray(hashOrArray) ? hashOrArray : [hashOrArray];
+                for (const hash of hashes) {
+                    index[hash] = entry;
+                }
             }
         }
         return index;

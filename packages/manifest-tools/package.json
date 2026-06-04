@@ -22,6 +22,9 @@
         "test:coverage": "vitest run --coverage",
         "publish:local": "npm pack --pack-destination ../../dist"
     },
+    "publishConfig": {
+        "access": "public"
+    },
     "repository": {
         "type": "git",
         "url": "git+https://github.com/coinspect/dappfence.git",

@@ -21,6 +21,9 @@
         "test:headed": "playwright test --config playwright.config.ts --headed",
         "test:debug": "playwright test --config playwright.config.ts --debug"
     },
+    "publishConfig": {
+        "access": "public"
+    },
     "dependencies": {
         "@dappfence/core": "*",
         "@dappfence/manifest-tools": "*"

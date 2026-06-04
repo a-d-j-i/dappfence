@@ -40,6 +40,24 @@ const simpleAppBase = {
     indexCopies: ['index_copy.html', path.join('some_subdirectory', 'index_copy.html')],
     versions: ['1.0.1'],
     htmlTemplates: { 'simple-app.html': 'index.html', 'front-page.html': 'front-page.html' },
+    pathRules: [{ type: 'directory-index' }],
+    contentRules: [
+        {
+            condition: { resourceTypes: ['document'] },
+            action: { type: 'transform', transform: 'netlify-cdp' },
+        },
+        {
+            condition: { urlFilter: '/.netlify/scripts/cdp' },
+            action: { type: 'verify' },
+        },
+        {
+            condition: { urlFilter: '/.netlify/scripts/cdp' },
+            action: { type: 'rewrite' },
+        },
+    ],
+    additionalFiles: {
+        '/.netlify/scripts/cdp': ['.netlify/scripts/cdp.js', '.netlify/scripts/cdp-alt.js'],
+    },
 };
 
 const BUILD_CONFIGURATIONS = {
@@ -61,6 +79,7 @@ const BUILD_CONFIGURATIONS = {
         htmlTemplates: { 'tampering-test.html': 'index.html' },
         htmlOutput: 'tampering-test.html',
         description: 'Tampering Security Test',
+        pathRules: [{ type: 'directory-index' }],
     },
     'reporting-test': {
         ...simpleAppBase,

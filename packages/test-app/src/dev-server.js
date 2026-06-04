@@ -10,6 +10,21 @@ const { connect } = require('node:net');
 const ASSET_ROOT = path.resolve(__dirname, '..', 'assets');
 const DAPPFENCE_DIST = require.resolve('@dappfence/core');
 
+/**
+ * Named groups of virtual URL-to-file mappings.
+ * Each entry maps an exact request path to a relative file path resolved
+ * inside the active app directory (or ASSET_ROOT as fallback).
+ * This fills the gap between extensionless CDN URLs and the physical files
+ * on disk — without a blanket extension-guessing fallback.
+ */
+const VIRTUAL_FILE_GROUPS = {
+    'netlify-cdp': {
+        // Netlify injects /.netlify/scripts/cdp with no file extension;
+        // cdp.js is the primary known-good variant stored in the manifest.
+        '/.netlify/scripts/cdp': '.netlify/scripts/cdp.js',
+    },
+};
+
 // --- Pure utilities ---
 
 const MIME_TYPES = {
@@ -127,10 +142,13 @@ function logRequestToConsole(req, testParams, result) {
  * @param {string}  [opts.defaultApp]       - Default app directory name (e.g. 'simple-app_latest').
  *                                            Takes precedence over per-request /api/test-config.
  * @param {boolean} [opts.noCache=false]    - Disable all caching headers.
- * @param {boolean} [opts.dev=false]        - Serve dappfence.js from @dappfence/core dist
- *                                            instead of the app directory.
- * @param {boolean} [opts.withBrowser=false]- Open a browser tab after startup.
- * @returns {Promise<http.Server>}          - Resolves once the server is listening.
+ * @param {boolean} [opts.dev=false]          - Serve dappfence.js from @dappfence/core dist
+ *                                              instead of the app directory.
+ * @param {boolean} [opts.withBrowser=false]  - Open a browser tab after startup.
+ * @param {string}  [opts.virtualFilesGroup]  - Name of a VIRTUAL_FILE_GROUPS entry to activate.
+ *                                              Extensionless CDN URLs are resolved via this map.
+ *                                              When unset no virtual-file mapping is applied.
+ * @returns {Promise<http.Server>}            - Resolves once the server is listening.
  */
 function startServer({
     port = 3333,
@@ -139,10 +157,13 @@ function startServer({
     noCache = false,
     dev = false,
     withBrowser = false,
+    virtualFilesGroup = undefined,
 } = {}) {
     const PROJECT_ROOT = root
         ? path.resolve(process.cwd(), root)
         : path.resolve(__dirname, '..', 'dist');
+
+    const virtualFiles = VIRTUAL_FILE_GROUPS[virtualFilesGroup] ?? {};
 
     // Per-server mutable state — keyed by the request port (test isolation).
     const testParameters = {
@@ -172,6 +193,25 @@ function startServer({
             return ' ' + data;
         },
         empty: () => '',
+        inject: (data, _testParams, _filePath, _pattern, args) => {
+            const html = data.toString('utf8');
+            const [content, target] = Array.isArray(args) ? args : [args];
+            if (target && html.includes(target)) {
+                return html.replace(target, content + target);
+            }
+            return html + content;
+        },
+        // Simulate Netlify CDN edge injection: appends the CDP analytics snippet
+        // before </body>. Only applies to HTML files; non-HTML pass through unchanged.
+        'netlify-cdp': (data, _testParams, filePath) => {
+            if (!filePath.toLowerCase().endsWith('.html')) return data;
+            const snippet =
+                '<div data-netlify-deploy-id="abcdef1234567890" data-netlify-site-id="00000000-0000-0000-0000-000000000000" data-vcs="github" style="position:fixed">\n  <script async src="/.netlify/scripts/cdp"></script>\n</div>';
+            const html = data.toString('utf8');
+            return html.includes('</body>')
+                ? html.replace('</body>', snippet + '</body>')
+                : html + snippet;
+        },
         replace: (data, testParams, filePath, pattern, args) => {
             const replacement = path.join(PROJECT_ROOT, testParams.app, args);
             if (fs.existsSync(replacement) && fs.statSync(replacement).isFile()) {
@@ -339,7 +379,10 @@ function startServer({
                 `🔑 ${relativeFilePath}: ${sriHash} (${data.length} bytes) ${extraHeaders['Cache-Control'] || 'no-cache-header'}${intercept ? ` applied ${intercept.formula}` : ''}`
             );
             res.sendDate = false;
-            res.writeHead(200, { 'Content-Type': mimeType, ...extraHeaders });
+            res.writeHead(200, {
+                'Content-Type': (intercept && intercept.contentType) || mimeType,
+                ...extraHeaders,
+            });
             res.end(resData);
         });
     }
@@ -414,6 +457,54 @@ function startServer({
         const filePath = path.join(ASSET_ROOT, testParams.requestPath);
         if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
             return serveFile(filePath, res, req, testParams);
+        }
+
+        // Virtual file fallback: resolve extensionless CDN URLs to physical files.
+        const virtualAlias = virtualFiles[testParams.requestPath];
+        if (virtualAlias) {
+            if (testParams.app) {
+                const aliasPath = path.join(PROJECT_ROOT, testParams.app, virtualAlias);
+                if (fs.existsSync(aliasPath) && fs.statSync(aliasPath).isFile()) {
+                    return serveFile(aliasPath, res, req, testParams);
+                }
+            }
+            const aliasPath = path.join(ASSET_ROOT, virtualAlias);
+            if (fs.existsSync(aliasPath) && fs.statSync(aliasPath).isFile()) {
+                return serveFile(aliasPath, res, req, testParams);
+            }
+        }
+
+        // Synthetic intercept: apply a matching formula with empty input so formulas
+        // like 'replace' and 'empty' can serve responses for paths with no base file
+        // (e.g. extensionless CDN URLs declared explicitly in a test's intercept list).
+        const testState = testParameters[testParams.testKey];
+        const synthIntercept =
+            testState?.intercept?.find(
+                (i) => i.pattern && checkPattern(i.pattern, testParams.requestPath)
+            ) ?? null;
+        if (synthIntercept) {
+            const resData = INTERCEPT_FORMULAS[synthIntercept.formula](
+                Buffer.alloc(0),
+                testParams,
+                '',
+                synthIntercept.pattern,
+                synthIntercept.args
+            );
+            const mimeType =
+                synthIntercept.contentType ||
+                getMimeType(synthIntercept.args || testParams.requestPath) ||
+                'application/octet-stream';
+            const extraHeaders = getExtraResponseHeaders(testParams);
+            saveTestResponse(testParams, 'synthetic', '', extraHeaders, synthIntercept);
+            logRequestToConsole(
+                req,
+                testParams,
+                `🔧 synthetic ${synthIntercept.formula} for ${testParams.requestPath}`
+            );
+            res.sendDate = false;
+            res.writeHead(200, { 'Content-Type': mimeType, ...extraHeaders });
+            res.end(resData);
+            return;
         }
 
         saveTestResponse(testParams, 'file not found');
