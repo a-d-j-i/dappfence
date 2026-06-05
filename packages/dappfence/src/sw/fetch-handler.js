@@ -3,9 +3,9 @@
  * Orchestrates security checks and app service worker integration
  */
 
-import { createBlockResponse } from './response.js';
+import { createBlockResponse, createRewriteResponse } from './response.js';
 import { createLogger } from '../core/logger.js';
-import { API_PREFIX, ASSET_TYPE, MODE } from '../core/constants.js';
+import { API_PREFIX, ASSET_TYPE, MODE, VERIFICATION_STATUS } from '../core/constants.js';
 import { isFeatureEnabled } from '../core/utils.js';
 
 const logger = createLogger();
@@ -139,26 +139,28 @@ export function createSecurityFetchHandler({
         return await swContext.fetch(request);
     }
 
-    /**
-     * Run the manifest-aware verification for an asset response. `verifyFile`
-     * decides whether to actually verify (returns SKIPPED for non-applicable
-     * assets) or hashes and compares. Only true violations reach
-     * recordSecurityViolation; SKIPPED and MATCH pass through.
-     */
-    async function verifyAssetIntegrity(ctx, request, response, clientId) {
+    async function applyIntegrityPolicy(ctx, request, response, clientId) {
         logger.log('Verifying security-critical asset:', request.url);
-
-        // Clone so the original body is still available to forward to the page;
-        // verifyFile consumes the clone via arrayBuffer().
         const verificationResult = await ctx.verifyFile(request, response.clone(), clientId);
+        if (verificationResult.status === VERIFICATION_STATUS.REWRITE) {
+            return createRewriteResponse(response);
+        }
         if (verificationResult.status.isViolation) {
-            return await appStore.recordSecurityViolation({
+            const mustBlock = await appStore.recordSecurityViolation({
                 ...verificationResult,
                 assetType: ASSET_TYPE.ASSET,
                 url: request.url,
             });
+            if (ctx.mode === MODE.PROTECTED && mustBlock) {
+                // Navigation requests get the warning inline via createBlockResponse;
+                // so broadcasting to the client would double-notify.
+                if (request.mode !== 'navigate') {
+                    await onSecurityViolation();
+                }
+                return createBlockResponse(request, locationHref);
+            }
         }
-        return false;
+        return response;
     }
 
     return async (event, callChildHandlers) => {
@@ -210,20 +212,7 @@ export function createSecurityFetchHandler({
                 callChildHandlers,
                 markedRequest
             );
-            if (!response || !response.ok) {
-                return response;
-            }
-
-            const mustBlock = await verifyAssetIntegrity(ctx, markedRequest, response, clientId);
-            if (ctx.mode === MODE.PROTECTED && mustBlock) {
-                // Navigation requests get the warning inline via createBlockResponse;
-                // so broadcasting to the client would double-notify.
-                if (markedRequest.mode !== 'navigate') {
-                    await onSecurityViolation();
-                }
-                return createBlockResponse(markedRequest, locationHref);
-            }
-            return response;
+            return await applyIntegrityPolicy(ctx, markedRequest, response, clientId);
         } catch (error) {
             logger.error('Error processing:', originalRequest.url, error);
         }

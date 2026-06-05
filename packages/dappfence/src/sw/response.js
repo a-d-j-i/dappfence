@@ -118,6 +118,19 @@ export function createBlockResponse(request, locationHref) {
 }
 
 /**
+ * Creates a safe empty stub response for rewritten CDN sub resources.
+ * The body is a valid JS/CSS comment, so it parses without errors in any context.
+ * @param response
+ */
+export function createRewriteResponse(response) {
+    const contentType =
+        response.headers.get('content-type')?.split(';')[0].trim() || 'application/octet-stream';
+    return new Response('/* replaced by dappfence */', {
+        headers: { 'content-type': contentType },
+    });
+}
+
+/**
  * Creates a 302-redirect response with no-cache headers. Use this for every
  * SW-side redirect so behavior (body, cache policy) is consistent.
  * `Response.redirect` is not used because it requires an absolute URL and

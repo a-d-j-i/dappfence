@@ -39,24 +39,6 @@ export const MODE = {
  * Decides whether a request needs integrity verification
  * based on manifest metadata and file extensions.
  */
-export const DEFAULT_SECURITY_EXTENSIONS = ['.js', '.css', '.json', '.html', '.svg'];
-
-/**
- * Default Content-Type allowlist used when the manifest doesn't carry its
- * own `metadata.contentTypes`. Includes both `text/javascript` and
- * `application/javascript` because real servers emit either; the build
- * tool emits `text/javascript`, but a same-origin asset proxied through a
- * different stack might come back as `application/javascript`.
- */
-export const DEFAULT_SECURITY_CONTENT_TYPES = [
-    'text/javascript',
-    'application/javascript',
-    'text/css',
-    'application/json',
-    'text/html',
-    'image/svg+xml',
-];
-
 /**
  * Verification verdict for a single file or manifest.
  *
@@ -77,6 +59,11 @@ const verdict = (description, isViolation) => Object.freeze({ description, isVio
 export const VERIFICATION_STATUS = Object.freeze({
     MATCH: verdict('MATCH', false),
     SKIPPED: verdict('SKIPPED', false),
+    // The asset matched a filter rewriteUrls entry. The SW replaces the response
+    // body with a safe empty stub rather than passing CDN-served content through
+    // unverified. Falls back to normal MATCH/MISMATCH if the URL also appears in
+    // manifest.files with known hashes — the hash check runs first.
+    REWRITE: verdict('REWRITE', false),
     MISMATCH: verdict('MISMATCH', true),
     NOT_FOUND_IN_MANIFEST: verdict('NOT_FOUND_IN_MANIFEST', true),
     UNSUPPORTED_SIGNATURE: verdict('UNSUPPORTED_SIGNATURE', true),

@@ -42,6 +42,9 @@
         "test:coverage": "vitest run --coverage",
         "publish:local": "npm run build:prod && npm pack --pack-destination ../../dist"
     },
+    "publishConfig": {
+        "access": "public"
+    },
     "devDependencies": {
         "@noble/hashes": "2.0.1",
         "@noble/secp256k1": "3.0.0",

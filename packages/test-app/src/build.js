@@ -102,6 +102,8 @@ async function buildTarget(targetName, target, { personalSign = false }, version
     const manifestData = {
         files: {},
         mode: target.manifestMode,
+        pathRules: target.pathRules || [],
+        contentRules: target.contentRules || null,
         metadata: {
             extensions: new Set(),
             contentTypes: new Set(),
@@ -123,8 +125,9 @@ async function buildTarget(targetName, target, { personalSign = false }, version
     }
 
     // Add DappFence framework
-    if (!fs.existsSync(target.dappfencePath))
+    if (!fs.existsSync(target.dappfencePath)) {
         throw new Error(`/dappfence.js: File not found at ${target.dappfencePath}`);
+    }
     const dappfenceDestPath = path.join(outDir, 'dappfence.js');
     if (!version) {
         fs.copyFileSync(target.dappfencePath, dappfenceDestPath);
@@ -161,8 +164,19 @@ async function buildTarget(targetName, target, { personalSign = false }, version
         if (exclude.some((e) => webPath.startsWith(e))) {
             continue;
         }
-        fs.copyFileSync(filePath, path.join(outDir, webPath));
+        const destPath = path.join(outDir, webPath);
+        const destDir = path.dirname(destPath);
+        if (!fs.existsSync(destDir)) fs.mkdirSync(destDir, { recursive: true });
+        fs.copyFileSync(filePath, destPath);
         addToManifest(webPath, extension, contentType);
+    }
+
+    // Merge additionalFiles: hash each declared file variant and store as an array
+    // so the SW can MATCH-verify against any known-good variant.
+    for (const [manifestKey, relPaths] of Object.entries(target.additionalFiles || {})) {
+        const hashes = relPaths.map((p) => calculateFileHash(path.join(target.assetDir, p)));
+        manifestData.files[manifestKey] = hashes;
+        log(`  ${manifestKey}: ${hashes.join(', ')}`);
     }
 
     // Add external assets
