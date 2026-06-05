@@ -7,6 +7,8 @@ import {
     buildScriptTag,
     injectScriptTag,
     buildPageSet,
+    buildPathRules,
+    buildContentRules,
     extractDynamicRoutes,
     generateManifest,
     DEFAULT_EXTENSIONS,
@@ -88,6 +90,42 @@ describe('injectScriptTag', () => {
     it('returns html unchanged when no <head> is present', () => {
         const fragment = '<div>hello</div>';
         expect(injectScriptTag(fragment, MINIMAL)).toBe(fragment);
+    });
+});
+
+// ── buildPathRules ────────────────────────────────────────────────────────────
+
+describe('buildPathRules', () => {
+    it('returns directory-index rule for directory format (default)', () => {
+        expect(buildPathRules('directory')).toEqual([{ type: 'directory-index' }]);
+    });
+
+    it('returns directory-index rule when buildFormat is undefined', () => {
+        expect(buildPathRules(undefined)).toEqual([{ type: 'directory-index' }]);
+    });
+
+    it('returns html-extension rule for file format', () => {
+        expect(buildPathRules('file')).toEqual([{ type: 'html-extension' }]);
+    });
+});
+
+// ── buildContentRules ─────────────────────────────────────────────────────────
+
+describe('buildContentRules', () => {
+    it('returns empty array when not on Netlify', () => {
+        expect(buildContentRules({ isNetlify: false })).toEqual([]);
+    });
+
+    it('returns empty array when called with no args', () => {
+        expect(buildContentRules()).toEqual([]);
+    });
+
+    it('returns netlify-cdp transform rule on Netlify', () => {
+        const rules = buildContentRules({ isNetlify: true });
+        expect(rules).toHaveLength(1);
+        expect(rules[0].action.type).toBe('transform');
+        expect(rules[0].action.transform).toBe('netlify-cdp');
+        expect(rules[0].condition.resourceTypes).toContain('document');
     });
 });
 
@@ -358,5 +396,57 @@ describe('generateManifest', () => {
         const raw = await fs.readFile(path.join(outDir, 'integrity-manifest.json'), 'utf8');
         const manifest = JSON.parse(raw);
         expect(manifest.pay.metadata.dynamicRoutes).toEqual(['/api/[id]']);
+    });
+
+    it('emits directory-index pathRules by default', async () => {
+        const outDir = await setup();
+        await generateManifest({
+            outDir,
+            manifestPath: 'integrity-manifest.json',
+            extensions: DEFAULT_EXTENSIONS,
+            exclude: [],
+            mode: 'protected',
+            logger: LOGGER,
+            scriptAttrs: MINIMAL,
+        });
+        const manifest = JSON.parse(
+            await fs.readFile(path.join(outDir, 'integrity-manifest.json'), 'utf8')
+        );
+        expect(manifest.pay.pathRules).toEqual([{ type: 'directory-index' }]);
+    });
+
+    it('emits html-extension pathRules for file buildFormat', async () => {
+        const outDir = await setup();
+        await generateManifest({
+            outDir,
+            buildFormat: 'file',
+            manifestPath: 'integrity-manifest.json',
+            extensions: DEFAULT_EXTENSIONS,
+            exclude: [],
+            mode: 'protected',
+            logger: LOGGER,
+            scriptAttrs: MINIMAL,
+        });
+        const manifest = JSON.parse(
+            await fs.readFile(path.join(outDir, 'integrity-manifest.json'), 'utf8')
+        );
+        expect(manifest.pay.pathRules).toEqual([{ type: 'html-extension' }]);
+    });
+
+    it('emits empty contentRules when not on Netlify', async () => {
+        const outDir = await setup();
+        await generateManifest({
+            outDir,
+            manifestPath: 'integrity-manifest.json',
+            extensions: DEFAULT_EXTENSIONS,
+            exclude: [],
+            mode: 'protected',
+            logger: LOGGER,
+            scriptAttrs: MINIMAL,
+        });
+        const manifest = JSON.parse(
+            await fs.readFile(path.join(outDir, 'integrity-manifest.json'), 'utf8')
+        );
+        expect(manifest.pay.contentRules).toEqual([]);
     });
 });

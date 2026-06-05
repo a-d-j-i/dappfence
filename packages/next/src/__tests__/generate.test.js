@@ -153,6 +153,33 @@ describe('generateManifest', () => {
         );
         expect(manifest.pay.metadata.dynamicRoutes).toEqual(['/api/[id]', '/blog/[slug]']);
     });
+
+    it('emits pathRules and contentRules when provided', async () => {
+        const outDir = await setup();
+        const pathRules = [{ type: 'directory-index' }, { type: 'html-extension' }];
+        const contentRules = [
+            {
+                condition: { resourceTypes: ['document'] },
+                action: { type: 'transform', transform: 'netlify-cdp' },
+            },
+        ];
+        await generateManifest({
+            outDir,
+            manifestPath: 'integrity-manifest.json',
+            extensions: DEFAULT_EXTENSIONS,
+            exclude: [],
+            mode: 'protected',
+            pathRules,
+            contentRules,
+            logger: LOGGER,
+            scriptAttrs: MINIMAL,
+        });
+        const manifest = JSON.parse(
+            await fs.readFile(path.join(outDir, 'integrity-manifest.json'), 'utf8')
+        );
+        expect(manifest.pay.pathRules).toEqual(pathRules);
+        expect(manifest.pay.contentRules).toEqual(contentRules);
+    });
 });
 
 describe('readDynamicRoutes', () => {
