@@ -7,6 +7,10 @@
  *
  *   export default defineConfig({
  *     integrations: [
+ *       mdx(),
+ *       sitemap(),
+ *       // dappfence must be listed last — its astro:build:done hook walks and hashes
+ *       // the output directory, so all integrations that write files must run first.
  *       dappfence({
  *         secretKey: process.env.DAPPFENCE_SECRET_KEY,
  *       }),
@@ -18,7 +22,12 @@ import { createRequire } from 'node:module';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { generateManifest } from './manifest.js';
+import {
+    generateManifest,
+    extractTier1Routes,
+    extractTier2Routes,
+    hashSSRRoutes,
+} from './manifest.js';
 
 const _require = createRequire(import.meta.url);
 const { deriveIdentity } = _require('@dappfence/manifest-tools');
@@ -32,7 +41,6 @@ const DEFAULTS = {
     appSW: null,
     warningUrl: null,
     manifestPath: 'integrity-manifest.json',
-    extensions: null,
     exclude: [],
 };
 
@@ -52,6 +60,7 @@ export default function dappfence(options = {}) {
     // Captured in astro:routes:resolved (Astro 6 moved routes out of build:done).
     let resolvedRoutes = [];
     let resolvedBuildFormat = 'directory';
+    let resolvedServerDir = null;
 
     return {
         name: '@dappfence/astro',
@@ -65,6 +74,9 @@ export default function dappfence(options = {}) {
                     throw new Error('[@dappfence/astro] secretKey is required');
                 }
                 resolvedBuildFormat = config.build?.format ?? 'directory';
+                if (config.build?.server) {
+                    resolvedServerDir = fileURLToPath(config.build.server);
+                }
             },
 
             // Fires after Astro resolves all routes (dev and build).
@@ -91,6 +103,35 @@ export default function dappfence(options = {}) {
                 await fs.copyFile(DAPPFENCE_JS_PATH, destAbs);
                 logger.info(`DappFence: copied dappfence.js → ${destRel}`);
 
+                let extraHashes = null;
+                // config.build.server is set by the adapter after astro:config:setup runs,
+                // so fall back to the conventional sibling server/ directory.
+                const serverDir = resolvedServerDir ?? path.join(path.dirname(outDir), 'server');
+                const entryMjsPath = path.join(serverDir, 'entry.mjs');
+                const entryExists = await fs
+                    .access(entryMjsPath)
+                    .then(() => true)
+                    .catch(() => false);
+
+                const tier1Routes = extractTier1Routes(resolvedRoutes);
+                const tier2Routes = entryExists
+                    ? await extractTier2Routes(resolvedRoutes, serverDir, logger)
+                    : [];
+                const allSSRRoutes = [...tier1Routes, ...tier2Routes];
+
+                if (allSSRRoutes.length) {
+                    if (entryExists) {
+                        logger.info(
+                            `DappFence: hashing ${tier1Routes.length} Tier-1, ${tier2Routes.length} Tier-2 SSR route(s) via ${path.relative(path.dirname(outDir), entryMjsPath)}`
+                        );
+                        extraHashes = await hashSSRRoutes(entryMjsPath, allSSRRoutes, logger);
+                    } else {
+                        logger.warn(
+                            'DappFence: SSR routes found but no server/entry.mjs detected; add an SSR adapter to hash them'
+                        );
+                    }
+                }
+
                 await generateManifest({
                     ...opts,
                     secretKey,
@@ -100,6 +141,7 @@ export default function dappfence(options = {}) {
                     buildFormat: resolvedBuildFormat,
                     scriptAttrs: opts,
                     logger,
+                    ...(extraHashes && { extraHashes }),
                 });
             },
         },

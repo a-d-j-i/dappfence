@@ -94,7 +94,6 @@ export class DappfenceWebpackPlugin {
                 nextStaticDir,
                 path.join(publicDir, this.opts.manifestPath)
             ),
-            extensions: this.opts.extensions,
             exclude: this.opts.exclude,
             secretKey: this._secretKey,
             mode: this.opts.mode,

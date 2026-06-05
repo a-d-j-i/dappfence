@@ -84,7 +84,6 @@ async function main() {
     await generateManifest({
         outDir,
         manifestPath: opts.manifestPath,
-        extensions: opts.extensions,
         exclude: opts.exclude,
         secretKey,
         mode: opts.mode,

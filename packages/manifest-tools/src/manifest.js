@@ -6,8 +6,6 @@ const { promises: fs } = require('fs');
 const path = require('path');
 const { calculateFileHash, signManifest } = require('./build');
 
-const DEFAULT_EXTENSIONS = ['.js', '.mjs', '.css', '.html', '.htm', '.svg'];
-
 const SCRIPT_ATTRS_DEFAULTS = {
     scriptSrc: '/dappfence.js',
     manifestUrl: '/integrity-manifest.json',
@@ -40,7 +38,7 @@ function injectScriptTag(html, opts) {
     return html.replace(/(<head[^>]*>)/i, `$1\n    ${tag}`);
 }
 
-async function walk(base, dir, extensions, excludes) {
+async function walk(base, dir, excludes) {
     const entries = await fs.readdir(dir, { withFileTypes: true });
     const results = await Promise.all(
         entries.map(async (entry) => {
@@ -48,13 +46,12 @@ async function walk(base, dir, extensions, excludes) {
             const web = '/' + path.relative(base, abs).replace(/\\/g, '/');
             if (entry.isDirectory()) {
                 if (excludes.some((e) => web.startsWith(e))) return [];
-                return walk(base, abs, extensions, excludes);
+                return walk(base, abs, excludes);
             }
             if (entry.isFile()) {
+                if (excludes.some((e) => web.startsWith(e))) return [];
                 const ext = path.extname(entry.name).toLowerCase();
-                if (extensions.includes(ext) && !excludes.some((e) => web.startsWith(e))) {
-                    return [{ webPath: web, absPath: abs, ext }];
-                }
+                return [{ webPath: web, absPath: abs, ext }];
             }
             return [];
         })
@@ -70,7 +67,6 @@ async function walk(base, dir, extensions, excludes) {
  * @param {string}   opts.outDir            - Absolute path to the output directory to walk
  * @param {string}   opts.manifestPath      - Relative path for the manifest file (e.g. 'integrity-manifest.json')
  * @param {string}   opts.manifestUrl       - Public URL where the manifest will be served (e.g. '/integrity-manifest.json')
- * @param {string[]} [opts.extensions]      - File extensions to track (defaults to DEFAULT_EXTENSIONS)
  * @param {string[]} [opts.exclude]         - Web path prefixes to skip
  * @param {string}   [opts.secretKey]       - Hex secret key for signing; omit to produce unsigned manifest
  * @param {string}   [opts.mode]            - Manifest mode ('protected' | 'reporting')
@@ -81,11 +77,12 @@ async function walk(base, dir, extensions, excludes) {
  *                                           Defaults to any .html/.htm file
  * @param {object}   [opts.scriptAttrs]     - Options passed to buildScriptAttrs for injection; omit to skip injection
  * @param {object}   opts.logger            - Logger with .info / .warn / .error
+ * @param {object}   [opts.extraHashes]     - Pre-computed { webPath: sriHash } entries merged into files
+ *                                           (e.g. SSR routes hashed by the integration at build time)
  */
 async function generateManifest({
     outDir,
     manifestPath,
-    extensions,
     exclude,
     secretKey,
     mode,
@@ -95,8 +92,8 @@ async function generateManifest({
     pageFilter,
     scriptAttrs,
     logger,
+    extraHashes,
 }) {
-    const exts = extensions || DEFAULT_EXTENSIONS;
     const excludes = [...(exclude || []), '/' + manifestPath];
     const isPage = pageFilter || ((_webPath, ext) => ext === '.html' || ext === '.htm');
 
@@ -104,7 +101,7 @@ async function generateManifest({
         logger.info(`DappFence: ${dynamicRoutes.length} dynamic (SSR) routes captured`);
     }
 
-    const files = await walk(outDir, outDir, exts, excludes);
+    const files = await walk(outDir, outDir, excludes);
     logger.info(`DappFence: hashing ${files.length} files`);
 
     const fileHashes = {};
@@ -124,16 +121,29 @@ async function generateManifest({
         fileHashes[webPath] = calculateFileHash(buf);
     }
 
+    if (extraHashes) {
+        const count = Object.keys(extraHashes).length;
+        Object.assign(fileHashes, extraHashes);
+        logger.info(`DappFence: merged ${count} pre-computed SSR route hash(es) into manifest`);
+    }
+
+    const hashedPaths = extraHashes
+        ? new Set(Object.keys(extraHashes).map((p) => p.replace(/\/$/, '')))
+        : null;
+    const effectiveDynamicRoutes =
+        hashedPaths && dynamicRoutes?.length
+            ? dynamicRoutes.filter((r) => !hashedPaths.has(r.replace(/\/$/, '')))
+            : dynamicRoutes ?? [];
+
     const payload = {
         files: fileHashes,
         pathRules: pathRules ?? [],
         contentRules: contentRules ?? [],
         mode,
         metadata: {
-            extensions: exts,
             buildTime: new Date().toISOString(),
             version: 'latest',
-            ...(dynamicRoutes?.length && { dynamicRoutes }),
+            ...(effectiveDynamicRoutes.length && { dynamicRoutes: effectiveDynamicRoutes }),
         },
     };
 
@@ -157,7 +167,6 @@ async function generateManifest({
 }
 
 module.exports = {
-    DEFAULT_EXTENSIONS,
     SCRIPT_ATTRS_DEFAULTS,
     buildScriptAttrs,
     buildScriptTag,

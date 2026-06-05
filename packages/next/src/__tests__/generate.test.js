@@ -7,8 +7,9 @@ import { readDynamicRoutes } from '../routes.js';
 import { withDappfence, getDappfenceScriptAttrs, ATTRS_ENV_KEY } from '../index.js';
 
 const _require = createRequire(import.meta.url);
-const { buildScriptAttrs, buildScriptTag, injectScriptTag, generateManifest, DEFAULT_EXTENSIONS } =
-    _require('@dappfence/manifest-tools/manifest');
+const { buildScriptAttrs, buildScriptTag, injectScriptTag, generateManifest } = _require(
+    '@dappfence/manifest-tools/manifest'
+);
 
 const MINIMAL = { scriptSrc: '/dappfence.js' };
 const LOGGER = { info: () => {}, warn: () => {}, error: () => {} };
@@ -90,7 +91,7 @@ describe('generateManifest', () => {
         await generateManifest({
             outDir,
             manifestPath: 'integrity-manifest.json',
-            extensions: DEFAULT_EXTENSIONS,
+
             exclude: [],
             mode: 'protected',
             logger: LOGGER,
@@ -105,7 +106,7 @@ describe('generateManifest', () => {
         await generateManifest({
             outDir,
             manifestPath: 'integrity-manifest.json',
-            extensions: DEFAULT_EXTENSIONS,
+
             exclude: [],
             mode: 'reporting',
             logger: LOGGER,
@@ -122,7 +123,7 @@ describe('generateManifest', () => {
         await generateManifest({
             outDir,
             manifestPath: 'integrity-manifest.json',
-            extensions: DEFAULT_EXTENSIONS,
+
             exclude: [],
             mode: 'protected',
             secretKey: 'a'.repeat(64),
@@ -141,7 +142,7 @@ describe('generateManifest', () => {
         await generateManifest({
             outDir,
             manifestPath: 'integrity-manifest.json',
-            extensions: DEFAULT_EXTENSIONS,
+
             exclude: [],
             mode: 'protected',
             dynamicRoutes: ['/api/[id]', '/blog/[slug]'],
@@ -166,7 +167,7 @@ describe('generateManifest', () => {
         await generateManifest({
             outDir,
             manifestPath: 'integrity-manifest.json',
-            extensions: DEFAULT_EXTENSIONS,
+
             exclude: [],
             mode: 'protected',
             pathRules,

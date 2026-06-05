@@ -13,12 +13,7 @@
  *   dappfence-manifest sign ./out --secret-key <hex> --script-src /dappfence.js
  */
 const { calculateFileHash, verifyManifest, deriveIdentity } = require('./build');
-const {
-    generateManifest,
-    DEFAULT_EXTENSIONS,
-    buildScriptAttrs,
-    buildScriptTag,
-} = require('./manifest');
+const { generateManifest, buildScriptAttrs, buildScriptTag } = require('./manifest');
 const fs = require('fs');
 const path = require('path');
 
@@ -35,7 +30,6 @@ Options for sign:
   --manifest-url <url>   Public manifest URL (default: /integrity-manifest.json)
   --mode <mode>          protected or reporting (default: protected)
   --no-inject            Skip script tag injection into HTML files
-  --ext <exts>           Comma-separated extensions (default: ${DEFAULT_EXTENSIONS.join(',')})
   --exclude <paths>      Comma-separated web path prefixes to exclude`);
 }
 
@@ -86,7 +80,6 @@ async function cmdSign(dir, args) {
     const manifestUrl = args['--manifest-url'] || '/integrity-manifest.json';
     const mode = args['--mode'] || 'protected';
     const noInject = '--no-inject' in args;
-    const extensions = args['--ext'] ? args['--ext'].split(',') : null;
     const exclude = args['--exclude'] ? args['--exclude'].split(',') : [];
 
     const outDir = path.resolve(dir);
@@ -121,7 +114,6 @@ async function cmdSign(dir, args) {
     await generateManifest({
         outDir,
         manifestPath,
-        extensions,
         exclude,
         secretKey,
         mode,

@@ -38,7 +38,6 @@ const DEFAULTS = {
     appSW: null,
     warningUrl: null,
     manifestPath: 'integrity-manifest.json',
-    extensions: null,
     exclude: [],
 };
 

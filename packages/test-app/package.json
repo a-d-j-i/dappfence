@@ -19,7 +19,8 @@
         "build:watch": "node src/watch.js",
         "test": "playwright test --config playwright.config.ts",
         "test:headed": "playwright test --config playwright.config.ts --headed",
-        "test:debug": "playwright test --config playwright.config.ts --debug"
+        "test:debug": "playwright test --config playwright.config.ts --debug",
+        "publish:local": "npm pack --pack-destination ../../dist"
     },
     "publishConfig": {
         "access": "public"

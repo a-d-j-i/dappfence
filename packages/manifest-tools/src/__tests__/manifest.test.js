@@ -5,7 +5,7 @@ import os from 'os';
 import { createRequire } from 'module';
 
 const _require = createRequire(import.meta.url);
-const { DEFAULT_EXTENSIONS, buildScriptAttrs, buildScriptTag, injectScriptTag, generateManifest } =
+const { buildScriptAttrs, buildScriptTag, injectScriptTag, generateManifest } =
     _require('../manifest');
 
 const MINIMAL = { scriptSrc: '/dappfence.js' };
@@ -88,7 +88,7 @@ describe('generateManifest', () => {
         await generateManifest({
             outDir,
             manifestPath: 'integrity-manifest.json',
-            extensions: DEFAULT_EXTENSIONS,
+
             exclude: [],
             mode: 'protected',
             logger: LOGGER,
@@ -103,7 +103,7 @@ describe('generateManifest', () => {
         await generateManifest({
             outDir,
             manifestPath: 'integrity-manifest.json',
-            extensions: DEFAULT_EXTENSIONS,
+
             exclude: [],
             mode: 'reporting',
             logger: LOGGER,
@@ -120,7 +120,7 @@ describe('generateManifest', () => {
         await generateManifest({
             outDir,
             manifestPath: 'integrity-manifest.json',
-            extensions: DEFAULT_EXTENSIONS,
+
             exclude: [],
             mode: 'protected',
             secretKey: 'a'.repeat(64),
@@ -139,7 +139,7 @@ describe('generateManifest', () => {
         await generateManifest({
             outDir,
             manifestPath: 'integrity-manifest.json',
-            extensions: DEFAULT_EXTENSIONS,
+
             exclude: [],
             mode: 'protected',
             dynamicRoutes: ['/api/[id]', '/blog/[slug]'],
@@ -164,7 +164,7 @@ describe('generateManifest', () => {
         await generateManifest({
             outDir,
             manifestPath: 'integrity-manifest.json',
-            extensions: DEFAULT_EXTENSIONS,
+
             exclude: [],
             mode: 'protected',
             pathRules,
@@ -184,7 +184,7 @@ describe('generateManifest', () => {
         await generateManifest({
             outDir,
             manifestPath: 'integrity-manifest.json',
-            extensions: DEFAULT_EXTENSIONS,
+
             exclude: [],
             mode: 'protected',
             logger: LOGGER,
@@ -202,7 +202,7 @@ describe('generateManifest', () => {
         await generateManifest({
             outDir,
             manifestPath: 'integrity-manifest.json',
-            extensions: DEFAULT_EXTENSIONS,
+
             exclude: [],
             mode: 'protected',
             logger: LOGGER,
