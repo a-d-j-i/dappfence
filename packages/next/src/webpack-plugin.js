@@ -6,6 +6,20 @@ import { readDynamicRoutes } from './routes.js';
 const _require = createRequire(import.meta.url);
 const DAPPFENCE_JS_PATH = _require.resolve('@dappfence/core');
 
+const DEFAULT_PATH_RULES = [{ type: 'directory-index' }, { type: 'html-extension' }];
+
+function buildContentRules({ isNetlify = false } = {}) {
+    if (isNetlify) {
+        return [
+            {
+                condition: { resourceTypes: ['document'] },
+                action: { type: 'transform', transform: 'netlify-cdp' },
+            },
+        ];
+    }
+    return [];
+}
+
 const logger = {
     info: (msg) => console.log(msg),
     warn: (msg) => console.warn(msg),
@@ -72,6 +86,7 @@ export class DappfenceWebpackPlugin {
         }
 
         const dynamicRoutes = await readDynamicRoutes(projectRoot);
+        const isNetlify = Boolean(process.env.NETLIFY);
 
         await generateManifest({
             outDir: nextStaticDir,
@@ -84,6 +99,8 @@ export class DappfenceWebpackPlugin {
             secretKey: this._secretKey,
             mode: this.opts.mode,
             dynamicRoutes,
+            pathRules: DEFAULT_PATH_RULES,
+            contentRules: buildContentRules({ isNetlify }),
             scriptAttrs: null,
             logger,
         });

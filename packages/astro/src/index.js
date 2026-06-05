@@ -51,11 +51,12 @@ export default function dappfence(options = {}) {
 
     // Captured in astro:routes:resolved (Astro 6 moved routes out of build:done).
     let resolvedRoutes = [];
+    let resolvedBuildFormat = 'directory';
 
     return {
         name: '@dappfence/astro',
         hooks: {
-            'astro:config:setup'({ logger }) {
+            'astro:config:setup'({ logger, config }) {
                 if (!secretKey) {
                     logger.error(
                         'DappFence: secretKey is required. ' +
@@ -63,6 +64,7 @@ export default function dappfence(options = {}) {
                     );
                     throw new Error('[@dappfence/astro] secretKey is required');
                 }
+                resolvedBuildFormat = config.build?.format ?? 'directory';
             },
 
             // Fires after Astro resolves all routes (dev and build).
@@ -95,6 +97,7 @@ export default function dappfence(options = {}) {
                     outDir,
                     pages,
                     routes: resolvedRoutes,
+                    buildFormat: resolvedBuildFormat,
                     scriptAttrs: opts,
                     logger,
                 });

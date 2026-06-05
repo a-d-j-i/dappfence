@@ -74,7 +74,9 @@ async function walk(base, dir, extensions, excludes) {
  * @param {string[]} [opts.exclude]         - Web path prefixes to skip
  * @param {string}   [opts.secretKey]       - Hex secret key for signing; omit to produce unsigned manifest
  * @param {string}   [opts.mode]            - Manifest mode ('protected' | 'reporting')
- * @param {string[]} [opts.dynamicRoutes]   - SSR route patterns to record in metadata (not hashed)
+ * @param {string[]} [opts.dynamicRoutes]   - SSR route patterns recorded in metadata for future use (not hashed)
+ * @param {object[]} [opts.pathRules]       - Path resolution rules (e.g. directory-index, html-extension)
+ * @param {object[]} [opts.contentRules]    - Content verification rules (e.g. netlify-cdp transform)
  * @param {Function} [opts.pageFilter]      - (webPath, ext) => bool; identifies HTML pages for script injection
  *                                           Defaults to any .html/.htm file
  * @param {object}   [opts.scriptAttrs]     - Options passed to buildScriptAttrs for injection; omit to skip injection
@@ -88,6 +90,8 @@ async function generateManifest({
     secretKey,
     mode,
     dynamicRoutes,
+    pathRules,
+    contentRules,
     pageFilter,
     scriptAttrs,
     logger,
@@ -122,6 +126,8 @@ async function generateManifest({
 
     const payload = {
         files: fileHashes,
+        pathRules: pathRules ?? [],
+        contentRules: contentRules ?? [],
         mode,
         metadata: {
             extensions: exts,
