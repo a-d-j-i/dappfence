@@ -19,9 +19,20 @@ import { defineConfig } from 'astro/config';
 import dappfence from '@dappfence/astro';
 
 export default defineConfig({
-    integrations: [dappfence()],
+    integrations: [
+        // … other integrations (mdx, sitemap, etc.) …
+        dappfence(), // must be last — see Integration ordering below
+    ],
 });
 ```
+
+### Integration ordering
+
+**`dappfence` must be the last entry in the `integrations` array.** Its `astro:build:done` hook
+walks and hashes the entire output directory, so every other integration that writes files to that
+directory (e.g. `@astrojs/sitemap`) must finish first. If `dappfence` runs before another
+integration that adds files, those files will be missing from the manifest and the service worker
+will block them at runtime.
 
 The integration reads the signing key from the `DAPPFENCE_SECRET_KEY` environment variable
 automatically. If the variable is not set and no `secretKey` option is passed, the build fails with
@@ -109,11 +120,61 @@ build output with `astro preview`.
 For details on the manifest format, signature scheme, and verification internals see the
 [DappFence README](../../README.md).
 
+## SSR Support
+
+When using `@astrojs/node` in standalone mode, the integration hashes SSR routes at build time by
+spinning up the compiled server and fetching them. Routes are handled in three tiers:
+
+### Tier 1 — Param-free SSR routes
+
+Routes with no URL parameters (e.g. `/api/version.json`, `/partials/tech-stack`) have a fixed URL
+and a deterministic response body. The integration fetches each one and adds its hash to the
+manifest automatically — no configuration needed.
+
+### Tier 2 — Parameterized routes with `getStaticPaths()`
+
+Routes that have URL parameters but declare their full set of valid instances via `getStaticPaths()`
+(e.g. `/snippets/[id]`). The integration calls `getStaticPaths()` at build time to enumerate every
+concrete path, then hashes each one exactly like a Tier 1 route.
+
+```js
+// src/pages/snippets/[id].astro
+export const prerender = false;
+
+export function getStaticPaths() {
+    return [{ params: { id: 'overview' } }, { params: { id: 'api' } }];
+}
+```
+
+No options or annotations needed — the integration discovers and hashes these automatically.
+
+### Tier 3 — Truly dynamic SSR (not supported)
+
+Routes whose output depends on user sessions, database queries, or unbounded query parameters cannot
+be hashed at build time. They are recorded in the manifest `metadata.dynamicRoutes` field but are
+not verified by the service worker. This is a known limitation — see
+[Current Limitations](#current-limitations).
+
+### Adapter requirement
+
+SSR hashing (Tier 1 and Tier 2) requires the `@astrojs/node` adapter in `standalone` mode. Other
+adapters (Vercel, Netlify, Cloudflare) are not supported for SSR hashing — static files are still
+fully verified, but SSR routes will fall through to `dynamicRoutes` metadata only.
+
+```js
+import node from '@astrojs/node';
+
+export default defineConfig({
+    adapter: node({ mode: 'standalone' }),
+    // …
+});
+```
+
 ## Current Limitations
 
--   **Static sites only (v1).** This is an initial release. Only files written to disk at build time
-    can be hashed and verified. SSR (server-side rendering) is not supported yet — pages rendered on
-    demand are outside the verification boundary. SSR support is planned for a future version.
+-   **Tier 3 SSR (dynamic params without `getStaticPaths`) is not supported.** Routes whose
+    parameter space cannot be enumerated at build time remain outside the verification boundary and
+    are recorded in the manifest as `dynamicRoutes` metadata only.
 
 -   **Dev server is unprotected.** `astro dev` is intentionally skipped. Security testing must be
     done against `astro build` output served with `astro preview` or a static file server.

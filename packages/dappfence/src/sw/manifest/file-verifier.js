@@ -43,6 +43,9 @@ export const createFileVerifier = ({
     const { verificationResultsStore } = appStore;
 
     const getGateResult = (fileKey, response, destination) => {
+        logger.log(
+            `[getGateResult] fileKey=${fileKey} manifestFileKey=${manifestFileKey} response.ok=${response?.ok} response.type=${response?.type} destination=${destination}`
+        );
         if (!response || !response.ok) {
             logger.log(`⏭️  Skipping non-ok response: ${fileKey}`);
             return { status: VERIFICATION_STATUS.SKIPPED, fileKey };
@@ -63,9 +66,6 @@ export const createFileVerifier = ({
     };
 
     const verifyBuffer = async (fileKey, fileHash, manifestInfo) => {
-        if (manifestInfo.violation) {
-            return manifestInfo.violation;
-        }
         logger.log(`Using manifest ${manifestInfo.appVersion} for ${fileKey} hash ${fileHash}`);
         const result = verifyFilePath(manifestInfo.manifest, fileKey, fileHash);
         if (!result.status.isViolation) {
@@ -83,6 +83,9 @@ export const createFileVerifier = ({
     };
 
     const applyAction = async (action, rawBuffer, fileKey, clientId, isNavigation) => {
+        logger.log(
+            `[applyAction] fileKey=${fileKey} action.type=${action.type}${action.transform ? ` transform=${action.transform}` : ''} clientId=${clientId} isNavigation=${isNavigation}`
+        );
         if (action.type === 'allow') {
             logger.log(`⏭️  Skipping (allow): ${fileKey}`);
             return { status: VERIFICATION_STATUS.SKIPPED, fileKey };
@@ -106,6 +109,9 @@ export const createFileVerifier = ({
             }
             const fileHash = await calculateHash(buf);
             const manifestInfo = await resolveManifestInfo(fileHash, clientId, isNavigation);
+            if (manifestInfo.violation) {
+                return manifestInfo.violation;
+            }
             const result = await verifyBuffer(fileKey, fileHash, manifestInfo);
             if (!result.status.isViolation) {
                 return result;
