@@ -37,8 +37,5 @@
     "dependencies": {
         "@dappfence/core": "*",
         "@dappfence/manifest-tools": "*"
-    },
-    "peerDependencies": {
-        "astro": ">=6.0.0"
     }
 }
