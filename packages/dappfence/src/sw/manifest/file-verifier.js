@@ -46,8 +46,12 @@ export const createFileVerifier = ({
         logger.log(
             `[getGateResult] fileKey=${fileKey} manifestFileKey=${manifestFileKey} response.ok=${response?.ok} response.type=${response?.type} destination=${destination}`
         );
-        if (!response || !response.ok) {
-            logger.log(`⏭️  Skipping non-ok response: ${fileKey}`);
+        if (!response) {
+            logger.log(`⏭️  Skipping null response: ${fileKey}`);
+            return { status: VERIFICATION_STATUS.ERROR, fileKey };
+        }
+        if (!response.ok && destination !== 'document') {
+            logger.log(`⏭️  Skipping non-ok sub-resource: ${fileKey}`);
             return { status: VERIFICATION_STATUS.SKIPPED, fileKey };
         }
         if (fileKey === manifestFileKey) {
@@ -92,7 +96,7 @@ export const createFileVerifier = ({
         }
         if (action.type === 'deny') {
             logger.log(`❌ Denied by rule: ${fileKey}`);
-            return { status: VERIFICATION_STATUS.NOT_FOUND_IN_MANIFEST, fileKey };
+            return { status: VERIFICATION_STATUS.DENIED_BY_RULE, fileKey };
         }
         if (action.type === 'rewrite') {
             logger.log(`↩️  Rewriting by rule: ${fileKey}`);
@@ -140,7 +144,13 @@ export const createFileVerifier = ({
             return gateResult;
         }
 
-        const rawBuffer = await response.arrayBuffer();
+        let rawBuffer;
+        try {
+            rawBuffer = await response.arrayBuffer();
+        } catch (err) {
+            logger.warn(`Failed to read response body for verification: ${fileKey}`, err);
+            return { status: VERIFICATION_STATUS.ERROR, fileKey };
+        }
         const actions = collectContentRuleActions(fileKey, destination, contentRules);
         const actionsToWalk = actions.length ? actions : [{ type: 'verify' }];
         const isNavigation = req.mode === 'navigate';

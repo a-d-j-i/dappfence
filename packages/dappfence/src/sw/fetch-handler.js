@@ -150,6 +150,7 @@ export function createSecurityFetchHandler({
                 ...verificationResult,
                 assetType: ASSET_TYPE.ASSET,
                 url: request.url,
+                httpStatus: response.status,
             });
             if (ctx.mode === MODE.PROTECTED && mustBlock) {
                 // Navigation requests get the warning inline via createBlockResponse;

@@ -192,6 +192,7 @@ function startServer({
             }
             return ' ' + data;
         },
+        unchanged: (data) => data,
         empty: () => '',
         inject: (data, _testParams, _filePath, _pattern, args) => {
             const html = data.toString('utf8');
@@ -200,17 +201,6 @@ function startServer({
                 return html.replace(target, content + target);
             }
             return html + content;
-        },
-        // Simulate Netlify CDN edge injection: appends the CDP analytics snippet
-        // before </body>. Only applies to HTML files; non-HTML pass through unchanged.
-        'netlify-cdp': (data, _testParams, filePath) => {
-            if (!filePath.toLowerCase().endsWith('.html')) return data;
-            const snippet =
-                '<div data-netlify-deploy-id="abcdef1234567890" data-netlify-site-id="00000000-0000-0000-0000-000000000000" data-vcs="github" style="position:fixed">\n  <script async src="/.netlify/scripts/cdp"></script>\n</div>';
-            const html = data.toString('utf8');
-            return html.includes('</body>')
-                ? html.replace('</body>', snippet + '</body>')
-                : html + snippet;
         },
         replace: (data, testParams, filePath, pattern, args) => {
             const replacement = path.join(PROJECT_ROOT, testParams.app, args);
@@ -379,7 +369,7 @@ function startServer({
                 `🔑 ${relativeFilePath}: ${sriHash} (${data.length} bytes) ${extraHeaders['Cache-Control'] || 'no-cache-header'}${intercept ? ` applied ${intercept.formula}` : ''}`
             );
             res.sendDate = false;
-            res.writeHead(200, {
+            res.writeHead(intercept?.statusCode ?? 200, {
                 'Content-Type': (intercept && intercept.contentType) || mimeType,
                 ...extraHeaders,
             });
@@ -502,7 +492,10 @@ function startServer({
                 `🔧 synthetic ${synthIntercept.formula} for ${testParams.requestPath}`
             );
             res.sendDate = false;
-            res.writeHead(200, { 'Content-Type': mimeType, ...extraHeaders });
+            res.writeHead(synthIntercept?.statusCode ?? 200, {
+                'Content-Type': mimeType,
+                ...extraHeaders,
+            });
             res.end(resData);
             return;
         }
