@@ -130,6 +130,53 @@ function logRequestToConsole(req, testParams, result) {
     console.log('\t', result);
 }
 
+function launchBrowserWithProxy(port) {
+    const url = `http://localhost:${port}`;
+    const proxyArg = `--proxy-server=http://localhost:${port}`;
+
+    try {
+        if (process.platform === 'win32') {
+            spawn('cmd', ['/c', 'start', 'chrome', proxyArg, url], {
+                stdio: 'ignore',
+                detached: true,
+            }).unref();
+            return;
+        }
+
+        if (process.platform === 'darwin') {
+            const child = spawn('open', ['-a', 'Google Chrome', '--args', proxyArg, url], {
+                stdio: 'ignore',
+                detached: true,
+            });
+            child.on('error', () => {
+                spawn('open', [url], { stdio: 'ignore', detached: true }).unref();
+            });
+            child.unref();
+            return;
+        }
+
+        // Linux: try Chrome/Chromium variants with proxy, fall back to xdg-open
+        const { execFileSync } = require('child_process');
+        const browsers = ['google-chrome', 'google-chrome-stable', 'chromium-browser', 'chromium'];
+        for (const browser of browsers) {
+            try {
+                execFileSync('which', [browser], { stdio: 'ignore' });
+                spawn(browser, [proxyArg, url], { stdio: 'ignore', detached: true }).unref();
+                return;
+            } catch (_e) {
+                /* not found, try next */
+            }
+        }
+        console.log(
+            `⚠️  No Chrome/Chromium found. Falling back to xdg-open (no proxy — http:// CDN URLs will not resolve)`
+        );
+        console.log(`💡 To enable proxy, launch manually: chrome ${proxyArg} ${url}`);
+        spawn('xdg-open', [url], { stdio: 'ignore', detached: true }).unref();
+    } catch (_err) {
+        console.log(`💡 Open ${url} in your browser`);
+    }
+}
+
 // --- Server factory ---
 
 /**
@@ -511,7 +558,11 @@ function startServer({
     });
 
     server.on('connect', (req, socket) => {
-        const remote = connect(port, 'localhost', () => {
+        const [targetHost, targetPortStr] = req.url.split(':');
+        const isLocal = targetHost === 'localhost' || targetHost === '127.0.0.1';
+        const targetPort = isLocal ? port : parseInt(targetPortStr, 10) || 443;
+        const connectHost = isLocal ? 'localhost' : targetHost;
+        const remote = connect(targetPort, connectHost, () => {
             socket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
             remote.pipe(socket);
             socket.pipe(remote);
@@ -538,23 +589,7 @@ function startServer({
             if (defaultApp) console.log(`📁 Serving default app: ${defaultApp}`);
             console.log('');
             if (withBrowser) {
-                try {
-                    const open =
-                        process.platform === 'win32'
-                            ? 'start'
-                            : process.platform === 'darwin'
-                              ? 'open'
-                              : 'xdg-open';
-                    const child = spawn(open, [`http://localhost:${port}`], {
-                        stdio: 'ignore',
-                        detached: true,
-                    });
-                    child.on('error', () => {
-                        console.log(`💡 Open http://localhost:${port} in your browser`);
-                    });
-                } catch (_err) {
-                    console.log(`💡 Open http://localhost:${port} in your browser`);
-                }
+                launchBrowserWithProxy(port);
             }
             resolve(server);
         });
