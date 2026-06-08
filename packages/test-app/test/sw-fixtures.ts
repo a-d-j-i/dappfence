@@ -37,11 +37,30 @@ export type ServiceWorkerWithClose = {
     closed: boolean;
 };
 export type InterceptPattern =
-    | { pattern: string; formula?: 'default'; args?: never; contentType?: string }
-    | { pattern: string; formula: 'replace'; args: string; contentType?: string }
-    | { pattern: string; formula: 'empty'; args?: never; contentType?: string }
+    | {
+          pattern: string;
+          formula?: 'default';
+          args?: never;
+          contentType?: string;
+          statusCode?: number;
+      }
+    | {
+          pattern: string;
+          formula: 'unchanged';
+          args?: never;
+          contentType?: string;
+          statusCode?: number;
+      }
+    | {
+          pattern: string;
+          formula: 'replace';
+          args: string;
+          contentType?: string;
+          statusCode?: number;
+      }
+    | { pattern: string; formula: 'empty'; args?: never; contentType?: string; statusCode?: number }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    | { pattern: string; formula: 'inject'; args: any; contentType?: string };
+    | { pattern: string; formula: 'inject'; args: any; contentType?: string; statusCode?: number };
 
 export type ServerTestParameters = {
     appName?: string;

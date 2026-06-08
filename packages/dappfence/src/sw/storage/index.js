@@ -11,7 +11,6 @@
  * @param {string} env.origin
  */
 import { createLogger } from '../../core/logger.js';
-import { VERIFICATION_STATUS } from '../../core/constants.js';
 import { createManifestStore } from './manifest-store.js';
 import {
     createActiveBlocksStore,
@@ -20,6 +19,35 @@ import {
 } from './security-stores.js';
 
 const logger = createLogger();
+
+const STATUS_LOG = {
+    MATCH: (d) => [`SW file verification passed: ${d.fileKey}`],
+    SKIPPED: (d) => [`SW file verification skipped: ${d.fileKey}`],
+    REWRITE: (d) => [`SW file response rewritten: ${d.fileKey}`],
+    MISMATCH: (d) => [
+        `SECURITY ALERT: Service Worker file integrity violation!`,
+        `File: ${d.url}\nExpected: ${d.expectedHash}`,
+        `Actual: ${d.actualHash}`,
+    ],
+    NOT_FOUND_IN_MANIFEST: (d) => [
+        `SECURITY ALERT: Unknown file not in trusted manifest!`,
+        `File: ${d.fileKey}`,
+        `Hash: ${d.actualHash}`,
+    ],
+    DENIED_BY_RULE: (d) => [`SECURITY ALERT: File denied by security rule!`, `File: ${d.fileKey}`],
+    UNSUPPORTED_SIGNATURE: (d) => [
+        `SECURITY ALERT: Manifest signature algorithm not supported!`,
+        `File: ${d.fileKey}`,
+    ],
+    VERIFICATION_ERROR: (d) => [
+        `SECURITY ALERT: Verification error!`,
+        `File: ${d.fileKey ?? 'N/A'}`,
+    ],
+    CONFIG_ERROR: (d) => [
+        `SECURITY ALERT: Security configuration error!`,
+        `File: ${d.fileKey ?? 'N/A'}`,
+    ],
+};
 
 export function createAppStore(db, { userAgent, origin } = {}) {
     const activeBlocksStore = createActiveBlocksStore(db);
@@ -39,27 +67,15 @@ export function createAppStore(db, { userAgent, origin } = {}) {
             // the description string. Normalize once and use it everywhere below.
             const statusName = details.status.description;
             const persistedDetails = { ...details, status: statusName };
-            if (details.status === VERIFICATION_STATUS.MATCH) {
-                logger.log(`SW file verification passed: ${details.fileKey}`);
-            } else if (details.status === VERIFICATION_STATUS.MISMATCH) {
-                logger.error(
-                    `SECURITY ALERT: Service Worker file integrity violation!`,
-                    `File: ${details.url}\nExpected: ${details.expectedHash}`,
-                    `Actual: ${details.actualHash}`
-                );
-            } else if (details.status === VERIFICATION_STATUS.NOT_FOUND_IN_MANIFEST) {
-                logger.error(
-                    `SECURITY ALERT: Unknown file not in trusted manifest!`,
-                    `File: ${details.fileKey}`,
-                    `Hash: ${details.actualHash}`
-                );
-            } else {
-                logger.error(
+            const method = details.status.isViolation ? 'error' : 'log';
+            const logArgs =
+                STATUS_LOG[statusName] ??
+                ((d) => [
                     `SECURITY ALERT: {${statusName}}`,
-                    `URL: ${details.url ?? 'N/A'}`,
-                    `File: ${details.fileKey ?? 'N/A'}`
-                );
-            }
+                    `URL: ${d.url ?? 'N/A'}`,
+                    `File: ${d.fileKey ?? 'N/A'}`,
+                ]);
+            logger[method](...logArgs(details));
 
             try {
                 await securityEventsStore.logSecurityEvent({
@@ -71,6 +87,7 @@ export function createAppStore(db, { userAgent, origin } = {}) {
                     fileKey: details.fileKey,
                     expectedHash: details.expectedHash,
                     actualHash: details.actualHash,
+                    httpStatus: details.httpStatus,
                     userAgent,
                     origin,
                 });

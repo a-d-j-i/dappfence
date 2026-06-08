@@ -66,6 +66,7 @@ export const VERIFICATION_STATUS = Object.freeze({
     REWRITE: verdict('REWRITE', false),
     MISMATCH: verdict('MISMATCH', true),
     NOT_FOUND_IN_MANIFEST: verdict('NOT_FOUND_IN_MANIFEST', true),
+    DENIED_BY_RULE: verdict('DENIED_BY_RULE', true),
     UNSUPPORTED_SIGNATURE: verdict('UNSUPPORTED_SIGNATURE', true),
     ERROR: verdict('VERIFICATION_ERROR', true),
     CONFIG_ERROR: verdict('CONFIG_ERROR', true),
