@@ -142,24 +142,29 @@ export function createSecurityFetchHandler({
     async function applyIntegrityPolicy(ctx, request, response, clientId) {
         logger.log('Verifying security-critical asset:', request.url);
         const verificationResult = await ctx.verifyFile(request, response.clone(), clientId);
-        if (verificationResult.status === VERIFICATION_STATUS.REWRITE) {
-            return createRewriteResponse(response);
-        }
-        if (verificationResult.status.isViolation) {
-            const mustBlock = await appStore.recordSecurityViolation({
+        let mustBlock = false;
+        if (
+            verificationResult.status !== VERIFICATION_STATUS.MATCH &&
+            verificationResult.status !== VERIFICATION_STATUS.SKIPPED
+        ) {
+            mustBlock = await appStore.recordSecurityViolation({
                 ...verificationResult,
                 assetType: ASSET_TYPE.ASSET,
                 url: request.url,
                 httpStatus: response.status,
             });
-            if (ctx.mode === MODE.PROTECTED && mustBlock) {
-                // Navigation requests get the warning inline via createBlockResponse;
-                // so broadcasting to the client would double-notify.
-                if (request.mode !== 'navigate') {
-                    await onSecurityViolation();
-                }
-                return createBlockResponse(request, locationHref);
+        }
+
+        if (verificationResult.status === VERIFICATION_STATUS.REWRITE) {
+            return createRewriteResponse(response);
+        }
+        if (ctx.mode === MODE.PROTECTED && mustBlock) {
+            // Navigation requests get the warning inline via createBlockResponse;
+            // so broadcasting to the client would double-notify.
+            if (request.mode !== 'navigate') {
+                await onSecurityViolation();
             }
+            return createBlockResponse(request, locationHref);
         }
         return response;
     }

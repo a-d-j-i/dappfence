@@ -95,6 +95,9 @@ export function createAppStore(db, { userAgent, origin } = {}) {
                 logger.error('Failed to store security log:', error);
             }
 
+            if (!details.status.isViolation) {
+                return false;
+            }
             const mustBlock = await activeBlocksStore.recordSecurityBlock(persistedDetails);
             if (mustBlock) {
                 logger.log(`Security violation handled: ${statusName} - ${details.fileKey}`);

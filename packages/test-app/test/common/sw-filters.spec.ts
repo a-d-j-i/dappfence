@@ -101,11 +101,12 @@ test.describe('filter rules', () => {
                 contentType: 'application/javascript',
             },
         ]);
-        await page.reload();
+        const [cdpResponse] = await Promise.all([
+            page.waitForResponse('**/.netlify/scripts/cdp'),
+            page.reload(),
+        ]);
         await expect(page).toHaveTitle('DappFence - Manifest Mode Example');
-        const body = await page.evaluate(() =>
-            fetch('/.netlify/scripts/cdp').then((r) => r.text())
-        );
+        const body = await cdpResponse.text();
         expect(body).toBe('/* replaced by dappfence */');
     });
 });
