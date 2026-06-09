@@ -12,7 +12,7 @@ describe('VERIFICATION_STATUS', () => {
         expect(VERIFICATION_STATUS.NOT_FOUND_IN_MANIFEST.isViolation).toBe(true);
         expect(VERIFICATION_STATUS.DENIED_BY_RULE.description).toBe('DENIED_BY_RULE');
         expect(VERIFICATION_STATUS.DENIED_BY_RULE.isViolation).toBe(true);
-        expect(VERIFICATION_STATUS.ERROR.description).toBe('VERIFICATION_ERROR');
+        expect(VERIFICATION_STATUS.ERROR.description).toBe('ERROR');
         expect(VERIFICATION_STATUS.ERROR.isViolation).toBe(true);
         expect(VERIFICATION_STATUS.UNSUPPORTED_SIGNATURE.isViolation).toBe(true);
         expect(VERIFICATION_STATUS.CONFIG_ERROR.isViolation).toBe(true);

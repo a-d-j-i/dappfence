@@ -50,6 +50,10 @@ export const createFileVerifier = ({
             logger.log(`⏭️  Skipping null response: ${fileKey}`);
             return { status: VERIFICATION_STATUS.ERROR, fileKey };
         }
+        if (!destination) {
+            logger.log(`⏭️  Skipping programmatic fetch (destination=""): ${fileKey}`);
+            return { status: VERIFICATION_STATUS.SKIPPED, fileKey };
+        }
         if (!response.ok && destination !== 'document') {
             logger.log(`⏭️  Skipping non-ok sub-resource: ${fileKey}`);
             return { status: VERIFICATION_STATUS.SKIPPED, fileKey };

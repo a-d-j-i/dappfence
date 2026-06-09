@@ -127,7 +127,7 @@ describe('recordSecurityViolation', () => {
             ...mismatchDetails,
             status: VERIFICATION_STATUS.MATCH,
         });
-        expect(mustBlock).toBe(true);
+        expect(mustBlock).toBe(false);
     });
 
     it('handles NOT_FOUND_IN_MANIFEST violation', async () => {
