@@ -11,33 +11,6 @@ const MANIFEST_SIGNATURE_TYPES = {
 };
 
 /**
- * Verify that `fileKey` is registered in the manifest and that its
- * expected hash matches `actualHash` (pure function, direct lookup only).
- * All URL resolution and pathRules expansion happen upstream in resolveManifestKey.
- *
- * @param {object} trustedManifest - Manifest with a .files map of fileKey → hash
- * @param {string} fileKey - The resolved manifest key
- * @param {string} actualHash - The hash of the file content
- * @returns {object} Verification result with status, fileKey, expectedHash, actualHash
- */
-export const verifyFilePath = (trustedManifest, fileKey, actualHash) => {
-    const expectedHash = trustedManifest.files[fileKey];
-    if (expectedHash === undefined) {
-        logger.log(`verifyFilePath: ${fileKey} → NOT_FOUND_IN_MANIFEST`);
-        return { status: VERIFICATION_STATUS.NOT_FOUND_IN_MANIFEST, fileKey, actualHash };
-    }
-    const matches = Array.isArray(expectedHash)
-        ? expectedHash.includes(actualHash)
-        : expectedHash === actualHash;
-    if (!matches) {
-        logger.log(`verifyFilePath: ${fileKey} → MISMATCH`);
-        return { status: VERIFICATION_STATUS.MISMATCH, fileKey, expectedHash, actualHash };
-    }
-    logger.log(`verifyFilePath: ${fileKey} → MATCH`);
-    return { status: VERIFICATION_STATUS.MATCH, fileKey, expectedHash, actualHash };
-};
-
-/**
  * Convert a URL to a pathname or full href (no pathRules applied).
  * Same-origin → pathname. Cross-origin → full URL.
  * Used for config URL comparisons (manifest URL self-check).
@@ -57,91 +30,6 @@ export const toPathname = (url, baseUrl) => {
     } catch (_error) {
         return url.startsWith('http') ? url : url.startsWith('/') ? url : '/' + url;
     }
-};
-
-/**
- * Apply a single named pathRule type to a pathname and return the candidate key,
- * or null if the rule does not succeed (candidate not in files).
- *
- * @param {string} type - 'directory-index' | 'html-extension'
- * @param {string} pathname
- * @param {object} files - manifest files map
- * @returns {string|null}
- */
-const applyPathRuleType = (type, pathname, files) => {
-    const lastSegment = pathname.split('/').pop();
-    const hasExtension = lastSegment.includes('.');
-
-    if (type === 'directory-index') {
-        if (hasExtension) return null;
-        const base = pathname.endsWith('/') ? pathname : pathname + '/';
-        const candidate = base + 'index.html';
-        return files[candidate] !== undefined ? candidate : null;
-    }
-
-    if (type === 'html-extension') {
-        if (hasExtension || pathname.endsWith('/')) return null;
-        const candidate = pathname + '.html';
-        return files[candidate] !== undefined ? candidate : null;
-    }
-
-    return null;
-};
-
-/**
- * Resolve a request URL to its canonical manifest key using pathRules.
- *
- * Same-origin requests → pathname, then pathRules applied in order.
- * Cross-origin requests → full URL (pathRules never apply).
- *
- * A named-type rule succeeds when the resolved candidate exists in `files`.
- * A match/resolveAs rule always succeeds (terminal).
- * Falls back to pathname if no rule matches.
- *
- * @param {string} url
- * @param {string} base - SW location href
- * @param {Array} pathRules - manifest pathRules array
- * @param {object} files - manifest files map (for existence checks)
- * @returns {string}
- */
-export const resolveManifestKey = (url, base, pathRules = [], files = {}) => {
-    let fileUrl, originUrl;
-    try {
-        fileUrl = new URL(url, base);
-        originUrl = new URL(base);
-    } catch (_error) {
-        return url.startsWith('http') ? url : url.startsWith('/') ? url : '/' + url;
-    }
-
-    if (fileUrl.origin !== originUrl.origin) {
-        return fileUrl.href;
-    }
-
-    const pathname = fileUrl.pathname;
-
-    for (const rule of pathRules) {
-        // Explicit one-to-one override — always terminal
-        if (rule.match && rule.resolveAs) {
-            if (pathname === rule.match) {
-                return rule.resolveAs;
-            }
-            continue;
-        }
-
-        // Optional urlFilter condition
-        if (rule.condition?.urlFilter && !pathname.startsWith(rule.condition.urlFilter)) {
-            continue;
-        }
-
-        if (rule.type) {
-            const candidate = applyPathRuleType(rule.type, pathname, files);
-            if (candidate !== null) {
-                return candidate;
-            }
-        }
-    }
-
-    return pathname;
 };
 
 /**

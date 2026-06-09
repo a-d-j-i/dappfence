@@ -22,14 +22,6 @@ test.describe('non-OK response verification', () => {
         }
     });
 
-    test('should block navigation to a 404 page not in the manifest', async ({ page, baseURL }) => {
-        await expect(page.goto('/nonexistent-unknown-page')).rejects.toThrow(
-            'page.goto: net::ERR_ABORTED at ' + baseURL
-        );
-        await page.waitForURL(/.*\/sw-api/);
-        await expect(page.getByText('Security Warning')).toBeVisible();
-    });
-
     test('should block with hard message when known page has tampered body and non-OK status', async ({
         page,
         swHelper,

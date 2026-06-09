@@ -2,16 +2,6 @@ const path = require('path');
 const { getPublicKey, hexToBytes } = require('@dappfence/manifest-tools/crypto');
 const { MODE } = require('@dappfence/core/constants');
 
-const SECURITY_CONTENT_TYPES = {
-    '.js': 'text/javascript',
-    '.mjs': 'text/javascript',
-    '.css': 'text/css',
-    '.json': 'application/json',
-    '.html': 'text/html',
-    '.htm': 'text/html',
-    '.svg': 'image/svg+xml',
-};
-
 const EXTERNAL_ASSETS = {
     'http://code.jquery.com/jquery-3.7.1.min.js':
         'sha256-dHRfBy/qpMhrsW1oz1R0O4A+2QuM+wZNTuk8mQAKGBU=',
@@ -30,17 +20,9 @@ const secretKey = hexToBytes('46c88fcabce00eced90f15ceb9325fd879e44b43c623b17441
 const publicKey = getPublicKey(secretKey);
 const keys = { publicKey, secretKey };
 
-const simpleAppBase = {
-    ...directories,
-    manifestFile: 'integrity-manifest.json',
-    manifestMode: MODE.PROTECTED,
-    htmlOutput: 'index.html',
-    description: 'Simple App Example',
-    exclude: ['/test-excluded'],
-    indexCopies: ['index_copy.html', path.join('some_subdirectory', 'index_copy.html')],
-    versions: ['1.0.1'],
-    htmlTemplates: { 'simple-app.html': 'index.html', 'front-page.html': 'front-page.html' },
-    pathRules: [{ type: 'directory-index' }],
+const defaultManifest = {
+    mode: MODE.PROTECTED,
+    pathRules: [{ type: 'directory-index' }, { type: 'not-found', fallback: '/404.html' }],
     contentRules: [
         {
             condition: { resourceTypes: ['document'] },
@@ -60,6 +42,33 @@ const simpleAppBase = {
     },
 };
 
+const simpleAppPages = {
+    'index.html': { template: 'simple-app.html', manifest: 'integrity-manifest.json' },
+    'front-page.html': { template: 'front-page.html', manifest: 'integrity-manifest.json' },
+    '404.html': { template: '404.html', manifest: 'integrity-manifest.json' },
+    'index_copy.html': { template: 'simple-app.html', manifest: 'integrity-manifest.json' },
+    'some_subdirectory/index_copy.html': {
+        template: 'simple-app.html',
+        manifest: 'integrity-manifest.json',
+    },
+    'no-not-found.html': { template: 'simple-app.html', manifest: 'no-not-found-manifest.json' },
+};
+
+const simpleAppBase = {
+    ...directories,
+    description: 'Simple App Example',
+    exclude: ['/test-excluded'],
+    versions: ['1.0.1'],
+    manifests: {
+        'integrity-manifest.json': defaultManifest,
+        'no-not-found-manifest.json': {
+            ...defaultManifest,
+            pathRules: [{ type: 'directory-index' }],
+        },
+    },
+    pages: simpleAppPages,
+};
+
 const BUILD_CONFIGURATIONS = {
     'simple-app': {
         ...simpleAppBase,
@@ -75,16 +84,30 @@ const BUILD_CONFIGURATIONS = {
     },
     'tampering-test': {
         ...directories,
-        manifestFile: 'tampering-test-manifest.json',
-        htmlTemplates: { 'tampering-test.html': 'index.html' },
-        htmlOutput: 'tampering-test.html',
         description: 'Tampering Security Test',
-        pathRules: [{ type: 'directory-index' }],
+        manifests: {
+            'tampering-test-manifest.json': {
+                pathRules: [{ type: 'directory-index' }],
+            },
+        },
+        pages: {
+            'index.html': {
+                template: 'tampering-test.html',
+                manifest: 'tampering-test-manifest.json',
+            },
+        },
     },
     'reporting-test': {
         ...simpleAppBase,
         templateFlags: { USE_SW_REGISTER: true, USE_APP: false },
-        manifestMode: MODE.REPORTING,
+        manifests: {
+            'integrity-manifest.json': { ...defaultManifest, mode: MODE.REPORTING },
+            'no-not-found-manifest.json': {
+                ...defaultManifest,
+                pathRules: [{ type: 'directory-index' }],
+                mode: MODE.REPORTING,
+            },
+        },
     },
 };
 
@@ -106,5 +129,4 @@ module.exports = {
     BUILD_TARGETS,
     keys,
     EXTERNAL_ASSETS,
-    SECURITY_CONTENT_TYPES,
 };

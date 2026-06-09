@@ -313,9 +313,9 @@ failure) it is resolved post-fetch inside the walk, as shown in the diagram.
 
 ### `transform` — closed set, security-critical
 
-Transform names reference a fixed set defined in `filters.js` in the SW bundle. The manifest can
-only _name_ a transform — it cannot define new ones. Arbitrary patterns cannot be injected through
-the manifest.
+Transform names reference a fixed set defined in `rules.js` in the SW bundle. The manifest can only
+_name_ a transform — it cannot define new ones. Arbitrary patterns cannot be injected through the
+manifest.
 
 Current transforms: `netlify-cdp` (strips Netlify's CDP injection from HTML).
 
@@ -368,6 +368,44 @@ Resolves extensionless paths to their `.html` form:
 -   Paths with an extension or trailing slash pass through unchanged.
 
 Use when: `build.format = 'file'` (Astro file mode).
+
+#### `not-found`
+
+Maps any URL that is not already in `manifest.files` to a known fallback key, so the SW can verify
+the response body rather than unconditionally blocking the request.
+
+```json
+{ "type": "not-found", "fallback": "/404" }
+```
+
+-   Only activates when the resolved pathname has no entry in `files` (known paths are never
+    re-routed to the fallback).
+-   Only activates when the response is non-OK (4xx/5xx). A 200 for an unknown path is
+    `NOT_FOUND_IN_MANIFEST` — the server should not be claiming a known page for an unmanifested
+    URL.
+-   The `fallback` key must exist in `files`; if it doesn't, the rule is skipped.
+-   A matching response body is allowed through; a mismatched or missing body is blocked as a
+    security violation.
+-   Supports `condition.urlFilter` to scope the fallback to a URL prefix. Rules are evaluated in
+    order; the first matching rule wins. This enables section-specific 404 pages:
+
+```json
+{ "condition": { "urlFilter": "/admin/" }, "type": "not-found", "fallback": "/admin/404.html" },
+{ "type": "not-found", "fallback": "/404.html" }
+```
+
+-   Multiple known-good 404 bodies (e.g. A/B tested page) are handled by making the fallback `files`
+    entry an array of hashes — no rule change needed.
+
+**Why this matters**: without the rule, any URL not listed in the manifest is blocked immediately
+(`NOT_FOUND_IN_MANIFEST`). That is safe but unfriendly — legitimate 404 pages are indistinguishable
+from unknown responses. With the rule the SW verifies the 404 body against the known hash, letting
+through a genuine "Page Not Found" page while still catching tampered responses.
+
+**Use when**: the server returns a 404 page body directly at the requested URL without redirecting
+(Next.js SSR, Express-style servers). Static-export hosts that 302-redirect unknown paths to a
+`/404/` route don't need this rule because the redirect creates a second navigation request that
+resolves through `directory-index`.
 
 ---
 

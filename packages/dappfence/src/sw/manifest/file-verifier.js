@@ -4,28 +4,16 @@
  */
 
 import { VERIFICATION_STATUS } from '../../core/constants.js';
-import { resolveManifestKey, verifyFilePath } from './verification.js';
-import { applyTransform } from './filters.js';
+import {
+    resolveManifestKey,
+    verifyFilePath,
+    collectContentRuleActions,
+    applyTransform,
+} from './rules.js';
 import { createLogger } from '../../core/logger.js';
 import { calculateHash } from '../../core/crypto.js';
 
 const logger = createLogger();
-
-const matchesCondition = (condition, fileKey, destination) => {
-    if (!condition) {
-        return true;
-    }
-    const { urlFilter, resourceTypes } = condition;
-    if (urlFilter && !fileKey.startsWith(urlFilter)) {
-        return false;
-    }
-    return !(resourceTypes && !resourceTypes.includes(destination));
-};
-
-const collectContentRuleActions = (fileKey, destination, contentRules) =>
-    contentRules
-        .filter(({ condition }) => matchesCondition(condition, fileKey, destination))
-        .map(({ action }) => action);
 
 /**
  * @param {object} deps
@@ -41,6 +29,7 @@ export const createFileVerifier = ({
     resolveManifestInfo,
 }) => {
     const { verificationResultsStore } = appStore;
+    const locationHref = swContext.getLocationHref();
 
     const getGateResult = (fileKey, response, destination) => {
         logger.log(
@@ -136,14 +125,12 @@ export const createFileVerifier = ({
             return { status: VERIFICATION_STATUS.SKIPPED };
         }
 
-        const { url, destination } = req;
-        const manifest = latestManifest?.manifest ?? {};
-        const pathRules = manifest.pathRules ?? [];
-        const files = manifest.files ?? {};
-        const contentRules = manifest.contentRules ?? [];
-        const fileKey = resolveManifestKey(url, swContext.getLocationHref(), pathRules, files);
+        const manifest = latestManifest?.manifest;
 
-        const gateResult = getGateResult(fileKey, response, destination);
+        const fileKey = resolveManifestKey(req, response, locationHref, manifest);
+        logger.log(`[verifyFileWithContext] fileKey=${fileKey} clientId=${clientId}`);
+
+        const gateResult = getGateResult(fileKey, response, req.destination);
         if (gateResult !== null) {
             return gateResult;
         }
@@ -155,10 +142,10 @@ export const createFileVerifier = ({
             logger.warn(`Failed to read response body for verification: ${fileKey}`, err);
             return { status: VERIFICATION_STATUS.ERROR, fileKey };
         }
-        const actions = collectContentRuleActions(fileKey, destination, contentRules);
+
+        const actions = collectContentRuleActions(fileKey, req.destination, manifest?.contentRules);
         const actionsToWalk = actions.length ? actions : [{ type: 'verify' }];
         const isNavigation = req.mode === 'navigate';
-
         for (const action of actionsToWalk) {
             const result = await applyAction(action, rawBuffer, fileKey, clientId, isNavigation);
             if (result !== null) {
