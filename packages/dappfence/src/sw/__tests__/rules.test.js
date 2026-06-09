@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { applyTransform } from '../manifest/filters.js';
+import { applyTransform } from '../manifest/rules.js';
 
 const encode = (str) => new TextEncoder().encode(str);
 const decode = (buf) => new TextDecoder().decode(buf);

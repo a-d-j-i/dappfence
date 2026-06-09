@@ -4,8 +4,7 @@
  */
 
 import { VERIFICATION_STATUS } from '../../core/constants.js';
-import { resolveManifestKey, verifyFilePath, collectContentRuleActions } from './verification.js';
-import { applyTransform } from './filters.js';
+import { resolveManifestKey, verifyFilePath, collectContentRuleActions, applyTransform } from './rules.js';
 import { createLogger } from '../../core/logger.js';
 import { calculateHash } from '../../core/crypto.js';
 

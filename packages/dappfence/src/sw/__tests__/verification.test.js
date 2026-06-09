@@ -1,10 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
     verifyFilePath,
-    toPathname,
     resolveManifestKey,
     matchesCondition,
     collectContentRuleActions,
+} from '../manifest/rules.js';
+import {
+    toPathname,
     verifyManifestSignature,
     verifyImportedScript,
     verifyLocation,
