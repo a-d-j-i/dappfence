@@ -3,6 +3,8 @@ import {
     verifyFilePath,
     toPathname,
     resolveManifestKey,
+    matchesCondition,
+    collectContentRuleActions,
     verifyManifestSignature,
     verifyImportedScript,
     verifyLocation,
@@ -191,25 +193,34 @@ describe('toPathname', () => {
 
 describe('resolveManifestKey', () => {
     const base = 'https://example.com/dappfence.js';
+    const req = (url, destination = 'document') => ({ url, destination });
+    const nonOk = { ok: false };
+    const ok = { ok: true };
+    const manifest = (pathRules, files) => ({ pathRules, files });
 
     describe('no pathRules', () => {
         it('returns pathname for same-origin URL', () => {
-            expect(resolveManifestKey('https://example.com/app.js', base)).toBe('/app.js');
+            expect(resolveManifestKey(req('https://example.com/app.js'), null, base)).toBe(
+                '/app.js'
+            );
         });
 
         it('returns full URL for cross-origin', () => {
-            expect(resolveManifestKey('https://cdn.other.com/lib.js', base)).toBe(
+            expect(resolveManifestKey(req('https://cdn.other.com/lib.js'), null, base)).toBe(
                 'https://cdn.other.com/lib.js'
             );
         });
 
         it('falls back to pathname when no rule matches', () => {
-            const files = { '/about/index.html': 'h' };
-            expect(resolveManifestKey('/about', base, [], files)).toBe('/about');
+            expect(
+                resolveManifestKey(req('/about'), null, base, {
+                    files: { '/about/index.html': 'h' },
+                })
+            ).toBe('/about');
         });
 
         it('returns pathname for relative path', () => {
-            expect(resolveManifestKey('/style.css', base)).toBe('/style.css');
+            expect(resolveManifestKey(req('/style.css'), null, base)).toBe('/style.css');
         });
     });
 
@@ -218,33 +229,50 @@ describe('resolveManifestKey', () => {
         const pathRules = [{ type: 'directory-index' }];
 
         it('resolves "/" to "/index.html"', () => {
-            expect(resolveManifestKey('/', base, pathRules, files)).toBe('/index.html');
+            expect(resolveManifestKey(req('/'), null, base, manifest(pathRules, files))).toBe(
+                '/index.html'
+            );
         });
 
         it('resolves "/docs/" to "/docs/index.html"', () => {
-            expect(resolveManifestKey('/docs/', base, pathRules, files)).toBe('/docs/index.html');
+            expect(resolveManifestKey(req('/docs/'), null, base, manifest(pathRules, files))).toBe(
+                '/docs/index.html'
+            );
         });
 
         it('resolves extensionless "/docs" to "/docs/index.html"', () => {
-            expect(resolveManifestKey('/docs', base, pathRules, files)).toBe('/docs/index.html');
+            expect(resolveManifestKey(req('/docs'), null, base, manifest(pathRules, files))).toBe(
+                '/docs/index.html'
+            );
         });
 
         it('resolves "/about" to "/about/index.html"', () => {
-            expect(resolveManifestKey('/about', base, pathRules, files)).toBe('/about/index.html');
+            expect(resolveManifestKey(req('/about'), null, base, manifest(pathRules, files))).toBe(
+                '/about/index.html'
+            );
         });
 
         it('does not remap paths that already have an extension', () => {
-            expect(resolveManifestKey('/app.js', base, pathRules, files)).toBe('/app.js');
+            expect(resolveManifestKey(req('/app.js'), null, base, manifest(pathRules, files))).toBe(
+                '/app.js'
+            );
         });
 
         it('falls back to pathname when candidate not in files', () => {
-            expect(resolveManifestKey('/missing', base, pathRules, files)).toBe('/missing');
+            expect(
+                resolveManifestKey(req('/missing'), null, base, manifest(pathRules, files))
+            ).toBe('/missing');
         });
 
         it('never applies to cross-origin URLs', () => {
-            expect(resolveManifestKey('https://cdn.com/lib.js', base, pathRules, files)).toBe(
-                'https://cdn.com/lib.js'
-            );
+            expect(
+                resolveManifestKey(
+                    req('https://cdn.com/lib.js'),
+                    null,
+                    base,
+                    manifest(pathRules, files)
+                )
+            ).toBe('https://cdn.com/lib.js');
         });
     });
 
@@ -253,19 +281,27 @@ describe('resolveManifestKey', () => {
         const pathRules = [{ type: 'html-extension' }];
 
         it('resolves "/about" to "/about.html"', () => {
-            expect(resolveManifestKey('/about', base, pathRules, files)).toBe('/about.html');
+            expect(resolveManifestKey(req('/about'), null, base, manifest(pathRules, files))).toBe(
+                '/about.html'
+            );
         });
 
         it('does not remap paths with extension', () => {
-            expect(resolveManifestKey('/app.js', base, pathRules, files)).toBe('/app.js');
+            expect(resolveManifestKey(req('/app.js'), null, base, manifest(pathRules, files))).toBe(
+                '/app.js'
+            );
         });
 
         it('does not remap trailing-slash paths', () => {
-            expect(resolveManifestKey('/about/', base, pathRules, files)).toBe('/about/');
+            expect(resolveManifestKey(req('/about/'), null, base, manifest(pathRules, files))).toBe(
+                '/about/'
+            );
         });
 
         it('falls back to pathname when candidate not in files', () => {
-            expect(resolveManifestKey('/missing', base, pathRules, files)).toBe('/missing');
+            expect(
+                resolveManifestKey(req('/missing'), null, base, manifest(pathRules, files))
+            ).toBe('/missing');
         });
     });
 
@@ -274,13 +310,109 @@ describe('resolveManifestKey', () => {
         const pathRules = [{ match: '/landing', resolveAs: '/campaigns/landing/index.html' }];
 
         it('returns resolveAs for exact match', () => {
-            expect(resolveManifestKey('/landing', base, pathRules, files)).toBe(
-                '/campaigns/landing/index.html'
-            );
+            expect(
+                resolveManifestKey(req('/landing'), null, base, manifest(pathRules, files))
+            ).toBe('/campaigns/landing/index.html');
         });
 
         it('falls through for non-matching paths', () => {
-            expect(resolveManifestKey('/other', base, pathRules, files)).toBe('/other');
+            expect(resolveManifestKey(req('/other'), null, base, manifest(pathRules, files))).toBe(
+                '/other'
+            );
+        });
+    });
+
+    describe('not-found rule', () => {
+        const files = { '/index.html': 'h', '/about.html': 'h2', '/404.html': 'notfound' };
+        const pathRules = [
+            { type: 'directory-index' },
+            { type: 'not-found', fallback: '/404.html' },
+        ];
+
+        it('returns raw pathname without a response (no fallback applied)', () => {
+            expect(
+                resolveManifestKey(req('/nonexistent'), null, base, manifest(pathRules, files))
+            ).toBe('/nonexistent');
+        });
+
+        it('returns raw pathname when response.ok is true', () => {
+            expect(
+                resolveManifestKey(req('/nonexistent'), ok, base, manifest(pathRules, files))
+            ).toBe('/nonexistent');
+        });
+
+        it('applies fallback when response is non-OK and path is not in files', () => {
+            expect(
+                resolveManifestKey(req('/nonexistent'), nonOk, base, manifest(pathRules, files))
+            ).toBe('/404.html');
+        });
+
+        it('does not apply fallback when path is already in files (even with non-OK response)', () => {
+            expect(
+                resolveManifestKey(req('/about.html'), nonOk, base, manifest(pathRules, files))
+            ).toBe('/about.html');
+        });
+
+        it('directory-index takes precedence over not-found regardless of array order', () => {
+            const filesWithIndex = { ...files, '/docs/index.html': 'h3' };
+            const rulesNotFoundFirst = [
+                { type: 'not-found', fallback: '/404.html' },
+                { type: 'directory-index' },
+            ];
+            expect(
+                resolveManifestKey(
+                    req('/docs'),
+                    nonOk,
+                    base,
+                    manifest(rulesNotFoundFirst, filesWithIndex)
+                )
+            ).toBe('/docs/index.html');
+        });
+
+        it('does not apply when fallback key is not in files', () => {
+            const rules = [{ type: 'not-found', fallback: '/missing-404.html' }];
+            expect(
+                resolveManifestKey(req('/nonexistent'), nonOk, base, manifest(rules, files))
+            ).toBe('/nonexistent');
+        });
+
+        it('does not apply to cross-origin URLs', () => {
+            expect(
+                resolveManifestKey(
+                    req('https://cdn.com/missing.js'),
+                    nonOk,
+                    base,
+                    manifest(pathRules, files)
+                )
+            ).toBe('https://cdn.com/missing.js');
+        });
+
+        it('respects condition.urlFilter — applies only to matching path prefix', () => {
+            const rules = [
+                { type: 'not-found', fallback: '/404.html', condition: { urlFilter: '/blog/' } },
+            ];
+            expect(
+                resolveManifestKey(req('/blog/missing'), nonOk, base, manifest(rules, files))
+            ).toBe('/404.html');
+            expect(
+                resolveManifestKey(req('/other/missing'), nonOk, base, manifest(rules, files))
+            ).toBe('/other/missing');
+        });
+
+        it('respects condition.resourceTypes — applies only to matching destination', () => {
+            const rules = [
+                {
+                    type: 'not-found',
+                    fallback: '/404.html',
+                    condition: { resourceTypes: ['document'] },
+                },
+            ];
+            expect(
+                resolveManifestKey(req('/missing', 'document'), nonOk, base, manifest(rules, files))
+            ).toBe('/404.html');
+            expect(
+                resolveManifestKey(req('/missing', 'script'), nonOk, base, manifest(rules, files))
+            ).toBe('/missing');
         });
     });
 
@@ -292,13 +424,99 @@ describe('resolveManifestKey', () => {
         ];
 
         it('applies scoped rule only to matching prefix', () => {
-            expect(resolveManifestKey('/docs/', base, pathRules, files)).toBe('/docs/index.html');
+            expect(resolveManifestKey(req('/docs/'), null, base, manifest(pathRules, files))).toBe(
+                '/docs/index.html'
+            );
         });
 
         it('falls through to next rule when prefix does not match', () => {
             const files2 = { ...files, '/about.html': 'h2' };
-            expect(resolveManifestKey('/about', base, pathRules, files2)).toBe('/about.html');
+            expect(resolveManifestKey(req('/about'), null, base, manifest(pathRules, files2))).toBe(
+                '/about.html'
+            );
         });
+    });
+});
+
+// ── matchesCondition ─────────────────────────────────────────────────────────
+
+describe('matchesCondition', () => {
+    it('returns true when condition is undefined', () => {
+        expect(matchesCondition(undefined, '/app.js', 'script')).toBe(true);
+    });
+
+    it('returns true when condition is null', () => {
+        expect(matchesCondition(null, '/app.js', 'script')).toBe(true);
+    });
+
+    it('matches when urlFilter is a prefix of fileKey', () => {
+        expect(matchesCondition({ urlFilter: '/api/' }, '/api/users', 'fetch')).toBe(true);
+    });
+
+    it('does not match when urlFilter is not a prefix of fileKey', () => {
+        expect(matchesCondition({ urlFilter: '/api/' }, '/other/path', 'fetch')).toBe(false);
+    });
+
+    it('matches when destination is in resourceTypes', () => {
+        expect(
+            matchesCondition({ resourceTypes: ['script', 'document'] }, '/app.js', 'script')
+        ).toBe(true);
+    });
+
+    it('does not match when destination is not in resourceTypes', () => {
+        expect(matchesCondition({ resourceTypes: ['document'] }, '/app.js', 'script')).toBe(false);
+    });
+
+    it('matches when both urlFilter and resourceTypes are satisfied', () => {
+        expect(
+            matchesCondition({ urlFilter: '/api/', resourceTypes: ['fetch'] }, '/api/data', 'fetch')
+        ).toBe(true);
+    });
+
+    it('does not match when urlFilter fails even if resourceTypes would pass', () => {
+        expect(
+            matchesCondition(
+                { urlFilter: '/api/', resourceTypes: ['fetch'] },
+                '/other/data',
+                'fetch'
+            )
+        ).toBe(false);
+    });
+});
+
+// ── collectContentRuleActions ─────────────────────────────────────────────────
+
+describe('collectContentRuleActions', () => {
+    const rules = [
+        { condition: { resourceTypes: ['script'] }, action: { type: 'verify' } },
+        { condition: { urlFilter: '/api/' }, action: { type: 'allow' } },
+        { action: { type: 'deny' } },
+    ];
+
+    it('returns actions for all matching rules', () => {
+        const actions = collectContentRuleActions('/app.js', 'script', rules);
+        expect(actions).toEqual([{ type: 'verify' }, { type: 'deny' }]);
+    });
+
+    it('returns actions for rules without a condition (always match)', () => {
+        const actions = collectContentRuleActions('/page.html', 'document', rules);
+        expect(actions).toEqual([{ type: 'deny' }]);
+    });
+
+    it('returns empty array when no rules match', () => {
+        const strictRules = [
+            { condition: { resourceTypes: ['script'] }, action: { type: 'verify' } },
+        ];
+        expect(collectContentRuleActions('/page.html', 'document', strictRules)).toEqual([]);
+    });
+
+    it('returns empty array for empty contentRules', () => {
+        expect(collectContentRuleActions('/app.js', 'script', [])).toEqual([]);
+    });
+
+    it('matches urlFilter rule when fileKey starts with the filter', () => {
+        const actions = collectContentRuleActions('/api/data', 'fetch', rules);
+        expect(actions).toContainEqual({ type: 'allow' });
     });
 });
 

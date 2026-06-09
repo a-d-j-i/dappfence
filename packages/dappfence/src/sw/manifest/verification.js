@@ -5,6 +5,34 @@ import { isFeatureEnabled } from '../../core/utils.js';
 
 const logger = createLogger();
 
+/**
+ * @param {object|undefined} condition
+ * @param {string} fileKey
+ * @param {string|undefined} destination
+ * @returns {boolean}
+ */
+export const matchesCondition = (condition, fileKey, destination) => {
+    if (!condition) {
+        return true;
+    }
+    const { urlFilter, resourceTypes } = condition;
+    if (urlFilter && !fileKey.startsWith(urlFilter)) {
+        return false;
+    }
+    return !(resourceTypes && !resourceTypes.includes(destination));
+};
+
+/**
+ * @param {string} fileKey
+ * @param {string|undefined} destination
+ * @param {Array} contentRules
+ * @returns {Array}
+ */
+export const collectContentRuleActions = (fileKey, destination, contentRules = []) =>
+    contentRules
+        .filter(({ condition }) => matchesCondition(condition, fileKey, destination))
+        .map(({ action }) => action);
+
 const MANIFEST_SIGNATURE_TYPES = {
     'noble-secp256k1-recovered-eth': recoverEthereumAddress,
     'personal-sign-alt': recoverPersonalSign,
@@ -63,24 +91,32 @@ export const toPathname = (url, baseUrl) => {
  * Apply a single named pathRule type to a pathname and return the candidate key,
  * or null if the rule does not succeed (candidate not in files).
  *
- * @param {string} type - 'directory-index' | 'html-extension'
+ * @param {object} rule
  * @param {string} pathname
  * @param {object} files - manifest files map
  * @returns {string|null}
  */
-const applyPathRuleType = (type, pathname, files) => {
+const applyPathRule = (rule, pathname, files) => {
+    if (rule.match && rule.resolveAs) {
+        return pathname === rule.match ? rule.resolveAs : null;
+    }
+
     const lastSegment = pathname.split('/').pop();
     const hasExtension = lastSegment.includes('.');
 
-    if (type === 'directory-index') {
-        if (hasExtension) return null;
+    if (rule.type === 'directory-index') {
+        if (hasExtension) {
+            return null;
+        }
         const base = pathname.endsWith('/') ? pathname : pathname + '/';
         const candidate = base + 'index.html';
         return files[candidate] !== undefined ? candidate : null;
     }
 
-    if (type === 'html-extension') {
-        if (hasExtension || pathname.endsWith('/')) return null;
+    if (rule.type === 'html-extension') {
+        if (hasExtension || pathname.endsWith('/')) {
+            return null;
+        }
         const candidate = pathname + '.html';
         return files[candidate] !== undefined ? candidate : null;
     }
@@ -96,15 +132,20 @@ const applyPathRuleType = (type, pathname, files) => {
  *
  * A named-type rule succeeds when the resolved candidate exists in `files`.
  * A match/resolveAs rule always succeeds (terminal).
+ * A not-found rule applies only when response is non-OK and the pathname is
+ * not in files — it maps to a fallback key for hash verification.
  * Falls back to pathname if no rule matches.
  *
- * @param {string} url
+ * @param {{ url: string, destination: string }} req
+ * @param {{ ok: boolean }|null} response
  * @param {string} base - SW location href
- * @param {Array} pathRules - manifest pathRules array
- * @param {object} files - manifest files map (for existence checks)
+ * @param {object} manifest - manifest object with pathRules and files
  * @returns {string}
  */
-export const resolveManifestKey = (url, base, pathRules = [], files = {}) => {
+export const resolveManifestKey = (req, response, base, manifest = {}) => {
+    const { pathRules = [], files = {} } = manifest;
+    const { url } = req;
+
     let fileUrl, originUrl;
     try {
         fileUrl = new URL(url, base);
@@ -117,27 +158,30 @@ export const resolveManifestKey = (url, base, pathRules = [], files = {}) => {
         return fileUrl.href;
     }
 
-    const pathname = fileUrl.pathname;
+    const { pathname } = fileUrl;
 
-    for (const rule of pathRules) {
-        // Explicit one-to-one override — always terminal
-        if (rule.match && rule.resolveAs) {
-            if (pathname === rule.match) {
-                return rule.resolveAs;
-            }
-            continue;
-        }
+    const isApplicableRule = (r) =>
+        r.type !== 'not-found' &&
+        (!r.condition?.urlFilter || pathname.startsWith(r.condition.urlFilter));
 
-        // Optional urlFilter condition
-        if (rule.condition?.urlFilter && !pathname.startsWith(rule.condition.urlFilter)) {
-            continue;
-        }
+    const applyRule = (r) => applyPathRule(r, pathname, files);
 
-        if (rule.type) {
-            const candidate = applyPathRuleType(rule.type, pathname, files);
-            if (candidate !== null) {
-                return candidate;
-            }
+    const fileKey = pathRules.filter(isApplicableRule).map(applyRule).find(Boolean);
+    if (fileKey) {
+        return fileKey;
+    }
+
+    // not-found is last resort regardless of its position in pathRules
+    if (response && !response.ok && files[pathname] === undefined) {
+        const rule = pathRules.find(
+            (r) =>
+                r.type === 'not-found' &&
+                r.fallback &&
+                files[r.fallback] !== undefined &&
+                matchesCondition(r.condition, pathname, req.destination)
+        );
+        if (rule) {
+            return rule.fallback;
         }
     }
 
