@@ -313,9 +313,9 @@ failure) it is resolved post-fetch inside the walk, as shown in the diagram.
 
 ### `transform` — closed set, security-critical
 
-Transform names reference a fixed set defined in `rules.js` in the SW bundle. The manifest can
-only _name_ a transform — it cannot define new ones. Arbitrary patterns cannot be injected through
-the manifest.
+Transform names reference a fixed set defined in `rules.js` in the SW bundle. The manifest can only
+_name_ a transform — it cannot define new ones. Arbitrary patterns cannot be injected through the
+manifest.
 
 Current transforms: `netlify-cdp` (strips Netlify's CDP injection from HTML).
 

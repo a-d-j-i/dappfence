@@ -156,26 +156,26 @@ sequenceDiagram
 
 ## Module responsibilities
 
-| Module                         | Responsibility                                                                                         |
-| ------------------------------ | ------------------------------------------------------------------------------------------------------ |
-| `main.js`                      | Registers SW event listeners; entry point only                                                         |
-| `services.js`                  | Wires all factories; owns the composition root                                                         |
-| `context.js`                   | Wraps `self` globals so every other module stays testable                                              |
-| `fetch-handler.js`             | Central request interceptor: routes, verifies, blocks                                                  |
-| `api-handler.js`               | `/sw-api/*` router: status, warning page, unblock                                                      |
-| `lifecycle-handlers.js`        | install (manifest fetch + app SW load) and activate (client claim + rebroadcast)                       |
-| `message-broker.js`            | Outbound violation broadcasts + inbound `CLAIM_CONTROL`/`CLIENT_READY` routing                         |
-| `appsw-hooks.js`               | Monkey-patches `importScripts` and `addEventListener` on the SW scope                                  |
-| `manifest/manifest-service.js` | Thin composition layer: wires loader + verifier, exposes public API                                    |
-| `manifest/manifest-loader.js`  | Fetching, signature verification, storage, per-client pinning, singleFlight dedup                     |
-| `manifest/file-verifier.js`    | Rule engine orchestrator: action pipeline (allow/deny/rewrite/verify/transform)                        |
-| `manifest/rules.js`            | Pure rules evaluation: pathRules resolution, contentRules matching, transforms, hash verification      |
-| `manifest/verification.js`     | Async verification: manifest signature, fetch-and-verify location, imported script verification        |
-| `response.js`                  | Pure response builders: block, redirect, warning page                                                  |
-| `storage/index.js`             | `appStore` facade; single entry point for all persistence                                              |
-| `storage/indexeddb.js`         | Low-level key-value wrapper over IndexedDB (injected, not accessed via `self`)                         |
-| `storage/manifest-store.js`    | Manifest versioning, dedup, hash index                                                                 |
-| `storage/security-stores.js`   | Block tracking, event log, API token                                                                   |
+| Module                         | Responsibility                                                                                    |
+| ------------------------------ | ------------------------------------------------------------------------------------------------- |
+| `main.js`                      | Registers SW event listeners; entry point only                                                    |
+| `services.js`                  | Wires all factories; owns the composition root                                                    |
+| `context.js`                   | Wraps `self` globals so every other module stays testable                                         |
+| `fetch-handler.js`             | Central request interceptor: routes, verifies, blocks                                             |
+| `api-handler.js`               | `/sw-api/*` router: status, warning page, unblock                                                 |
+| `lifecycle-handlers.js`        | install (manifest fetch + app SW load) and activate (client claim + rebroadcast)                  |
+| `message-broker.js`            | Outbound violation broadcasts + inbound `CLAIM_CONTROL`/`CLIENT_READY` routing                    |
+| `appsw-hooks.js`               | Monkey-patches `importScripts` and `addEventListener` on the SW scope                             |
+| `manifest/manifest-service.js` | Thin composition layer: wires loader + verifier, exposes public API                               |
+| `manifest/manifest-loader.js`  | Fetching, signature verification, storage, per-client pinning, singleFlight dedup                 |
+| `manifest/file-verifier.js`    | Rule engine orchestrator: action pipeline (allow/deny/rewrite/verify/transform)                   |
+| `manifest/rules.js`            | Pure rules evaluation: pathRules resolution, contentRules matching, transforms, hash verification |
+| `manifest/verification.js`     | Async verification: manifest signature, fetch-and-verify location, imported script verification   |
+| `response.js`                  | Pure response builders: block, redirect, warning page                                             |
+| `storage/index.js`             | `appStore` facade; single entry point for all persistence                                         |
+| `storage/indexeddb.js`         | Low-level key-value wrapper over IndexedDB (injected, not accessed via `self`)                    |
+| `storage/manifest-store.js`    | Manifest versioning, dedup, hash index                                                            |
+| `storage/security-stores.js`   | Block tracking, event log, API token                                                              |
 
 ---
 
