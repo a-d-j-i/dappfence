@@ -567,17 +567,23 @@ function startServer({
             remote.pipe(socket);
             socket.pipe(remote);
         });
+        remote.on('close', () => {
+            socket.destroy();
+        });
+        socket.on('close', () => {
+            remote.destroy();
+        });
         remote.on('error', (e) => {
             console.log(
                 `[${getTimestamp()}]  \x1b[31m[PROXY] Remote connection error: ${e.message}\x1b[0m`
             );
-            socket.end();
+            socket.destroy();
         });
         socket.on('error', (e) => {
             console.log(
                 `[${getTimestamp()}]  \x1b[31m[PROXY] Client socket error: ${e.message}\x1b[0m`
             );
-            remote.end();
+            remote.destroy();
         });
     });
 
@@ -617,6 +623,7 @@ if (require.main === module) {
         console.log('Press Ctrl+C to stop');
         process.on('SIGINT', () => {
             console.log('\n👋 Shutting down dev server...');
+            server.closeAllConnections();
             server.close(() => {
                 console.log('✅ Dev server stopped');
                 process.exit(0);
