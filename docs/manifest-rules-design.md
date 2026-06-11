@@ -649,10 +649,10 @@ response body.
 
 `getFileKey(url, base)` is replaced by two functions with distinct purposes:
 
-| Function                                          | Purpose                                                                            |
-| ------------------------------------------------- | ---------------------------------------------------------------------------------- |
-| `toPathname(url, base)`                           | Parse a config URL to pathname — no resolution. Used for manifest URL comparisons. |
-| `resolveManifestKey(req, response, base, manifest)` | Full pipeline: origin check + pathRules lookup. Used for all request URLs.       |
+| Function                                            | Purpose                                                                            |
+| --------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `toPathname(url, base)`                             | Parse a config URL to pathname — no resolution. Used for manifest URL comparisons. |
+| `resolveManifestKey(req, response, base, manifest)` | Full pipeline: origin check + pathRules lookup. Used for all request URLs.         |
 
 `toPathname` is a private helper. `resolveManifestKey` is the public entry point for the
 verification pipeline. It takes the full request and response objects because `not-found` pathRules
@@ -772,8 +772,8 @@ trusted manifest is already stored in IndexedDB.
 ### No stored history
 
 `tryManifest` returns `null` for every candidate. The fallback result is the fetch error object
-itself (`{ status: ERROR }`). Every intercepted file gets an `ERROR` verdict, which is recorded as
-a security block via `recordSecurityBlock`.
+itself (`{ status: ERROR }`). Every intercepted file gets an `ERROR` verdict, which is recorded as a
+security block via `recordSecurityBlock`.
 
 The block system uses a deterministic `blockId` derived from the violation details. On the first
 occurrence of each file error, `mustBlock = true` and (in PROTECTED mode) the security warning page
@@ -792,8 +792,8 @@ updates the stored history.
 
 When IndexedDB already holds one or more previously trusted manifests, `tryManifest` runs against
 each one in sequence (newest-first). Files that were present in the old manifest and have not
-changed since will MATCH. New or modified files yield MISMATCH or NOT_FOUND_IN_MANIFEST —
-meaningful security signals derived from the last known-good state.
+changed since will MATCH. New or modified files yield MISMATCH or NOT_FOUND_IN_MANIFEST — meaningful
+security signals derived from the last known-good state.
 
 This is the correct degradation: a transient manifest 500 (deploy in progress, CDN outage) does not
 open the door to unverified content. Protection degrades gracefully to "verified against what you
@@ -801,13 +801,13 @@ last trusted" rather than collapsing entirely.
 
 ### Distinction from file violations
 
-A regular file violation (`MISMATCH`, `NOT_FOUND_IN_MANIFEST`) is a statement about a specific
-file: the server is serving content that differs from the signed manifest. The block system's
+A regular file violation (`MISMATCH`, `NOT_FOUND_IN_MANIFEST`) is a statement about a specific file:
+the server is serving content that differs from the signed manifest. The block system's
 deduplication model — "track this violation, don't re-block known occurrences" — is appropriate
 here.
 
-A manifest load failure is a different category: the verification infrastructure is unavailable.
-It carries no information about individual files and is often transient. Routing it through the same
+A manifest load failure is a different category: the verification infrastructure is unavailable. It
+carries no information about individual files and is often transient. Routing it through the same
 per-file block deduplication mechanism conflates the two cases. A future improvement would handle
 manifest infrastructure errors separately — with retry semantics and a distinct "verification
 unavailable" signal — rather than recording them as file-level blocks.

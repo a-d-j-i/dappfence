@@ -279,10 +279,7 @@ export const createFileVerifier = ({ swContext, appStore, config }, manifestLoad
         const fetched = await fetchAndStoreManifest();
         const fetchedResult = await tryManifest(fetched);
         // Prefer freshly fetched result first, then latest, then history in order.
-        return (
-            [fetchedResult, latestResult, ...historicResults].find((r) => r !== null) ??
-            fetched
-        );
+        return [fetchedResult, latestResult, ...historicResults].find((r) => r !== null) ?? fetched;
     };
 
     return { verifyFileWithContext };
