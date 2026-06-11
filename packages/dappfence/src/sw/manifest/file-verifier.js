@@ -267,22 +267,22 @@ export const createFileVerifier = ({ swContext, appStore, config }, manifestLoad
 
         // Try all stored historic manifests newest-first, skipping already tried.
         // Each is run through the full pipeline, so transforms are applied correctly.
+        const historicResults = [];
         for (const manifestInfo of await getManifestHistory()) {
             const result = await tryManifest(manifestInfo);
             if (manifestDecidedAbout(result)) {
                 return result;
             }
+            historicResults.push(result);
         }
 
         const fetched = await fetchAndStoreManifest();
         const fetchedResult = await tryManifest(fetched);
-        if (fetchedResult !== null) {
-            // This is the preferred result if we managed to fetch a manifest.
-            return fetchedResult;
-        }
-        // fetch failed entirely — return the latest result as the best available
-        // context for the violation (it reflects the expected state of the app).
-        return latestResult;
+        // Prefer freshly fetched result first, then latest, then history in order.
+        return (
+            [fetchedResult, latestResult, ...historicResults].find((r) => r !== null) ??
+            fetched
+        );
     };
 
     return { verifyFileWithContext };

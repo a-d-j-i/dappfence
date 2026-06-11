@@ -563,6 +563,40 @@
                 <p><strong>Built:</strong> {{BUILD_DATE}}</p>
             </section>
 
+            <h2 style="font-size: 1.1rem; margin: var(--space-3) 0 var(--space-1)">Test Controls</h2>
+            <div class="card">
+                <div class="card__header">
+                    <h4 class="card__title">🧪 Intercept Controls</h4>
+                    <span id="intercept-badge" class="badge badge--muted">no intercept</span>
+                </div>
+                <p style="color: var(--color-muted); font-size: 0.875rem; margin: 0 0 var(--space-2)">
+                    Set a server-side intercept, then reload or navigate to trigger the scenario.
+                </p>
+
+                <div style="margin-bottom: var(--space-2)">
+                    <p style="font-size: 0.78rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--color-muted); margin: 0 0 var(--space-1)">Tamper</p>
+                    <div class="btn-row">
+                        <button class="btn" onclick="devSetIntercept('index.html', {pattern:'**/',formula:'default'})">index.html</button>
+                        <button class="btn" onclick="devSetIntercept('dappfence.js', {pattern:'**/dappfence.js',formula:'default'})">dappfence.js</button>
+                        <button class="btn" onclick="devSetIntercept('jQuery', {pattern:'**/jquery-3.7.1.min.js',formula:'default'})">jQuery (CDN)</button>
+                        <button class="btn" onclick="devSetIntercept('index.html + 404', {pattern:'**/',formula:'default',statusCode:404})">index.html + 404</button>
+                        <button class="btn" onclick="devSetIntercept('manifest blocked', {pattern:'**/integrity-manifest.json',formula:'empty',statusCode:500})">block manifest</button>
+                    </div>
+                </div>
+
+                <div style="margin-bottom: var(--space-2)">
+                    <p style="font-size: 0.78rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--color-muted); margin: 0 0 var(--space-1)">Navigate</p>
+                    <div class="btn-row">
+                        <button class="btn btn--secondary" onclick="location.reload()">Reload</button>
+                        <button class="btn btn--secondary" onclick="location.href='/'">Navigate to /</button>
+                    </div>
+                </div>
+
+                <div class="btn-row">
+                    <button class="btn btn--secondary" id="dev-clear-btn" onclick="devClearIntercept()" disabled>Clear intercept</button>
+                </div>
+            </div>
+
             <h2 style="font-size: 1.1rem; margin: var(--space-3) 0 var(--space-1)">Demo</h2>
             <div id="output">
                 <div class="card loading">
@@ -572,6 +606,67 @@
                 </div>
             </div>
         </main>
+
+        <script>
+            let _devIntercept = null;
+
+            async function _devPost(body) {
+                const res = await fetch('/api/test-config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ appName: 'simple-app', appVersion: 'latest', ...body }),
+                });
+                return res.ok;
+            }
+
+            function _devRefreshBadge() {
+                const badge = document.getElementById('intercept-badge');
+                const btn = document.getElementById('dev-clear-btn');
+                if (badge) {
+                    badge.className = _devIntercept ? 'badge badge--warn' : 'badge badge--muted';
+                    badge.textContent = _devIntercept ? _devIntercept : 'no intercept';
+                }
+                if (btn) {
+                    btn.disabled = !_devIntercept;
+                }
+            }
+
+            function _devToast(msg, color) {
+                const el = document.createElement('div');
+                el.className = 'toast';
+                if (color) {
+                    el.style.background = color;
+                }
+                el.textContent = msg;
+                document.body.appendChild(el);
+                setTimeout(() => el.remove(), 4000);
+            }
+
+            async function devSetIntercept(label, intercept) {
+                const ok = await _devPost({ intercept });
+                if (!ok) {
+                    _devToast('Error: could not reach /api/test-config', 'var(--color-danger)');
+                    return;
+                }
+                _devIntercept = label;
+                _devRefreshBadge();
+                _devToast(
+                    `Intercept set: ${label} — reload or navigate to trigger`,
+                    'var(--color-warn)'
+                );
+            }
+
+            async function devClearIntercept() {
+                const ok = await _devPost({ intercept: [] });
+                if (!ok) {
+                    _devToast('Error: could not reach /api/test-config', 'var(--color-danger)');
+                    return;
+                }
+                _devIntercept = null;
+                _devRefreshBadge();
+                _devToast('Intercept cleared — server serving clean files again');
+            }
+        </script>
 
         <footer class="site-footer">
             <p><strong>DappFence Framework</strong> — Manifest Mode Demo</p>
