@@ -567,7 +567,6 @@
             <div class="card">
                 <div class="card__header">
                     <h4 class="card__title">🧪 Intercept Controls</h4>
-                    <span id="intercept-badge" class="badge badge--muted">no intercept</span>
                 </div>
                 <p style="color: var(--color-muted); font-size: 0.875rem; margin: 0 0 var(--space-2)">
                     Set a server-side intercept, then reload or navigate to trigger the scenario.
@@ -593,7 +592,7 @@
                 </div>
 
                 <div class="btn-row">
-                    <button class="btn btn--secondary" id="dev-clear-btn" onclick="devClearIntercept()" disabled>Clear intercept</button>
+                    <button class="btn btn--secondary" onclick="devClearIntercept()">Clear intercept</button>
                 </div>
             </div>
 
@@ -608,7 +607,6 @@
         </main>
 
         <script>
-            let _devIntercept = null;
 
             async function _devPost(body) {
                 const res = await fetch('/api/test-config', {
@@ -617,18 +615,6 @@
                     body: JSON.stringify({ appName: 'simple-app', appVersion: 'latest', ...body }),
                 });
                 return res.ok;
-            }
-
-            function _devRefreshBadge() {
-                const badge = document.getElementById('intercept-badge');
-                const btn = document.getElementById('dev-clear-btn');
-                if (badge) {
-                    badge.className = _devIntercept ? 'badge badge--warn' : 'badge badge--muted';
-                    badge.textContent = _devIntercept ? _devIntercept : 'no intercept';
-                }
-                if (btn) {
-                    btn.disabled = !_devIntercept;
-                }
             }
 
             function _devToast(msg, color) {
@@ -648,8 +634,6 @@
                     _devToast('Error: could not reach /api/test-config', 'var(--color-danger)');
                     return;
                 }
-                _devIntercept = label;
-                _devRefreshBadge();
                 _devToast(
                     `Intercept set: ${label} — reload or navigate to trigger`,
                     'var(--color-warn)'
@@ -662,8 +646,6 @@
                     _devToast('Error: could not reach /api/test-config', 'var(--color-danger)');
                     return;
                 }
-                _devIntercept = null;
-                _devRefreshBadge();
                 _devToast('Intercept cleared — server serving clean files again');
             }
         </script>
