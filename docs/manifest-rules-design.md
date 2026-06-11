@@ -188,7 +188,7 @@ request URL
   → resolveManifestKey()  same-origin → pathname; cross-origin → full URL
   → pathRules lookup      alias → canonical file key  (same-origin only, optional)
   → contentRules          first successful match → action
-  → verifyFilePath()      direct files[fileKey] lookup (for verify / transform)
+  → files[fileKey]        direct lookup (for verify / transform actions)
 ```
 
 ---
@@ -649,16 +649,14 @@ response body.
 
 `getFileKey(url, base)` is replaced by two functions with distinct purposes:
 
-| Function                                   | Purpose                                                                            |
-| ------------------------------------------ | ---------------------------------------------------------------------------------- |
-| `toPathname(url, base)`                    | Parse a config URL to pathname — no resolution. Used for manifest URL comparisons. |
-| `resolveManifestKey(url, base, pathRules)` | Full pipeline: origin check + pathRules lookup. Used for all request URLs.         |
+| Function                                          | Purpose                                                                            |
+| ------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `toPathname(url, base)`                           | Parse a config URL to pathname — no resolution. Used for manifest URL comparisons. |
+| `resolveManifestKey(req, response, base, manifest)` | Full pipeline: origin check + pathRules lookup. Used for all request URLs.       |
 
 `toPathname` is a private helper. `resolveManifestKey` is the public entry point for the
-verification pipeline.
-
-`verifyFilePath` does a direct `files[fileKey]` lookup only. All URL resolution happens upstream in
-`resolveManifestKey`.
+verification pipeline. It takes the full request and response objects because `not-found` pathRules
+only activate when `response.ok` is false.
 
 ### Same-origin vs. cross-origin keys
 
