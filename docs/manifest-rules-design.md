@@ -42,9 +42,13 @@ flowchart TD
     subgraph POST["Post-fetch · response signals (server-controlled, treat as untrusted)"]
         OPAQUE{"opaque\nresponse?"}
         OPAQUE          -->|yes| ODEST{"script\ndestination?"}
-        OPAQUE          -->|no| STATUS{"response.ok?\n(200–299)"}
+        OPAQUE          -->|no| OPAQUERED{"opaqueredirect?"}
         ODEST           -->|yes| STUB_OPAQUE(["serve empty stub"])
         ODEST           -->|no| PT2(["pass through"])
+        OPAQUERED       -->|yes| PT_REDIR(["pass through"])
+        OPAQUERED       -->|no| ERRT{"error\nresponse?"}
+        ERRT            -->|yes| PT_ERR(["pass through"])
+        ERRT            -->|no| STATUS{"response.ok?\n(200–299)"}
         STATUS          -->|no| PT3(["pass through"])
         STATUS          -->|yes| ACTION
 
@@ -91,15 +95,31 @@ flowchart TD
         These resources can be rendered or used by the browser, but their bytes cannot be exposed to
         or executed as code by the page, so an unverified opaque response carries no
         script-injection risk.
+-   Opaqueredirect responses (`response.type === "opaqueredirect"`) occur when the browser makes a
+    navigation request and the server returns a 3xx redirect. The browser passes the navigation to
+    the SW with `redirect: "manual"`, so the SW sees an opaqueredirect instead of following the
+    redirect chain. The body is empty and inaccessible — `arrayBuffer()` returns zero bytes. The SW
+    passes these through unconditionally (SKIPPED); the browser then follows the redirect and makes
+    a new navigation request to the final URL, which the SW intercepts and verifies normally.
+    Attempting to hash an opaqueredirect produces the SHA-256 of an empty buffer
+    (`sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=`) — a constant value that would produce a
+    false violation on every redirect. This is distinct from `opaque` (no-cors cross-origin
+    response) — they share the inaccessible-body property but arise from completely different
+    request modes.
+-   Error responses (`response.type === "error"`) indicate a network failure. The body is null,
+    status is 0, and there is nothing to hash. For non-document destinations these are already
+    caught by the `!response.ok` guard above; the explicit check here covers document navigations
+    where the browser renders its own error UI regardless of what the SW returns.
 -   Only `response.ok` responses (status 200–299) enter the verification walk — 4xx and 5xx
     responses are passed through without verification. Within the 2xx range, only the body hash
     matters; if the body is empty (e.g., a 204 sent to a script endpoint), the hash-of-empty either
     matches the manifest entry or triggers a violation — there is no special-case bypass for any 2xx
     code. Gating on `response.ok` rather than `status === 200` is intentional: status codes such as
     203 (Non-Authoritative Information, returned by transforming proxies) carry an executable body
-    that the browser will run, so they must be verified. Redirects are followed by `fetch()` using
-    the default `redirect: 'follow'` mode, so the SW always sees the final 200 response — there is
-    no redirect-chain bypass.
+    that the browser will run, so they must be verified. For non-navigation requests, `fetch()` uses
+    `redirect: 'follow'` by default, so the SW always sees the final 200 response — there is no
+    redirect-chain bypass for assets. Navigation requests use `redirect: 'manual'` and produce
+    `opaqueredirect` responses on server redirects; these are handled by the check above.
 -   `Content-Type` is never consulted. All destinations, including `""` (`fetch()`,
     `XMLHttpRequest`), go through the same pipeline: pathRules resolution, contentRules action list,
     then `files[key]` lookup. The default when no action succeeds is **block** — unrecognized URLs
@@ -168,7 +188,7 @@ request URL
   → resolveManifestKey()  same-origin → pathname; cross-origin → full URL
   → pathRules lookup      alias → canonical file key  (same-origin only, optional)
   → contentRules          first successful match → action
-  → verifyFilePath()      direct files[fileKey] lookup (for verify / transform)
+  → files[fileKey]        direct lookup (for verify / transform actions)
 ```
 
 ---
@@ -629,16 +649,14 @@ response body.
 
 `getFileKey(url, base)` is replaced by two functions with distinct purposes:
 
-| Function                                   | Purpose                                                                            |
-| ------------------------------------------ | ---------------------------------------------------------------------------------- |
-| `toPathname(url, base)`                    | Parse a config URL to pathname — no resolution. Used for manifest URL comparisons. |
-| `resolveManifestKey(url, base, pathRules)` | Full pipeline: origin check + pathRules lookup. Used for all request URLs.         |
+| Function                                            | Purpose                                                                            |
+| --------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `toPathname(url, base)`                             | Parse a config URL to pathname — no resolution. Used for manifest URL comparisons. |
+| `resolveManifestKey(req, response, base, manifest)` | Full pipeline: origin check + pathRules lookup. Used for all request URLs.         |
 
 `toPathname` is a private helper. `resolveManifestKey` is the public entry point for the
-verification pipeline.
-
-`verifyFilePath` does a direct `files[fileKey]` lookup only. All URL resolution happens upstream in
-`resolveManifestKey`.
+verification pipeline. It takes the full request and response objects because `not-found` pathRules
+only activate when `response.ok` is false.
 
 ### Same-origin vs. cross-origin keys
 
@@ -742,6 +760,57 @@ An extension reading the same manifest can:
 2. Use the `files` hash map in a background service worker that re-fetches and verifies resources
    independently (with a TOCTOU note of caution — execution may precede detection).
 3. Show a warning UI on hash mismatch rather than pre-blocking execution.
+
+---
+
+## Manifest load failure
+
+When the manifest URL returns a non-OK response or a network error, the SW cannot verify any file
+against expected hashes. Two distinct degradation paths exist depending on whether a previously
+trusted manifest is already stored in IndexedDB.
+
+### No stored history
+
+`tryManifest` returns `null` for every candidate. The fallback result is the fetch error object
+itself (`{ status: ERROR }`). Every intercepted file gets an `ERROR` verdict, which is recorded as a
+security block via `recordSecurityBlock`.
+
+The block system uses a deterministic `blockId` derived from the violation details. On the first
+occurrence of each file error, `mustBlock = true` and (in PROTECTED mode) the security warning page
+is shown. If the user clears the site lock, the block records remain in IndexedDB but the active IDs
+list is emptied. On subsequent requests the same `blockId` is found as an existing record and
+`mustBlock = false` — no further blocking or warnings are shown. The site then operates as if
+verification is not active.
+
+This behaviour is by design for regular file violations — "you cleared this before, don't re-block"
+— but it is semantically wrong for a manifest load failure, which is an infrastructure condition
+rather than a statement about specific file content. After a cleared manifest-error block, the
+verification system is silently unavailable until a SW restart or a successful manifest fetch
+updates the stored history.
+
+### With stored history
+
+When IndexedDB already holds one or more previously trusted manifests, `tryManifest` runs against
+each one in sequence (newest-first). Files that were present in the old manifest and have not
+changed since will MATCH. New or modified files yield MISMATCH or NOT_FOUND_IN_MANIFEST — meaningful
+security signals derived from the last known-good state.
+
+This is the correct degradation: a transient manifest 500 (deploy in progress, CDN outage) does not
+open the door to unverified content. Protection degrades gracefully to "verified against what you
+last trusted" rather than collapsing entirely.
+
+### Distinction from file violations
+
+A regular file violation (`MISMATCH`, `NOT_FOUND_IN_MANIFEST`) is a statement about a specific file:
+the server is serving content that differs from the signed manifest. The block system's
+deduplication model — "track this violation, don't re-block known occurrences" — is appropriate
+here.
+
+A manifest load failure is a different category: the verification infrastructure is unavailable. It
+carries no information about individual files and is often transient. Routing it through the same
+per-file block deduplication mechanism conflates the two cases. A future improvement would handle
+manifest infrastructure errors separately — with retry semantics and a distinct "verification
+unavailable" signal — rather than recording them as file-level blocks.
 
 ---
 

@@ -1,6 +1,6 @@
 /**
  * Manifest Loader
- * Handles manifest fetching, signature verification, storage, and per-client caching.
+ * Handles manifest fetching, signature verification, and storage.
  */
 
 import { ASSET_TYPE, VERIFICATION_STATUS } from '../../core/constants.js';
@@ -18,7 +18,6 @@ const logger = createLogger();
  */
 export const createManifestLoader = ({ swContext, appStore, config }) => {
     const { trustedManifestStore } = appStore;
-    const clientIdXManifest = new Map();
     const singleFlight = createSingleFlight();
 
     const loadManifestFromUrl = async () => {
@@ -75,41 +74,22 @@ export const createManifestLoader = ({ swContext, appStore, config }) => {
         return singleFlight(loadManifestFromUrl);
     };
 
-    const pruneStaleClients = () => {
-        swContext.matchAllClients().then((activeClients) => {
-            const activeIds = new Set(activeClients.map((c) => c.id));
-            for (const id of clientIdXManifest.keys()) {
-                if (!activeIds.has(id)) {
-                    clientIdXManifest.delete(id);
-                }
-            }
-        });
-    };
-
-    const resolveManifestInfo = async (fileHash, clientId, isNavigation) => {
-        if (clientId && !isNavigation) {
-            const pinned = clientIdXManifest.get(clientId);
-            if (pinned) {
-                return pinned;
-            }
+    const resolveLatest = async () => {
+        const cached = await trustedManifestStore.getLatest();
+        if (cached) {
+            logger.log(`Resolved manifest from cache ${cached.appVersion} ${cached.manifest.mode}`);
+            return cached;
         }
-        let manifestInfo = await trustedManifestStore.findByHash(fileHash);
-        if (!manifestInfo || !manifestInfo.appVersion) {
-            const fetched = await fetchAndStoreManifest();
-            if (fetched.status.isViolation) {
-                return { violation: fetched };
-            }
-            manifestInfo = { appVersion: fetched.appVersion, manifest: fetched.manifest };
-        }
-        if (clientId) {
-            clientIdXManifest.set(clientId, manifestInfo);
-            pruneStaleClients();
-        }
-        return manifestInfo;
+        const fetched = await fetchAndStoreManifest();
+        logger.log(
+            `Resolved manifest from network ${fetched?.appVersion} ${fetched?.manifest?.mode}`
+        );
+        return fetched;
     };
 
     return {
         fetchAndStoreManifest,
-        resolveManifestInfo,
+        resolveLatest,
+        getManifestHistory: trustedManifestStore.getAll,
     };
 };

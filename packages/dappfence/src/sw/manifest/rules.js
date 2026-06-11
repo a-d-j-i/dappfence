@@ -3,7 +3,6 @@
  * content transforms, and file hash verification.
  */
 
-import { VERIFICATION_STATUS } from '../../core/constants.js';
 import { createLogger } from '../../core/logger.js';
 
 const logger = createLogger();
@@ -139,34 +138,6 @@ export const resolveManifestKey = (req, response, base, manifest = {}) => {
     }
 
     return pathname;
-};
-
-// ── hash verification ─────────────────────────────────────────────────────────
-
-/**
- * Verify that `fileKey` is registered in the manifest and that its
- * expected hash matches `actualHash` (pure function, direct lookup only).
- *
- * @param {object} trustedManifest - Manifest with a .files map of fileKey → hash
- * @param {string} fileKey - The resolved manifest key
- * @param {string} actualHash - The hash of the file content
- * @returns {object} Verification result with status, fileKey, expectedHash, actualHash
- */
-export const verifyFilePath = (trustedManifest, fileKey, actualHash) => {
-    const expectedHash = trustedManifest.files[fileKey];
-    if (expectedHash === undefined) {
-        logger.log(`verifyFilePath: ${fileKey} → NOT_FOUND_IN_MANIFEST`);
-        return { status: VERIFICATION_STATUS.NOT_FOUND_IN_MANIFEST, fileKey, actualHash };
-    }
-    const matches = Array.isArray(expectedHash)
-        ? expectedHash.includes(actualHash)
-        : expectedHash === actualHash;
-    if (!matches) {
-        logger.log(`verifyFilePath: ${fileKey} → MISMATCH`);
-        return { status: VERIFICATION_STATUS.MISMATCH, fileKey, expectedHash, actualHash };
-    }
-    logger.log(`verifyFilePath: ${fileKey} → MATCH`);
-    return { status: VERIFICATION_STATUS.MATCH, fileKey, expectedHash, actualHash };
 };
 
 // ── content transforms ────────────────────────────────────────────────────────
