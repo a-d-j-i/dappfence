@@ -763,6 +763,57 @@ An extension reading the same manifest can:
 
 ---
 
+## Manifest load failure
+
+When the manifest URL returns a non-OK response or a network error, the SW cannot verify any file
+against expected hashes. Two distinct degradation paths exist depending on whether a previously
+trusted manifest is already stored in IndexedDB.
+
+### No stored history
+
+`tryManifest` returns `null` for every candidate. The fallback result is the fetch error object
+itself (`{ status: ERROR }`). Every intercepted file gets an `ERROR` verdict, which is recorded as
+a security block via `recordSecurityBlock`.
+
+The block system uses a deterministic `blockId` derived from the violation details. On the first
+occurrence of each file error, `mustBlock = true` and (in PROTECTED mode) the security warning page
+is shown. If the user clears the site lock, the block records remain in IndexedDB but the active IDs
+list is emptied. On subsequent requests the same `blockId` is found as an existing record and
+`mustBlock = false` — no further blocking or warnings are shown. The site then operates as if
+verification is not active.
+
+This behaviour is by design for regular file violations — "you cleared this before, don't re-block"
+— but it is semantically wrong for a manifest load failure, which is an infrastructure condition
+rather than a statement about specific file content. After a cleared manifest-error block, the
+verification system is silently unavailable until a SW restart or a successful manifest fetch
+updates the stored history.
+
+### With stored history
+
+When IndexedDB already holds one or more previously trusted manifests, `tryManifest` runs against
+each one in sequence (newest-first). Files that were present in the old manifest and have not
+changed since will MATCH. New or modified files yield MISMATCH or NOT_FOUND_IN_MANIFEST —
+meaningful security signals derived from the last known-good state.
+
+This is the correct degradation: a transient manifest 500 (deploy in progress, CDN outage) does not
+open the door to unverified content. Protection degrades gracefully to "verified against what you
+last trusted" rather than collapsing entirely.
+
+### Distinction from file violations
+
+A regular file violation (`MISMATCH`, `NOT_FOUND_IN_MANIFEST`) is a statement about a specific
+file: the server is serving content that differs from the signed manifest. The block system's
+deduplication model — "track this violation, don't re-block known occurrences" — is appropriate
+here.
+
+A manifest load failure is a different category: the verification infrastructure is unavailable.
+It carries no information about individual files and is often transient. Routing it through the same
+per-file block deduplication mechanism conflates the two cases. A future improvement would handle
+manifest infrastructure errors separately — with retry semantics and a distinct "verification
+unavailable" signal — rather than recording them as file-level blocks.
+
+---
+
 ## Appendix: what browsers would need to replace dappfence with declarative rules
 
 The existing web platform has three mechanisms that partially overlap with dappfence protection:
