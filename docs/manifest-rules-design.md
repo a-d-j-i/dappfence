@@ -42,9 +42,13 @@ flowchart TD
     subgraph POST["Post-fetch · response signals (server-controlled, treat as untrusted)"]
         OPAQUE{"opaque\nresponse?"}
         OPAQUE          -->|yes| ODEST{"script\ndestination?"}
-        OPAQUE          -->|no| STATUS{"response.ok?\n(200–299)"}
+        OPAQUE          -->|no| OPAQUERED{"opaqueredirect?"}
         ODEST           -->|yes| STUB_OPAQUE(["serve empty stub"])
         ODEST           -->|no| PT2(["pass through"])
+        OPAQUERED       -->|yes| PT_REDIR(["pass through"])
+        OPAQUERED       -->|no| ERRT{"error\nresponse?"}
+        ERRT            -->|yes| PT_ERR(["pass through"])
+        ERRT            -->|no| STATUS{"response.ok?\n(200–299)"}
         STATUS          -->|no| PT3(["pass through"])
         STATUS          -->|yes| ACTION
 
@@ -91,15 +95,31 @@ flowchart TD
         These resources can be rendered or used by the browser, but their bytes cannot be exposed to
         or executed as code by the page, so an unverified opaque response carries no
         script-injection risk.
+-   Opaqueredirect responses (`response.type === "opaqueredirect"`) occur when the browser makes a
+    navigation request and the server returns a 3xx redirect. The browser passes the navigation to
+    the SW with `redirect: "manual"`, so the SW sees an opaqueredirect instead of following the
+    redirect chain. The body is empty and inaccessible — `arrayBuffer()` returns zero bytes. The SW
+    passes these through unconditionally (SKIPPED); the browser then follows the redirect and makes
+    a new navigation request to the final URL, which the SW intercepts and verifies normally.
+    Attempting to hash an opaqueredirect produces the SHA-256 of an empty buffer
+    (`sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=`) — a constant value that would produce a
+    false violation on every redirect. This is distinct from `opaque` (no-cors cross-origin
+    response) — they share the inaccessible-body property but arise from completely different
+    request modes.
+-   Error responses (`response.type === "error"`) indicate a network failure. The body is null,
+    status is 0, and there is nothing to hash. For non-document destinations these are already
+    caught by the `!response.ok` guard above; the explicit check here covers document navigations
+    where the browser renders its own error UI regardless of what the SW returns.
 -   Only `response.ok` responses (status 200–299) enter the verification walk — 4xx and 5xx
     responses are passed through without verification. Within the 2xx range, only the body hash
     matters; if the body is empty (e.g., a 204 sent to a script endpoint), the hash-of-empty either
     matches the manifest entry or triggers a violation — there is no special-case bypass for any 2xx
     code. Gating on `response.ok` rather than `status === 200` is intentional: status codes such as
     203 (Non-Authoritative Information, returned by transforming proxies) carry an executable body
-    that the browser will run, so they must be verified. Redirects are followed by `fetch()` using
-    the default `redirect: 'follow'` mode, so the SW always sees the final 200 response — there is
-    no redirect-chain bypass.
+    that the browser will run, so they must be verified. For non-navigation requests, `fetch()` uses
+    `redirect: 'follow'` by default, so the SW always sees the final 200 response — there is no
+    redirect-chain bypass for assets. Navigation requests use `redirect: 'manual'` and produce
+    `opaqueredirect` responses on server redirects; these are handled by the check above.
 -   `Content-Type` is never consulted. All destinations, including `""` (`fetch()`,
     `XMLHttpRequest`), go through the same pipeline: pathRules resolution, contentRules action list,
     then `files[key]` lookup. The default when no action succeeds is **block** — unrecognized URLs

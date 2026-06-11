@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
-    verifyFilePath,
     resolveManifestKey,
     matchesCondition,
     collectContentRuleActions,
@@ -14,75 +13,6 @@ import {
 import { normalizeManifestData } from '../storage/manifest-store.js';
 import { createSingleFlight } from '../../core/utils.js';
 import { VERIFICATION_STATUS } from '../../core/constants.js';
-
-// ── verifyFilePath ────────────────────────────────────────────────────────────
-
-describe('verifyFilePath', () => {
-    const manifest = {
-        files: {
-            '/app.js': 'abc123',
-            '/style.css': 'def456',
-            '/index.html': 'idx111',
-            '/docs/index.html': 'idx222',
-            '/about.html': 'about111',
-            '/.netlify/scripts/cdp': 'cdp111',
-            '/api/config.json': 'cfg111',
-            '/legacy/index.htm': 'htm111',
-        },
-    };
-
-    it('returns MATCH when fileKey is registered and the hash matches', () => {
-        const result = verifyFilePath(manifest, '/app.js', 'abc123');
-        expect(result.status).toBe(VERIFICATION_STATUS.MATCH);
-        expect(result.fileKey).toBe('/app.js');
-        expect(result.expectedHash).toBe('abc123');
-        expect(result.actualHash).toBe('abc123');
-    });
-
-    it('returns MISMATCH when fileKey is registered but hash differs', () => {
-        const result = verifyFilePath(manifest, '/app.js', 'wrong');
-        expect(result.status).toBe(VERIFICATION_STATUS.MISMATCH);
-        expect(result.actualHash).toBe('wrong');
-    });
-
-    it('returns NOT_FOUND_IN_MANIFEST for an unregistered fileKey', () => {
-        const result = verifyFilePath(manifest, '/unknown.js', 'def456');
-        expect(result.status).toBe(VERIFICATION_STATUS.NOT_FOUND_IN_MANIFEST);
-        expect(result.expectedHash).toBeUndefined();
-    });
-
-    it('does not match by hash value alone (content under a different key is NOT_FOUND)', () => {
-        const result = verifyFilePath(manifest, '/any-path', 'def456');
-        expect(result.status).toBe(VERIFICATION_STATUS.NOT_FOUND_IN_MANIFEST);
-    });
-
-    it('returns NOT_FOUND for extensionless path not explicitly in files (no remapping)', () => {
-        const result = verifyFilePath(manifest, '/docs', 'idx222');
-        expect(result.status).toBe(VERIFICATION_STATUS.NOT_FOUND_IN_MANIFEST);
-    });
-
-    it('does not remap paths — direct lookup only', () => {
-        const result = verifyFilePath(manifest, '/', 'idx111');
-        expect(result.status).toBe(VERIFICATION_STATUS.NOT_FOUND_IN_MANIFEST);
-    });
-
-    it('returns MATCH when hash is in an array of known hashes', () => {
-        const m = { files: { '/lib.js': ['hash-a', 'hash-b'] } };
-        expect(verifyFilePath(m, '/lib.js', 'hash-b').status).toBe(VERIFICATION_STATUS.MATCH);
-    });
-
-    it('returns MISMATCH when hash is not in the array of known hashes', () => {
-        const m = { files: { '/lib.js': ['hash-a', 'hash-b'] } };
-        expect(verifyFilePath(m, '/lib.js', 'hash-c').status).toBe(VERIFICATION_STATUS.MISMATCH);
-    });
-
-    it('matches extensionless key stored directly in files (e.g. CDN scripts)', () => {
-        const m = { files: { '/.netlify/scripts/cdp': ['hash-v1', 'hash-v2'] } };
-        const result = verifyFilePath(m, '/.netlify/scripts/cdp', 'hash-v2');
-        expect(result.status).toBe(VERIFICATION_STATUS.MATCH);
-        expect(result.fileKey).toBe('/.netlify/scripts/cdp');
-    });
-});
 
 // ── normalizeManifestData ─────────────────────────────────────────────────────
 

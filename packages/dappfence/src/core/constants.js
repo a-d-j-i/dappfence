@@ -54,22 +54,19 @@ export const MODE = {
  * break `structuredClone` (used by IndexedDB), so persistence layers must
  * write `details.status.description`, not the object.
  */
-const verdict = (description, isViolation) => Object.freeze({ description, isViolation });
+const verdict = (description, isViolation, isTerminal) =>
+    Object.freeze({ description, isViolation, isTerminal });
 
 export const VERIFICATION_STATUS = Object.freeze({
-    MATCH: verdict('MATCH', false),
-    SKIPPED: verdict('SKIPPED', false),
-    // The asset matched a filter rewriteUrls entry. The SW replaces the response
-    // body with a safe empty stub rather than passing CDN-served content through
-    // unverified. Falls back to normal MATCH/MISMATCH if the URL also appears in
-    // manifest.files with known hashes — the hash check runs first.
-    REWRITE: verdict('REWRITE', false),
-    MISMATCH: verdict('MISMATCH', true),
-    NOT_FOUND_IN_MANIFEST: verdict('NOT_FOUND_IN_MANIFEST', true),
-    DENIED_BY_RULE: verdict('DENIED_BY_RULE', true),
-    UNSUPPORTED_SIGNATURE: verdict('UNSUPPORTED_SIGNATURE', true),
-    ERROR: verdict('ERROR', true),
-    CONFIG_ERROR: verdict('CONFIG_ERROR', true),
+    MATCH: verdict('MATCH', false, true),
+    SKIPPED: verdict('SKIPPED', false, true),
+    REWRITE: verdict('REWRITE', false, true),
+    MISMATCH: verdict('MISMATCH', true, false),
+    NOT_FOUND_IN_MANIFEST: verdict('NOT_FOUND_IN_MANIFEST', true, true),
+    DENIED_BY_RULE: verdict('DENIED_BY_RULE', true, true),
+    UNSUPPORTED_SIGNATURE: verdict('UNSUPPORTED_SIGNATURE', true, true),
+    ERROR: verdict('ERROR', true, true),
+    CONFIG_ERROR: verdict('CONFIG_ERROR', true, true),
 });
 
 export const ASSET_TYPE = {

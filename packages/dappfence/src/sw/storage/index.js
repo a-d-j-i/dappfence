@@ -96,6 +96,7 @@ export function createAppStore(db, { userAgent, origin } = {}) {
             }
 
             if (!details.status.isViolation) {
+                logger.log(`Security violation skipped: ${statusName} - ${details.fileKey}`);
                 return false;
             }
             const mustBlock = await activeBlocksStore.recordSecurityBlock(persistedDetails);

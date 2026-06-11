@@ -3,8 +3,10 @@ const { getPublicKey, hexToBytes } = require('@dappfence/manifest-tools/crypto')
 const { MODE } = require('@dappfence/core/constants');
 
 const EXTERNAL_ASSETS = {
-    'http://code.jquery.com/jquery-3.7.1.min.js':
+    'http://code.jquery.com/jquery-3.7.1.min.js': [
         'sha256-dHRfBy/qpMhrsW1oz1R0O4A+2QuM+wZNTuk8mQAKGBU=',
+        'sha256-/JqT3SQfawRcv/BIHPThkBvs0OEvtFFmqPF/lYI/Cxo=',
+    ],
     'https://code.jquery.com/jquery-3.7.1.min.js':
         'sha256-/JqT3SQfawRcv/BIHPThkBvs0OEvtFFmqPF/lYI/Cxo=',
 };

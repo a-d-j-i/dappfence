@@ -5,7 +5,6 @@
 
 import { MODE } from '../../core/constants.js';
 import { isFeatureEnabled } from '../../core/utils.js';
-import { toPathname } from './verification.js';
 import { createManifestLoader } from './manifest-loader.js';
 import { createFileVerifier } from './file-verifier.js';
 import { createLogger } from '../../core/logger.js';
@@ -22,32 +21,12 @@ const getEffectiveMode = (manifest) =>
  * @param {object} deps.appStore
  * @param {object} deps.config
  */
-export const createManifestService = ({ swContext, appStore, config }) => {
-    const manifestFileKey = toPathname(config.manifestUrl, swContext.getLocationHref());
-    const { fetchAndStoreManifest, resolveManifestInfo } = createManifestLoader({
-        swContext,
-        appStore,
-        config,
-    });
-    const { verifyFileWithContext } = createFileVerifier({
-        swContext,
-        appStore,
-        manifestFileKey,
-        resolveManifestInfo,
-    });
+export const createManifestService = (deps) => {
+    const manifestLoader = createManifestLoader(deps);
+    const { verifyFileWithContext } = createFileVerifier(deps, manifestLoader);
 
     const resolveManifest = async () => {
-        let latestManifest = await appStore.trustedManifestStore.getLatest();
-        if (latestManifest) {
-            logger.log(
-                `Resolved manifest from cache ${latestManifest.appVersion} ${latestManifest.manifest.mode}`
-            );
-        } else {
-            latestManifest = await fetchAndStoreManifest();
-            logger.log(
-                `Resolved manifest from network ${latestManifest?.appVersion} ${latestManifest?.manifest?.mode}`
-            );
-        }
+        const latestManifest = await manifestLoader.resolveLatest();
         const mode = getEffectiveMode(latestManifest?.manifest);
         logger.log(`Resolved manifest ${latestManifest?.appVersion} with mode ${mode}`);
 
@@ -58,7 +37,7 @@ export const createManifestService = ({ swContext, appStore, config }) => {
     };
 
     return {
-        fetchAndStoreManifest,
+        fetchAndStoreManifest: manifestLoader.fetchAndStoreManifest,
         resolveManifest,
     };
 };
