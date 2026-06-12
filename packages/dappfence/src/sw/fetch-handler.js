@@ -168,66 +168,73 @@ export function createSecurityFetchHandler({
         return response;
     }
 
-    return async (event, callChildHandlers) => {
-        const originalRequest = event.request;
+    async function handleRequest(event, callChildHandlers) {
+        const request = event.request;
+        const url = new URL(request.url);
+        const clientId = request.mode === 'navigate' ? event.resultingClientId : event.clientId;
+
+        logger.log(
+            `%cFetch: ${request.method} ${request.url} mode: ${request.mode} clientId: ${clientId} `,
+            'color:cyan'
+        );
+
+        // Handle internal API endpoints. Served in every mode so client-side
+        // dappfence.js can always talk to the SW. If the handler declines
+        // (undefined), fall through to the normal child-SW pipeline — API
+        // probes behave like any other asset request and don't reveal
+        // DappFence via the warning redirect.
+        if (url.pathname.startsWith(API_PREFIX)) {
+            logger.log('Handling API endpoint:', url.pathname);
+            const response = await handleApiEndpoint(url.pathname, request);
+            if (response) {
+                return response;
+            }
+        }
+
+        // Resolve the manifest context once per request — mode and verifyFile
+        // share the single IndexedDB lookup done here.
+        const ctx = await manifestService.resolveManifest();
+        logger.log(`Client mode: ${clientId} ${ctx.mode}`);
+
+        // Site-wide block gate only fires in protected mode. In other modes we
+        // still let the request flow so the child SW's response is returned
+        // untouched.
+        if (ctx.mode === MODE.PROTECTED && (await activeBlocksStore.isBlocked())) {
+            return createBlockResponse(request, locationHref);
+        }
+
+        // Add tracking markers to request BEFORE any handlers to see it
+        const markedRequest = isFeatureEnabled('mark_request')
+            ? addMarkToRequest(event, request)
+            : request;
+
+        // Try the child SW first; if its delegation or internal fetch fails,
+        // fall back to a direct fetch so applyIntegrityPolicy still runs.
+        let response;
         try {
-            const url = new URL(originalRequest.url);
-            const clientId =
-                originalRequest.mode === 'navigate' ? event.resultingClientId : event.clientId;
-
-            // Log all fetch requests for debugging
-            logger.log(
-                `%cFetch: ${originalRequest.method} ${originalRequest.url} mode: ${originalRequest.mode} clientId: ${clientId} `,
-                'color:cyan'
-            );
-
-            // Handle internal API endpoints. Served in every mode so client-side
-            // dappfence.js can always talk to the SW. If the handler declines
-            // (undefined), fall through to the normal child-SW pipeline — API
-            // probes behave like any other asset request and don't reveal
-            // DappFence via the warning redirect.
-            if (url.pathname.startsWith(API_PREFIX)) {
-                logger.log('Handling API endpoint:', url.pathname);
-                const response = await handleApiEndpoint(url.pathname, originalRequest);
-                if (response) {
-                    return response;
-                }
-            }
-
-            // share the single IndexedDB lookup done here.
-            // Resolve the manifest context once per request — mode and verifyFile
-            const ctx = await manifestService.resolveManifest();
-            logger.log(`Client mode: ${clientId} ${ctx.mode}`);
-
-            // Site-wide block gate only fires in protected mode. In other modes we
-            // still let the request flow so the child SW's response is returned
-            // untouched.
-            if (ctx.mode === MODE.PROTECTED && (await activeBlocksStore.isBlocked())) {
-                return createBlockResponse(originalRequest, locationHref);
-            }
-
-            // Add tracking markers to request BEFORE any handlers to see it
-            const markedRequest = isFeatureEnabled('mark_request')
-                ? addMarkToRequest(event, originalRequest)
-                : originalRequest;
-
-            // Delegate to child SW and capture its response
-            const response = await handleAppServiceWorkerFetch(
-                event,
-                callChildHandlers,
-                markedRequest
-            );
-            return await applyIntegrityPolicy(ctx, markedRequest, response, clientId);
+            response = await handleAppServiceWorkerFetch(event, callChildHandlers, markedRequest);
         } catch (error) {
-            logger.error('Error processing:', originalRequest.url, error);
+            logger.warn('Child SW fetch failed, retrying direct:', request.url, error);
+            response = await swContext.fetch(request);
         }
-        // On error, fallback to regular fetch to avoid breaking the app
+
+        return await applyIntegrityPolicy(ctx, markedRequest, response, clientId);
+    }
+
+    return async (event, callChildHandlers) => {
         try {
-            return await swContext.fetch(originalRequest);
-        } catch (fetchError) {
-            logger.error('Fallback fetch also failed:', originalRequest.url, fetchError);
+            return await handleRequest(event, callChildHandlers);
+        } catch (error) {
+            logger.error('Fatal error processing request:', event.request.url, error);
+            // Rethrow fetch()-level errors (TypeError = network/CORS, AbortError = aborted)
+            // so the browser sees the real failure
+            if (
+                error instanceof TypeError ||
+                (error instanceof DOMException && error.name === 'AbortError')
+            ) {
+                throw error;
+            }
+            return new Response('Service unavailable', { status: 503 });
         }
-        // Return undefined to let the browser handle the error
-        return undefined;
     };
 }
