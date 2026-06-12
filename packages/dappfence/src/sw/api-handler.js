@@ -13,7 +13,7 @@ const logger = createLogger();
  * @param {function} deps.onSecurityViolation - called to broadcast the active block condition
  * @param {object} deps.appStore
  */
-export function createApiHandler({ onSecurityViolation, appStore }) {
+export function createApiHandler({ onSecurityViolation, appStore, manifestService }) {
     const { apiTokenStore, activeBlocksStore, trustedManifestStore, verificationResultsStore } =
         appStore;
 
@@ -68,11 +68,12 @@ export function createApiHandler({ onSecurityViolation, appStore }) {
         }
         logger.log(`fetch api Broadcasting active block condition`);
         await onSecurityViolation();
+        const from = new URL(request.url).searchParams.get('from');
         const [apiToken, activeBlocks] = await Promise.all([
             apiTokenStore.getApiToken(),
             activeBlocksStore.getActiveBlocks(),
         ]);
-        return createSecurityPageResponse(apiToken, activeBlocks);
+        return createSecurityPageResponse(apiToken, activeBlocks, from);
     }
 
     async function handleSiteUnblock(_request) {
@@ -93,6 +94,13 @@ export function createApiHandler({ onSecurityViolation, appStore }) {
         );
     }
 
+    async function handleCheckBlocks(_request) {
+        await manifestService.fetchAndStoreManifest();
+        return new Response(JSON.stringify({ success: true }), {
+            headers: { 'Content-Type': 'application/json' },
+        });
+    }
+
     // Dispatch table: method → path → { handler, public? }.
     // Routes are private by default; public endpoints must opt in with `public: true`
     // so adding a new endpoint without thinking about access fails safe.
@@ -103,6 +111,7 @@ export function createApiHandler({ onSecurityViolation, appStore }) {
         },
         POST: {
             [API.SITE_UNBLOCK]: { handler: handleSiteUnblock },
+            [API.CHECK_BLOCKS]: { handler: handleCheckBlocks },
         },
     };
 

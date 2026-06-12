@@ -52,11 +52,13 @@ describe('createApiHandler', () => {
     let handler;
     let appStore;
     let onSecurityViolation;
+    let manifestService;
 
     beforeEach(() => {
         appStore = createMockAppStore();
         onSecurityViolation = vi.fn();
-        handler = createApiHandler({ onSecurityViolation, appStore });
+        manifestService = { fetchAndStoreManifest: vi.fn().mockResolvedValue(undefined) };
+        handler = createApiHandler({ onSecurityViolation, appStore, manifestService });
     });
 
     describe('authentication', () => {
@@ -340,6 +342,29 @@ describe('createApiHandler', () => {
 
             expect(res.status).toBe(500);
             expect(await res.text()).toBe('Internal server error');
+        });
+    });
+
+    describe('POST /sw-api/check-blocks', () => {
+        it('calls fetchAndStoreManifest and returns success', async () => {
+            const res = await handler(
+                '/sw-api/check-blocks',
+                req('/sw-api/check-blocks', { method: 'POST', token: TOKEN })
+            );
+            const body = await res.json();
+
+            expect(res.status).toBe(200);
+            expect(body.success).toBe(true);
+            expect(manifestService.fetchAndStoreManifest).toHaveBeenCalledTimes(1);
+        });
+
+        it('falls through without a valid token', async () => {
+            const res = await handler(
+                '/sw-api/check-blocks',
+                req('/sw-api/check-blocks', { method: 'POST' })
+            );
+            expect(res).toBeUndefined();
+            expect(manifestService.fetchAndStoreManifest).not.toHaveBeenCalled();
         });
     });
 

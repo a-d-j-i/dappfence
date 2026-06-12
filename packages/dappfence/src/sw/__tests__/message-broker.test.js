@@ -108,6 +108,36 @@ describe('createMessageBroker', () => {
             await expect(broker.broadcastSecurityViolation()).resolves.not.toThrow();
         });
     });
+
+    describe('broadcastBlockResolved', () => {
+        it('posts DAPPFENCE_BLOCK_RESOLVED to all connected clients', async () => {
+            const client1 = swContext._addClient('c1');
+            const client2 = swContext._addClient('c2');
+
+            await broker.broadcastBlockResolved();
+
+            const expected = expect.objectContaining({ type: 'DAPPFENCE_BLOCK_RESOLVED' });
+            expect(client1.postMessage).toHaveBeenCalledWith(expected);
+            expect(client2.postMessage).toHaveBeenCalledWith(expected);
+        });
+
+        it('does not crash when no clients are connected', async () => {
+            await expect(broker.broadcastBlockResolved()).resolves.not.toThrow();
+        });
+
+        it('handles matchAllClients rejecting without throwing', async () => {
+            swContext.matchAllClients = async () => {
+                throw new Error('matchAllClients failed');
+            };
+            await expect(broker.broadcastBlockResolved()).resolves.not.toThrow();
+        });
+
+        it('handles client.postMessage rejecting without throwing', async () => {
+            const client = swContext._addClient('c1');
+            client.postMessage.mockRejectedValue(new Error('postMessage failed'));
+            await expect(broker.broadcastBlockResolved()).resolves.not.toThrow();
+        });
+    });
 });
 
 describe('createMessageHandler', () => {

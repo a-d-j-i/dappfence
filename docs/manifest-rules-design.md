@@ -678,6 +678,91 @@ external CDN resources.
 
 ---
 
+## Block lifecycle
+
+### How blocks are created
+
+Every verification result that `isViolation` (MISMATCH, NOT_FOUND_IN_MANIFEST, DENIED_BY_RULE,
+UNSUPPORTED_SIGNATURE, ERROR, CONFIG_ERROR) calls `recordSecurityBlock`. Blocks are keyed by a
+deterministic ID derived from `(status, fileKey, expectedHash, actualHash)` — the same violation
+seen twice increments `occurrenceCount` rather than creating a second block.
+
+An in-memory `blocked` flag mirrors the IndexedDB active-block set. Once `true`, every subsequent
+navigation request is short-circuited to the warning page without touching IndexedDB.
+
+### Auto-resolution on manifest update
+
+When `fetchAndStoreManifest` succeeds and stores a new manifest, `resolveStaleBlocks` runs once
+against all active blocks:
+
+| Block type                                                             | Resolution condition                                                                                                 |
+| ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| No `actualHash` (manifest-level failure: signature error, fetch error) | Always resolved — a valid manifest loading is proof the infrastructure error is fixed                                |
+| Has `actualHash` (MISMATCH)                                            | Resolved if `manifest.files[fileKey]` includes `actualHash` — the developer updated the manifest to accept that hash |
+| Transform mismatch                                                     | Not resolved — the pipeline falls through to NOT_FOUND_IN_MANIFEST with no hash; treated as manifest-level           |
+
+Blocks for genuinely tampered files are never resolved automatically: the tampered hash will not
+appear in any legitimate manifest.
+
+### When does a manifest re-fetch happen
+
+`resolveStaleBlocks` only runs when a new manifest is successfully fetched. There are two triggers:
+
+1. **"Check again" button** on the warning page → `POST /sw-api/check-blocks` → explicit
+   `fetchAndStoreManifest` call.
+2. **Escalation during file verification** — `resolveManifestInfo` calls `fetchAndStoreManifest`
+   when a file hash is not found in any stored manifest version.
+
+Normal requests that hit a cached manifest do not trigger a re-fetch and do not run
+`resolveStaleBlocks`.
+
+### What happens after resolution
+
+When `resolveStaleBlocks` clears at least one block:
+
+-   `blocked` is set to `false` in memory.
+-   `BLOCK_RESOLVED` is broadcast via `postMessage` to all window clients.
+-   All tabs showing the warning page receive the message and call
+    `window.location.replace(resolvedReturnUrl)` — no user action needed on any tab other than the
+    one that clicked "Check again".
+-   The next navigation re-verifies files against the new manifest. If violations still exist, new
+    blocks are created and the warning page is served again immediately.
+
+### Per-tab return URL
+
+Each tab remembers where the user was before the block so it can navigate back to the right page
+rather than always going to `/`.
+
+-   **Navigation blocked by SW** — `createBlockResponse` embeds the original URL as a `?from=`
+    parameter in the redirect to `/sw-api/security-warning`. The warning page reads it on first load
+    and stores it in `sessionStorage`, which survives page refreshes within the same tab.
+-   **Client-side redirect** (via `security-handler.js`) — stores `window.location.href` in
+    `sessionStorage` before calling `window.location.replace(warningUrl)`.
+
+On resolution or manual unlock, each tab navigates to its own `sessionStorage` entry, falling back
+to `/` if none is set.
+
+---
+
+## Manifest load failure
+
+When `fetchAndStoreManifest` fails (network error, non-OK status, or signature violation), the
+result carries `isViolation: true` and is recorded as a block with no `actualHash`.
+
+**With no stored history:** every file verification fails — there is no manifest to check against. A
+burst of ERROR or CONFIG_ERROR blocks is created, then deduplicated by `recordSecurityBlock` (same
+ID, only `occurrenceCount` increments). The user sees the warning page.
+
+**With stored historic manifests:** `resolveManifestInfo` falls back to the most recent stored
+version. File verification continues against the last known-good manifest. This is graceful
+degradation — a transient manifest fetch failure does not immediately re-block users who are already
+past the initial load.
+
+**Resolution:** as soon as a subsequent `fetchAndStoreManifest` succeeds, `resolveStaleBlocks`
+clears the manifest-level block (no `actualHash` → always resolved) and broadcasts `BLOCK_RESOLVED`.
+
+---
+
 ## Alternatives considered
 
 ### Wildcards in pathRules (`/*` suffix)

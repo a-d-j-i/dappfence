@@ -23,6 +23,7 @@ function handleSecurityMessage(event) {
     }
     logger.error('Security violation detected');
     redirectAttempted = true;
+    sessionStorage.setItem('dappfence_return_url', window.location.href);
     window.location.replace(data.warningUrl);
 }
 

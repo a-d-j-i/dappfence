@@ -92,7 +92,23 @@ export function createMessageBroker(swContext) {
         }
     }
 
-    return { broadcastSecurityViolation, handleClientReady };
+    async function broadcastBlockResolved() {
+        try {
+            const allClients = await swContext.matchAllClients({
+                type: 'window',
+                includeUncontrolled: true,
+            });
+            const message = { type: MSG.BLOCK_RESOLVED, timestamp: Date.now() };
+            for (const client of allClients) {
+                client.postMessage(message);
+            }
+            logger.log(`Broadcasted BLOCK_RESOLVED to ${allClients.length} clients`);
+        } catch (error) {
+            logger.error('Failed to broadcast block resolved:', error);
+        }
+    }
+
+    return { broadcastSecurityViolation, broadcastBlockResolved, handleClientReady };
 }
 
 /**

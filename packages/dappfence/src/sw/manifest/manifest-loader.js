@@ -16,8 +16,8 @@ const logger = createLogger();
  * @param {object} deps.appStore
  * @param {object} deps.config
  */
-export const createManifestLoader = ({ swContext, appStore, config }) => {
-    const { trustedManifestStore } = appStore;
+export const createManifestLoader = ({ swContext, appStore, config, onBlocksResolved }) => {
+    const { trustedManifestStore, activeBlocksStore } = appStore;
     const singleFlight = createSingleFlight();
 
     const loadManifestFromUrl = async () => {
@@ -34,7 +34,7 @@ export const createManifestLoader = ({ swContext, appStore, config }) => {
                 logger.error(
                     `Failed to load manifest: ${response?.status} ${response?.statusText}`
                 );
-                return { status: VERIFICATION_STATUS.ERROR, fileKey };
+                return { status: VERIFICATION_STATUS.ERROR, fileKey, assetType: ASSET_TYPE.MANIFEST };
             }
 
             const json = await response.json();
@@ -57,11 +57,15 @@ export const createManifestLoader = ({ swContext, appStore, config }) => {
             logger.log(
                 `Loaded manifest, app version: ${appVersion.substring(0, 12)}... (${Object.keys(manifest.files).length} files)`
             );
-            return { status: VERIFICATION_STATUS.MATCH, manifest, appVersion };
+            const resolved = await activeBlocksStore.resolveStaleBlocks(manifest.files);
+            if (resolved > 0 && onBlocksResolved) {
+                onBlocksResolved();
+            }
+            return { status: VERIFICATION_STATUS.MATCH, manifest, appVersion, assetType: ASSET_TYPE.MANIFEST };
         } catch (error) {
             logger.error('Error loading manifest:', error);
         }
-        return { status: VERIFICATION_STATUS.ERROR, fileKey };
+        return { status: VERIFICATION_STATUS.ERROR, fileKey, assetType: ASSET_TYPE.MANIFEST };
     };
 
     const fetchAndStoreManifest = async () => {

@@ -140,12 +140,12 @@ describe('gate checks', () => {
         expect(result.status).toBe(VERIFICATION_STATUS.SKIPPED);
     });
 
-    it('verifies the manifest file itself via fetchAndStoreManifest', async () => {
+    it('skips the manifest file — not treated as a verifiable asset', async () => {
         const { verify, fetchAndStoreManifest } = makeVerifier();
         const req = makeSubResource('/integrity-manifest.json');
         const result = await verify(req, makeOkResponse());
-        expect(fetchAndStoreManifest).toHaveBeenCalled();
-        expect(result.status).toBe(VERIFICATION_STATUS.MATCH);
+        expect(fetchAndStoreManifest).not.toHaveBeenCalled();
+        expect(result.status).toBe(VERIFICATION_STATUS.SKIPPED);
     });
 });
 

@@ -13,10 +13,11 @@ function installNavigatorMock(swProps = {}) {
 
 function installWindowMock() {
     Object.defineProperty(globalThis, 'window', {
-        value: { location: { replace: vi.fn() } },
+        value: { location: { replace: vi.fn(), href: 'http://localhost/current-page' } },
         writable: true,
         configurable: true,
     });
+    globalThis.sessionStorage = { setItem: vi.fn(), getItem: vi.fn() };
 }
 
 beforeEach(() => {
