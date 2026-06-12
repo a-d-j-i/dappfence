@@ -157,17 +157,6 @@ describe('recordSecurityViolation', () => {
         expect(mustBlock).toBe(true);
     });
 
-    it('lines 59-60: else branch with undefined url and fileKey uses N/A fallbacks', async () => {
-        const appStore = createStore();
-        const mustBlock = await appStore.recordSecurityViolation({
-            status: VERIFICATION_STATUS.ERROR,
-            url: undefined,
-            fileKey: undefined,
-            assetType: 'asset',
-        });
-        expect(mustBlock).toBe(true);
-    });
-
     it('does not crash if event logging fails', async () => {
         const db = createInMemoryDatabase();
         const originalSet = db.set;
@@ -183,10 +172,17 @@ describe('recordSecurityViolation', () => {
     });
 
     it('fail-safes to mustBlock=true when outer recordSecurityBlock call throws', async () => {
-        const db = createInMemoryDatabase();
+        const db = {
+            get: async () => undefined,
+            set: async () => {},
+            delete: async () => {},
+            withTx: async () => {
+                throw new Error('simulated DB failure');
+            },
+        };
         const appStore = createAppStore(db);
         const details = {
-            status: null,
+            status: VERIFICATION_STATUS.MISMATCH,
             fileKey: '/bad.js',
             url: 'https://example.com/bad.js',
             assetType: 'asset',

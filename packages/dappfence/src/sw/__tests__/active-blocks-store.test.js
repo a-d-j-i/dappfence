@@ -22,6 +22,7 @@ const BLOCK_DATA = {
     fileKey: '/app.js',
     expectedHash: 'expected123',
     actualHash: 'actual456',
+    assetType: 'ASSET',
 };
 
 const BLOCK_DATA_2 = {
@@ -29,6 +30,7 @@ const BLOCK_DATA_2 = {
     fileKey: '/style.css',
     expectedHash: 'expectedABC',
     actualHash: 'actualDEF',
+    assetType: 'ASSET',
 };
 
 describe('createActiveBlocksStore', () => {
@@ -326,6 +328,7 @@ describe('createActiveBlocksStore', () => {
                 fileKey: '/app.js',
                 expectedHash: 'expected123',
                 actualHash: 'actual456',
+                assetType: 'ASSET',
             };
             const blockId = await generateBlockId(blockData);
             const store = new Map();

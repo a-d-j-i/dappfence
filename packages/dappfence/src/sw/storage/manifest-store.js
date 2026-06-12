@@ -94,7 +94,7 @@ export function createManifestStore(database) {
      * The full manifest object is retained so consumers can read `mode`,
      * `metadata`, and any future top-level fields.
      *
-     * `cachedList` mirrors the persisted array and is populated lazily on first
+     * `cachedList` mirrors the persisted array and is populated lazily on the first
      * read, kept in sync by addLatest after its tx commits.
      */
     let cachedList = null;

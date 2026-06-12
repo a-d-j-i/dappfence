@@ -5,7 +5,7 @@
 
 import { createBlockResponse, createRewriteResponse } from './response.js';
 import { createLogger } from '../core/logger.js';
-import { API_PREFIX, ASSET_TYPE, MODE, VERIFICATION_STATUS } from '../core/constants.js';
+import { API_PREFIX, MODE, VERIFICATION_STATUS } from '../core/constants.js';
 import { isFeatureEnabled } from '../core/utils.js';
 
 const logger = createLogger();
@@ -149,7 +149,6 @@ export function createSecurityFetchHandler({
         ) {
             mustBlock = await appStore.recordSecurityViolation({
                 ...verificationResult,
-                assetType: ASSET_TYPE.ASSET,
                 url: request.url,
                 httpStatus: response.status,
             });

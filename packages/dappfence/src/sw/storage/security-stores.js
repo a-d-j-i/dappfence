@@ -5,6 +5,7 @@
  * All stores use dependency injection: each factory takes a { get, set, withTx }
  * database interface, making them testable with in-memory backends.
  */
+import { devAssert } from '../../core/utils.js';
 import { createLogger } from '../../core/logger.js';
 
 const logger = createLogger();
@@ -33,11 +34,9 @@ const BLOCKS_KEY = 'blocks';
  * @param {string} blockData.actualHash - Actual hash of the file content
  * @returns {Promise<string>} Deterministic block ID like "block_<hash prefix>"
  */
-export async function generateBlockId({ status, fileKey, expectedHash, actualHash }) {
-    if (!status) {
-        throw new Error('generateBlockId: Missing required parameters');
-    }
-    const contentKey = `${status}_${fileKey || 'N/A'}_${expectedHash || 'N/A'}_${actualHash || 'ERROR'}`;
+export async function generateBlockId({ status, fileKey, expectedHash, actualHash, assetType }) {
+    devAssert(status && assetType && fileKey);
+    const contentKey = `${assetType}_${status}_${fileKey}_${expectedHash || 'N/A'}_${actualHash || 'N/A'}`;
     const encoder = new TextEncoder();
     const data = encoder.encode(contentKey);
     const hashBuffer = await crypto.subtle.digest('SHA-256', data);
@@ -52,7 +51,7 @@ export async function generateBlockId({ status, fileKey, expectedHash, actualHas
 export function createActiveBlocksStore(database) {
     // In-memory cache: null = unhydrated, boolean = known state.
     // Shared across all tabs (single SW instance). Updated synchronously
-    // after every write so subsequent isBlocked() calls never touch IndexedDB.
+    // after every writing so subsequent isBlocked() calls never touch IndexedDB.
     let blocked = null;
 
     /**
