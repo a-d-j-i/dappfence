@@ -250,21 +250,28 @@ export function buildContentRules({ isNetlify = false } = {}) {
     return [];
 }
 
-export async function generateManifest({ pages, routes, buildFormat, extraHashes, ...rest }) {
-    const dynamicRoutes = extractDynamicRoutes(routes);
+export async function generateManifest({
+    pages,
+    routes,
+    buildFormat,
+    extraHashes,
+    base = '',
+    ...rest
+}) {
+    const prefixRoute = base ? (r) => base + r : (r) => r;
+    const dynamicRoutes = extractDynamicRoutes(routes).map(prefixRoute);
     const pageSet = pages?.length ? buildPageSet(pages) : null;
     const isNetlify = Boolean(process.env.NETLIFY);
 
     // Determine the not-found fallback key for the `not-found` pathRule.
     // Prefer the SSR-hashed 404 page; fall back to the prerendered static 404.
-    const notFoundKey = extraHashes?.['/404/']
-        ? '/404/'
-        : extraHashes?.['/404']
-          ? '/404'
+    // extraHashes keys are already prefixed with base (from hashSSRRoutes response URLs).
+    const notFoundKey = extraHashes?.[base + '/404/']
+        ? base + '/404/'
+        : extraHashes?.[base + '/404']
+          ? base + '/404'
           : pages?.some((p) => p.pathname === '404/' || p.pathname === '/404/')
-            ? buildFormat === 'file'
-                ? '/404.html'
-                : '/404/index.html'
+            ? base + (buildFormat === 'file' ? '/404.html' : '/404/index.html')
             : null;
 
     return _generateManifest({
@@ -272,7 +279,13 @@ export async function generateManifest({ pages, routes, buildFormat, extraHashes
         dynamicRoutes,
         pathRules: buildPathRules(buildFormat, notFoundKey),
         contentRules: buildContentRules({ isNetlify }),
-        pageFilter: pageSet ? (webPath) => pageSet.has(webPath) : undefined,
+        // walk() generates keys as base + '/...' when pathPrefix is set; strip the
+        // prefix before comparing against pageSet (which is built from page pathnames
+        // without the base).
+        pageFilter: pageSet
+            ? (webPath) => pageSet.has(base ? webPath.slice(base.length) : webPath)
+            : undefined,
+        pathPrefix: base,
         ...(extraHashes && { extraHashes }),
     });
 }

@@ -1,7 +1,6 @@
 import { createRequire } from 'node:module';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import { readDynamicRoutes } from './routes.js';
 
 const _require = createRequire(import.meta.url);
 const DAPPFENCE_JS_PATH = _require.resolve('@dappfence/core');
@@ -30,11 +29,12 @@ export class DappfenceWebpackPlugin {
     constructor(opts, webpackOptions) {
         const { secretKey, ...publicOpts } = opts;
         this.opts = publicOpts;
-        // Keep the signing key separate so it never ends up in serialized config files.
         this._secretKey = secretKey || null;
         this.isServer = webpackOptions.isServer;
         this.isDev = webpackOptions.dev || false;
         this.nextConfig = webpackOptions.config || {};
+        // Normalize basePath: strip trailing slash; empty string when absent.
+        this._basePath = (this.nextConfig.basePath || '').replace(/\/$/, '');
     }
 
     apply(compiler) {
@@ -57,61 +57,38 @@ export class DappfenceWebpackPlugin {
                 return;
             }
 
-            await this._processSSR(compiler.context);
+            // SSR mode: copy dappfence.js eagerly, then write config for the
+            // dappfence-next CLI. Use `"build": "next build && dappfence-next"`
+            // (not postbuild — next build calls process.exit, skipping npm lifecycle).
+            await this._copyDappfenceJs(compiler.context);
+            await this._writeConfig({
+                buildType: 'ssr',
+                basePath: this._basePath,
+                ...(this._secretKey && { secretKey: this._secretKey }),
+            });
+            console.log(
+                'DappFence: SSR mode — use `"build": "dappfence-next build"` in package.json to generate the manifest.'
+            );
         });
     }
 
-    async _processSSR(projectRoot) {
-        const { generateManifest } = _require('@dappfence/manifest-tools/manifest');
-
-        // Copy dappfence.js into public/ so Next.js serves it at the root.
+    async _copyDappfenceJs(projectRoot) {
         const publicDir = path.join(projectRoot, 'public');
         await fs.mkdir(publicDir, { recursive: true });
         const destRel = this.opts.scriptSrc.replace(/^\//, '');
         const destAbs = path.join(publicDir, destRel);
         await fs.copyFile(DAPPFENCE_JS_PATH, destAbs);
         logger.info(`DappFence: copied dappfence.js → public/${destRel}`);
-
-        // Hash static Next.js assets served under /_next/static/.
-        // HTML is SSR so we don't hash it here; script injection is manual via layout.
-        const nextStaticDir = path.join(projectRoot, '.next', 'static');
-        const nextStaticExists = await fs
-            .stat(nextStaticDir)
-            .then(() => true)
-            .catch(() => false);
-
-        if (!nextStaticExists) {
-            logger.warn('DappFence: no static assets found to hash');
-            return;
-        }
-
-        const dynamicRoutes = await readDynamicRoutes(projectRoot);
-        const isNetlify = Boolean(process.env.NETLIFY);
-
-        await generateManifest({
-            outDir: nextStaticDir,
-            manifestPath: path.relative(
-                nextStaticDir,
-                path.join(publicDir, this.opts.manifestPath)
-            ),
-            exclude: this.opts.exclude,
-            secretKey: this._secretKey,
-            mode: this.opts.mode,
-            dynamicRoutes,
-            pathRules: DEFAULT_PATH_RULES,
-            contentRules: buildContentRules({ isNetlify }),
-            scriptAttrs: null,
-            logger,
-        });
-
-        logger.info(`DappFence: manifest written → public/${this.opts.manifestPath}`);
     }
 
-    // Write build config (no secret key) for the dappfence-next CLI (static export only).
+    // Write build config (no secret key) for the dappfence-next CLI.
     // The CLI reads the signing key from DAPPFENCE_SECRET_KEY at runtime.
-    async _writeConfig() {
+    async _writeConfig(extra = {}) {
         const configPath = path.join(this.projectRoot, '.next', 'dappfence-config.json');
         await fs.mkdir(path.dirname(configPath), { recursive: true });
-        await fs.writeFile(configPath, JSON.stringify(this.opts, null, 2), 'utf8');
+        await fs.writeFile(configPath, JSON.stringify({ ...this.opts, ...extra }, null, 2), 'utf8');
     }
 }
+
+// Kept for any callers that import this directly (e.g. tests).
+export { DEFAULT_PATH_RULES, buildContentRules, logger };

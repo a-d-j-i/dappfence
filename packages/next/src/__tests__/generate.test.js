@@ -4,6 +4,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { createRequire } from 'node:module';
 import { readDynamicRoutes } from '../routes.js';
+import { hashPrerenderedPages } from '../ssr.js';
 import { withDappfence, getDappfenceScriptAttrs, ATTRS_ENV_KEY } from '../index.js';
 
 const _require = createRequire(import.meta.url);
@@ -329,6 +330,79 @@ describe('readDynamicRoutes', () => {
         const routes = await readDynamicRoutes(dir);
         expect(routes).not.toContain('/_app');
         expect(routes).not.toContain('/_error');
+    });
+});
+
+describe('hashPrerenderedPages', () => {
+    async function writeHtml(dir, relPath, content = '<html><body>test</body></html>') {
+        const abs = path.join(dir, relPath);
+        await fs.mkdir(path.dirname(abs), { recursive: true });
+        await fs.writeFile(abs, content, 'utf8');
+    }
+
+    it('returns empty object when .next/server directories are absent', async () => {
+        const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'df-pp-'));
+        tmpDirs.push(dir);
+        await fs.mkdir(path.join(dir, '.next'), { recursive: true });
+        expect(await hashPrerenderedPages(dir, '', LOGGER)).toEqual({});
+    });
+
+    it('maps index.html to /', async () => {
+        const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'df-pp-'));
+        tmpDirs.push(dir);
+        await writeHtml(dir, '.next/server/app/index.html');
+        const hashes = await hashPrerenderedPages(dir, '', LOGGER);
+        expect(hashes['/']).toMatch(/^sha256-/);
+    });
+
+    it('maps nested html files to URL paths', async () => {
+        const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'df-pp-'));
+        tmpDirs.push(dir);
+        await writeHtml(dir, '.next/server/app/about.html');
+        await writeHtml(dir, '.next/server/app/blog/getting-started.html');
+        const hashes = await hashPrerenderedPages(dir, '', LOGGER);
+        expect(hashes['/about']).toMatch(/^sha256-/);
+        expect(hashes['/blog/getting-started']).toMatch(/^sha256-/);
+    });
+
+    it('skips internal Next.js pages (_not-found, _error, etc.)', async () => {
+        const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'df-pp-'));
+        tmpDirs.push(dir);
+        await writeHtml(dir, '.next/server/app/_not-found.html');
+        await writeHtml(dir, '.next/server/pages/_error.html');
+        await writeHtml(dir, '.next/server/app/about.html');
+        const hashes = await hashPrerenderedPages(dir, '', LOGGER);
+        expect(Object.keys(hashes)).toEqual(['/about']);
+    });
+
+    it('covers Pages Router html files', async () => {
+        const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'df-pp-'));
+        tmpDirs.push(dir);
+        await writeHtml(dir, '.next/server/pages/404.html');
+        await writeHtml(dir, '.next/server/pages/500.html');
+        const hashes = await hashPrerenderedPages(dir, '', LOGGER);
+        expect(hashes['/404']).toMatch(/^sha256-/);
+        expect(hashes['/500']).toMatch(/^sha256-/);
+    });
+
+    it('prefixes all paths with basePath when provided', async () => {
+        const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'df-pp-'));
+        tmpDirs.push(dir);
+        await writeHtml(dir, '.next/server/app/index.html');
+        await writeHtml(dir, '.next/server/app/about.html');
+        const hashes = await hashPrerenderedPages(dir, '/myapp', LOGGER);
+        expect(hashes['/myapp/']).toMatch(/^sha256-/);
+        expect(hashes['/myapp/about']).toMatch(/^sha256-/);
+        expect(hashes['/']).toBeUndefined();
+    });
+
+    it('produces stable hashes — same content gives same hash', async () => {
+        const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'df-pp-'));
+        tmpDirs.push(dir);
+        await writeHtml(dir, '.next/server/app/about.html', '<html>stable</html>');
+        const h1 = await hashPrerenderedPages(dir, '', LOGGER);
+        const h2 = await hashPrerenderedPages(dir, '', LOGGER);
+        expect(h1['/about']).toBe(h2['/about']);
     });
 });
 
