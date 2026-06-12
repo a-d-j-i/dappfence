@@ -393,4 +393,132 @@ describe('createActiveBlocksStore', () => {
             expect(result).toEqual([]);
         });
     });
+
+    describe('resolveStaleBlocks', () => {
+        it('returns 0 when there are no active blocks', async () => {
+            const count = await store.resolveStaleBlocks({ '/app.js': 'actual456' });
+            expect(count).toBe(0);
+        });
+
+        it('resolves a HASH_MISMATCH block when the new manifest hash matches actualHash', async () => {
+            await store.recordSecurityBlock(BLOCK_DATA);
+            expect(await store.isBlocked()).toBe(true);
+
+            const count = await store.resolveStaleBlocks({ '/app.js': 'actual456' });
+
+            expect(count).toBe(1);
+            expect(await store.isBlocked()).toBe(false);
+            expect(await store.getActiveBlocks()).toEqual([]);
+        });
+
+        it('accepts an array of hashes and resolves when actualHash is in the array', async () => {
+            await store.recordSecurityBlock(BLOCK_DATA);
+
+            const count = await store.resolveStaleBlocks({
+                '/app.js': ['other-hash', 'actual456'],
+            });
+
+            expect(count).toBe(1);
+            expect(await store.isBlocked()).toBe(false);
+        });
+
+        it('does not resolve when new manifest hash does not match actualHash', async () => {
+            await store.recordSecurityBlock(BLOCK_DATA);
+
+            const count = await store.resolveStaleBlocks({
+                '/app.js': 'completely-different-hash',
+            });
+
+            expect(count).toBe(0);
+            expect(await store.isBlocked()).toBe(true);
+        });
+
+        it('does not resolve when fileKey is still absent from the new manifest', async () => {
+            const notInManifest = {
+                status: 'NOT_IN_MANIFEST',
+                fileKey: '/missing.js',
+                expectedHash: 'N/A',
+                actualHash: 'somehash',
+            };
+            await store.recordSecurityBlock(notInManifest);
+
+            const count = await store.resolveStaleBlocks({ '/other.js': 'somehash' });
+
+            expect(count).toBe(0);
+            expect(await store.isBlocked()).toBe(true);
+        });
+
+        it('resolves a NOT_IN_MANIFEST block when the file appears in the new manifest with the right hash', async () => {
+            const notInManifest = {
+                status: 'NOT_IN_MANIFEST',
+                fileKey: '/missing.js',
+                expectedHash: 'N/A',
+                actualHash: 'somehash',
+            };
+            await store.recordSecurityBlock(notInManifest);
+
+            const count = await store.resolveStaleBlocks({ '/missing.js': 'somehash' });
+
+            expect(count).toBe(1);
+            expect(await store.isBlocked()).toBe(false);
+        });
+
+        it('resolves a manifest-level block (no actualHash) when any valid manifest loads', async () => {
+            const manifestLevelBlock = {
+                status: 'INVALID_SIGNATURE',
+                fileKey: '__manifest__',
+                assetType: 'manifest',
+                expectedHash: null,
+                actualHash: null,
+            };
+            await store.recordSecurityBlock(manifestLevelBlock);
+
+            const count = await store.resolveStaleBlocks({ '/app.js': 'somehash' });
+
+            expect(count).toBe(1);
+            expect(await store.isBlocked()).toBe(false);
+        });
+
+        it('does NOT auto-resolve a file-level block with null actualHash (e.g. 404 NOT_FOUND_IN_MANIFEST)', async () => {
+            const fileBlock = {
+                status: 'NOT_FOUND_IN_MANIFEST',
+                fileKey: '/index.html',
+                assetType: 'asset',
+                expectedHash: 'N/A',
+                actualHash: null,
+            };
+            await store.recordSecurityBlock(fileBlock);
+
+            const count = await store.resolveStaleBlocks({ '/app.js': 'somehash' });
+
+            expect(count).toBe(0);
+            expect(await store.isBlocked()).toBe(true);
+        });
+
+        it('resolves only the matching blocks when multiple are active', async () => {
+            await store.recordSecurityBlock(BLOCK_DATA);
+            await store.recordSecurityBlock(BLOCK_DATA_2);
+
+            const count = await store.resolveStaleBlocks({ '/app.js': 'actual456' });
+
+            expect(count).toBe(1);
+            expect(await store.isBlocked()).toBe(true);
+            const remaining = await store.getActiveBlocks();
+            expect(remaining).toHaveLength(1);
+            expect(remaining[0].fileKey).toBe('/style.css');
+        });
+
+        it('returns 0 and does not throw when withTx rejects', async () => {
+            const brokenDb = {
+                get: async () => undefined,
+                set: async () => {},
+                withTx: async () => {
+                    throw new Error('tx failed');
+                },
+            };
+            const brokenStore = createActiveBlocksStore(brokenDb);
+            const count = await brokenStore.resolveStaleBlocks({ '/app.js': 'hash' });
+            expect(count).toBe(0);
+        });
+    });
 });

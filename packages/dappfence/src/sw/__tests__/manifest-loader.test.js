@@ -46,6 +46,9 @@ function makeAppStore({ findByHashResult = null, addLatestResult = MANIFEST_INFO
             findByHash: vi.fn(() => Promise.resolve(findByHashResult)),
             addLatest: vi.fn(() => Promise.resolve(addLatestResult)),
         },
+        activeBlocksStore: {
+            resolveStaleBlocks: vi.fn(() => Promise.resolve(0)),
+        },
     };
 }
 

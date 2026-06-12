@@ -24,7 +24,9 @@ describe('createBlockResponse', () => {
             'https://example.com/sw.js'
         );
         expect(response.status).toBe(302);
-        expect(response.headers.get('Location')).toBe('/sw-api/security-warning');
+        expect(response.headers.get('Location')).toBe(
+            '/sw-api/security-warning?from=https%3A%2F%2Fexample.com%2Fapp.js'
+        );
     });
 
     it('returns plain text warning for non-navigation subresource requests', () => {

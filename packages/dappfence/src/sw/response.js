@@ -109,7 +109,8 @@ const isServiceWorkerPath = (requestUrl, locationHref) => {
  */
 export function createBlockResponse(request, locationHref) {
     if (request.mode === 'navigate') {
-        return createRedirectResponse(API.SECURITY_WARNING);
+        const from = encodeURIComponent(request.url);
+        return createRedirectResponse(`${API.SECURITY_WARNING}?from=${from}`);
     }
     if (isServiceWorkerPath(request.url, locationHref)) {
         return createJavascriptRedirectResponse();
@@ -156,11 +157,12 @@ export function createRedirectResponse(location) {
  * @param {string|null} apiToken
  * @param {Array} activeBlocks
  */
-export function createSecurityPageResponse(apiToken, activeBlocks) {
+export function createSecurityPageResponse(apiToken, activeBlocks, returnUrl = null) {
     const configScript = renderConfigScript({
         apiToken,
         activeBlocks: enrichActiveBlocks(activeBlocks),
         autoConfirmSiteLock: AUTO_CONFIRM_SITE_LOCK,
+        returnUrl,
     });
     const html = HTML_PREFIX + configScript + HTML_SUFFIX;
     return new Response(html, {

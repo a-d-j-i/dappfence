@@ -42,8 +42,13 @@ export function createServices(swGlobal) {
         origin: swContext.getLocationOrigin(),
     });
 
-    const manifestService = createManifestService({ swContext, appStore, config });
     const messageBroker = createMessageBroker(swContext);
+    const manifestService = createManifestService({
+        swContext,
+        appStore,
+        config,
+        onBlocksResolved: messageBroker.broadcastBlockResolved,
+    });
     const core = {
         swContext,
         appStore,

@@ -19,12 +19,14 @@ export const API = {
     STATUS: API_PREFIX + 'status',
     SECURITY_WARNING: API_PREFIX + 'security-warning',
     SITE_UNBLOCK: API_PREFIX + 'site-unblock',
+    CHECK_BLOCKS: API_PREFIX + 'check-blocks',
 };
 
 // --- postMessage type strings (SW ↔ client) ---
 
 export const MSG = {
     SECURITY_BLOCK: 'DAPPFENCE_SECURITY_BLOCK',
+    BLOCK_RESOLVED: 'DAPPFENCE_BLOCK_RESOLVED',
     CLIENT_READY: 'DAPPFENCE_CLIENT_READY',
     CLAIM_CONTROL: 'CLAIM_CONTROL',
 };

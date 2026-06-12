@@ -345,6 +345,12 @@ details.security-info[open] > summary.block-summary {
 }
 
 /* Danger zone — "Remove Site Lock" */
+.security-warning-box .btn-secondary {
+    display: block;
+    width: 100%;
+    margin-bottom: 10px;
+}
+
 .security-warning-box {
     background: var(--sw-amber-soft);
     border: 1px solid var(--sw-amber-border);

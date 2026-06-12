@@ -220,15 +220,10 @@ export function createSecurityFetchHandler({
             );
             return await applyIntegrityPolicy(ctx, markedRequest, response, clientId);
         } catch (error) {
-            logger.error('Error processing:', originalRequest.url, error);
+            logger.error('Error processing:', originalRequest.url, error.toString());
         }
-        // On error, fallback to regular fetch to avoid breaking the app
-        try {
-            return await swContext.fetch(originalRequest);
-        } catch (fetchError) {
-            logger.error('Fallback fetch also failed:', originalRequest.url, fetchError);
-        }
-        // Return undefined to let the browser handle the error
-        return undefined;
+        // On error, fallback to regular fetch. If this also throws, the rejected promise
+        // propagates to event.respondWith and the browser treats it as a network error.
+        return await swContext.fetch(originalRequest);
     };
 }

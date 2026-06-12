@@ -38,6 +38,12 @@
                             Clearing the lock removes <em>all</em> active blocks. Only proceed if
                             you understand the security implications and trust the site.
                         </p>
+                        <p>
+                            If the site developer has deployed a fix, use
+                            <em>Check for Update</em> to re-verify the manifest — if the violation
+                            is resolved, this warning will close automatically without unlocking.
+                        </p>
+                        <button class="btn-secondary" id="check-again">🔄 Check for Update</button>
                         <button class="btn-danger" id="site-unblock">🔓 Remove Site Lock</button>
                     </div>
                 </div>
@@ -57,7 +63,13 @@
                 apiToken = null,
                 activeBlocks = [],
                 autoConfirmSiteLock = false,
+                returnUrl = null,
             } = DAPPFENCE_CONFIG;
+
+            if (returnUrl) {
+                sessionStorage.setItem('dappfence_return_url', returnUrl);
+            }
+            const resolvedReturnUrl = sessionStorage.getItem('dappfence_return_url') || '/';
 
             // Security warning page functionality
             (function () {
@@ -96,11 +108,9 @@
                             if (response.ok) {
                                 console.log('[DappFence] Site lock removed');
                                 if (!autoConfirmSiteLock) {
-                                    alert(
-                                        'Site lock has been removed. Redirecting to home page...'
-                                    );
+                                    alert('Site lock has been removed. Redirecting...');
                                 }
-                                window.location.replace('/');
+                                window.location.replace(resolvedReturnUrl);
                             } else {
                                 console.error('[DappFence] Unblock failed:', response.status);
                                 alert('Failed to remove site lock. Check console for details.');
@@ -111,6 +121,22 @@
                             alert('Failed to remove site lock: ' + error.message);
                         });
                 }
+
+                // Listen for SW block-resolved broadcast — auto-navigate back
+                if (navigator.serviceWorker) {
+                    navigator.serviceWorker.addEventListener('message', function (event) {
+                        if (event.data && event.data.type === 'DAPPFENCE_BLOCK_RESOLVED') {
+                            window.location.replace(resolvedReturnUrl);
+                        }
+                    });
+                }
+
+                document.getElementById('check-again').addEventListener('click', function () {
+                    fetch('/sw-api/check-blocks', {
+                        method: 'POST',
+                        headers: { 'X-DappFence-Token': apiToken },
+                    }).catch(() => {});
+                });
 
                 // Intercept hard-reload key combos (Ctrl+F5, Shift+F5, Ctrl+Shift+R,
                 // Cmd+Shift+R). A hard reload would bypass the SW and hit the

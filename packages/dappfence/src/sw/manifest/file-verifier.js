@@ -195,7 +195,7 @@ export const createFileVerifier = ({ swContext, appStore, config }, manifestLoad
         const fileKey = toPathname(req.url, locationHref);
 
         if (fileKey === manifestFileKey) {
-            return fetchAndStoreManifest();
+            return { status: VERIFICATION_STATUS.SKIPPED, fileKey };
         }
 
         const status = shouldSkipVerification(req, response);

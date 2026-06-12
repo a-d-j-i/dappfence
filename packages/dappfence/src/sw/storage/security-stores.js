@@ -5,6 +5,7 @@
  * All stores use dependency injection: each factory takes a { get, set, withTx }
  * database interface, making them testable with in-memory backends.
  */
+import { ASSET_TYPE } from '../../core/constants.js';
 import { createLogger } from '../../core/logger.js';
 
 const logger = createLogger();
@@ -27,17 +28,18 @@ const BLOCKS_KEY = 'blocks';
  * Generate deterministic block ID using SHA-256 hash.
  * Same violation content = same block ID (prevents duplicates).
  * @param {object} blockData
+ * @param {string} blockData.assetType - Asset type (manifest, asset, service-worker)
  * @param {string} blockData.status - Type of security violation
  * @param {string} blockData.fileKey - The file key that triggered the violation
  * @param {string} [blockData.expectedHash] - Expected hash from manifest
  * @param {string} blockData.actualHash - Actual hash of the file content
  * @returns {Promise<string>} Deterministic block ID like "block_<hash prefix>"
  */
-export async function generateBlockId({ status, fileKey, expectedHash, actualHash }) {
+export async function generateBlockId({ status, fileKey, expectedHash, actualHash, assetType }) {
     if (!status) {
         throw new Error('generateBlockId: Missing required parameters');
     }
-    const contentKey = `${status}_${fileKey || 'N/A'}_${expectedHash || 'N/A'}_${actualHash || 'ERROR'}`;
+    const contentKey = `${assetType || 'N/A'}_${status}_${fileKey || 'N/A'}_${expectedHash || 'N/A'}_${actualHash || 'ERROR'}`;
     const encoder = new TextEncoder();
     const data = encoder.encode(contentKey);
     const hashBuffer = await crypto.subtle.digest('SHA-256', data);
@@ -167,6 +169,50 @@ export function createActiveBlocksStore(database) {
         }
     }
 
+    async function resolveStaleBlocks(files) {
+        try {
+            return await database.withTx(async (tx) => {
+                const activeIds = (await tx.get(ACTIVE_BLOCK_IDS_KEY)) || [];
+                if (activeIds.length === 0) {
+                    return 0;
+                }
+                const blocks = (await tx.get(BLOCKS_KEY)) || {};
+                const resolved = activeIds.filter((id) => {
+                    const block = blocks[id];
+                    if (!block) {
+                        return true; // orphaned ID
+                    }
+                    if (!block.actualHash) {
+                        // Only auto-resolve manifest-level blocks (invalid signature, fetch failure).
+                        // File-level blocks with null hashes (Resolved manifest undefined with mode reportinge.g., NOT_FOUND_IN_MANIFEST) must not
+                        // be auto-resolved this way.
+                        return block.assetType === ASSET_TYPE.MANIFEST;
+                    }
+                    const entry = files[block.fileKey];
+                    if (!entry) {
+                        return false; // still not in manifest
+                    }
+                    const hashes = Array.isArray(entry) ? entry : [entry];
+                    return hashes.includes(block.actualHash);
+                });
+                if (resolved.length === 0) {
+                    return 0;
+                }
+                const resolvedSet = new Set(resolved);
+                const remaining = activeIds.filter((id) => !resolvedSet.has(id));
+                await tx.set(ACTIVE_BLOCK_IDS_KEY, remaining);
+                if (remaining.length === 0) {
+                    blocked = false;
+                }
+                logger.log(`Auto-resolved ${resolved.length} stale block(s)`);
+                return resolved.length;
+            });
+        } catch (error) {
+            logger.error('Failed to resolve stale blocks:', error);
+            return 0;
+        }
+    }
+
     async function clearBlockCondition() {
         try {
             await database.set(ACTIVE_BLOCK_IDS_KEY, []);
@@ -184,6 +230,7 @@ export function createActiveBlocksStore(database) {
         getAllBlocks,
         getSecurityBlock,
         clearBlockCondition,
+        resolveStaleBlocks,
     };
 }
 
