@@ -76,11 +76,14 @@ function makeVerifier({
     const fetchAndStoreManifest = vi.fn(() =>
         Promise.resolve({ status: VERIFICATION_STATUS.MATCH, ...fetchResult })
     );
+    const storeManifestFromResponse = vi.fn(() =>
+        Promise.resolve({ status: VERIFICATION_STATUS.MATCH, ...fetchResult })
+    );
     const getManifestHistory = vi.fn(() => Promise.resolve(historicManifests));
     const swContext = makeSwContext({ clients });
     const appStore = makeAppStore();
     const config = { manifestUrl: 'https://example.com/integrity-manifest.json' };
-    const manifestLoader = { fetchAndStoreManifest, getManifestHistory };
+    const manifestLoader = { fetchAndStoreManifest, storeManifestFromResponse, getManifestHistory };
 
     const { verifyFileWithContext } = createFileVerifier(
         { swContext, appStore, config },
@@ -94,6 +97,7 @@ function makeVerifier({
         verifyFileWithContext,
         verify,
         fetchAndStoreManifest,
+        storeManifestFromResponse,
         getManifestHistory,
         appStore,
         swContext,
@@ -140,11 +144,13 @@ describe('gate checks', () => {
         expect(result.status).toBe(VERIFICATION_STATUS.SKIPPED);
     });
 
-    it('verifies the manifest file itself via fetchAndStoreManifest', async () => {
-        const { verify, fetchAndStoreManifest } = makeVerifier();
+    it('verifies the manifest file itself via storeManifestFromResponse', async () => {
+        const { verify, storeManifestFromResponse, fetchAndStoreManifest } = makeVerifier();
         const req = makeSubResource('/integrity-manifest.json');
-        const result = await verify(req, makeOkResponse());
-        expect(fetchAndStoreManifest).toHaveBeenCalled();
+        const response = makeOkResponse();
+        const result = await verify(req, response);
+        expect(storeManifestFromResponse).toHaveBeenCalledWith(response);
+        expect(fetchAndStoreManifest).not.toHaveBeenCalled();
         expect(result.status).toBe(VERIFICATION_STATUS.MATCH);
     });
 });

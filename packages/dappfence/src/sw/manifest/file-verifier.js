@@ -14,7 +14,7 @@
  * page load, so any failure is a genuine violation.
  */
 
-import { VERIFICATION_STATUS } from '../../core/constants.js';
+import { ASSET_TYPE, VERIFICATION_STATUS } from '../../core/constants.js';
 import { applyTransform, collectContentRuleActions, resolveManifestKey } from './rules.js';
 import { toPathname } from './verification.js';
 import { createLogger } from '../../core/logger.js';
@@ -41,10 +41,12 @@ const manifestDecidedAbout = (result) =>
  * @param {object} manifestLoader
  */
 export const createFileVerifier = ({ swContext, appStore, config }, manifestLoader) => {
-    const { fetchAndStoreManifest, getManifestHistory } = manifestLoader;
+    const { storeManifestFromResponse, fetchAndStoreManifest, getManifestHistory } = manifestLoader;
     const { verificationResultsStore } = appStore;
     const locationHref = swContext.getLocationHref();
-    const manifestFileKey = toPathname(config.manifestUrl, locationHref);
+    const manifestFileKey = config.manifestUrl
+        ? toPathname(config.manifestUrl, locationHref)
+        : null;
     const clientIdXManifest = new Map();
 
     const pruneStaleClients = () => {
@@ -114,15 +116,15 @@ export const createFileVerifier = ({ swContext, appStore, config }, manifestLoad
         );
         if (action.type === 'allow') {
             logger.log(`⏭️  Skipping (allow): ${fileKey}`);
-            return { status: VERIFICATION_STATUS.SKIPPED, fileKey };
+            return { status: VERIFICATION_STATUS.SKIPPED };
         }
         if (action.type === 'deny') {
             logger.log(`❌ Denied by rule: ${fileKey}`);
-            return { status: VERIFICATION_STATUS.DENIED_BY_RULE, fileKey };
+            return { status: VERIFICATION_STATUS.DENIED_BY_RULE };
         }
         if (action.type === 'rewrite') {
             logger.log(`↩️  Rewriting by rule: ${fileKey}`);
-            return { status: VERIFICATION_STATUS.REWRITE, fileKey };
+            return { status: VERIFICATION_STATUS.REWRITE };
         }
         if (action.type === 'transform') {
             const transformed = applyTransform(rawBuffer, action.transform);
@@ -135,12 +137,7 @@ export const createFileVerifier = ({ swContext, appStore, config }, manifestLoad
                 `Using manifest ${manifestInfo.appVersion} for ${fileKey} hash ${fileHash} expected: ${expectedHashes.join(', ')}`
             );
             if (expectedHashes.includes(fileHash)) {
-                return {
-                    status: VERIFICATION_STATUS.MATCH,
-                    fileKey,
-                    expectedHashes,
-                    actualHash: fileHash,
-                };
+                return { status: VERIFICATION_STATUS.MATCH, expectedHashes, actualHash: fileHash };
             }
             return null;
         }
@@ -154,20 +151,10 @@ export const createFileVerifier = ({ swContext, appStore, config }, manifestLoad
             if (expectedHashes.length === 0) {
                 return null;
             }
-            if (expectedHashes.includes(fileHash)) {
-                return {
-                    status: VERIFICATION_STATUS.MATCH,
-                    fileKey,
-                    expectedHashes,
-                    actualHash: fileHash,
-                };
-            }
-            return {
-                status: VERIFICATION_STATUS.MISMATCH,
-                fileKey,
-                expectedHashes,
-                actualHash: fileHash,
-            };
+            const status = expectedHashes.includes(fileHash)
+                ? VERIFICATION_STATUS.MATCH
+                : VERIFICATION_STATUS.MISMATCH;
+            return { status, expectedHashes, actualHash: fileHash };
         }
         return null;
     };
@@ -177,63 +164,21 @@ export const createFileVerifier = ({ swContext, appStore, config }, manifestLoad
         const fileKey = resolveManifestKey(req, response, locationHref, manifest);
         const actions = collectContentRuleActions(fileKey, req.destination, manifest?.contentRules);
         const actionsToWalk = actions.length ? actions : [{ type: 'verify' }];
-        let lastResult = { status: VERIFICATION_STATUS.NOT_FOUND_IN_MANIFEST, fileKey };
+        let lastResult = { status: VERIFICATION_STATUS.NOT_FOUND_IN_MANIFEST };
         for (const action of actionsToWalk) {
             const r = await applyAction(action, rawBuffer, fileKey, manifestInfo);
             if (r !== null) {
                 if (r.status.isTerminal) {
-                    return r;
+                    return { ...r, fileKey };
                 }
                 lastResult = r;
             }
         }
         logger.log(`❌ ${lastResult.status.description}: ${fileKey}`);
-        return lastResult;
+        return { ...lastResult, fileKey };
     };
 
-    const verifyFileWithContext = async (req, response, clientId, latestManifest) => {
-        const fileKey = toPathname(req.url, locationHref);
-
-        if (fileKey === manifestFileKey) {
-            return fetchAndStoreManifest();
-        }
-
-        const status = shouldSkipVerification(req, response);
-        if (status !== null) {
-            logger.log(`⏭️  ${status.description}: ${fileKey}`);
-            return { status, fileKey };
-        }
-
-        const isNavigation = req.mode === 'navigate';
-        logger.log(
-            `[verifyFileWithContext] req.method=${req.method} clientId=${clientId} isNavigation=${isNavigation}`
-        );
-
-        // Step 1: pinned client (non-navigation). The pinned manifest is the
-        // truth for this page load — any failure is a genuine violation.
-        if (clientId && !isNavigation) {
-            const pinned = clientIdXManifest.get(clientId);
-            if (pinned) {
-                logger.log(`[verifyFileWithContext] clientId=${clientId} (pinned)`);
-                let rawBuffer;
-                try {
-                    rawBuffer = await response.arrayBuffer();
-                } catch (err) {
-                    logger.warn(`Failed to read response body (pinned client)`, err);
-                    return { status: VERIFICATION_STATUS.ERROR, fileKey };
-                }
-                return runPipeline(req, response, pinned, rawBuffer);
-            }
-        }
-
-        let rawBuffer;
-        try {
-            rawBuffer = await response.arrayBuffer();
-        } catch (err) {
-            logger.warn(`Failed to read response body: ${req.url}`, err);
-            return { status: VERIFICATION_STATUS.ERROR, fileKey };
-        }
-
+    const verifyWithEscalation = async (req, response, rawBuffer, clientId, latestManifest) => {
         const triedVersions = new Set();
         const tryManifest = async (manifestInfo) => {
             if (
@@ -280,6 +225,54 @@ export const createFileVerifier = ({ swContext, appStore, config }, manifestLoad
         const fetchedResult = await tryManifest(fetched);
         // Prefer freshly fetched result first, then latest, then history in order.
         return [fetchedResult, latestResult, ...historicResults].find((r) => r !== null) ?? fetched;
+    };
+
+    const verifyFileWithContext = async (req, response, clientId, latestManifest) => {
+        const fileKey = toPathname(req.url, locationHref);
+
+        if (fileKey === manifestFileKey) {
+            return storeManifestFromResponse(response);
+        }
+
+        // fileKey from fields overrides the default (resolveManifestKey may differ);
+        // assetType is last so it always wins.
+        const fileResult = (fields) => ({
+            fileKey,
+            url: req.url,
+            ...fields,
+            assetType: ASSET_TYPE.ASSET,
+        });
+
+        const skipStatus = shouldSkipVerification(req, response);
+        if (skipStatus !== null) {
+            logger.log(`⏭️  ${skipStatus.description}: ${fileKey}`);
+            return fileResult({ status: skipStatus });
+        }
+
+        const isNavigation = req.mode === 'navigate';
+        logger.log(
+            `[verifyFileWithContext] req.method=${req.method} clientId=${clientId} isNavigation=${isNavigation}`
+        );
+
+        let rawBuffer;
+        try {
+            rawBuffer = await response.arrayBuffer();
+        } catch (err) {
+            logger.warn(`Failed to read response body: ${req.url}`, err);
+            return fileResult({ status: VERIFICATION_STATUS.ERROR });
+        }
+
+        if (clientId && !isNavigation) {
+            const pinned = clientIdXManifest.get(clientId);
+            if (pinned) {
+                logger.log(`[verifyFileWithContext] clientId=${clientId} (pinned)`);
+                return fileResult(await runPipeline(req, response, pinned, rawBuffer));
+            }
+        }
+
+        return fileResult(
+            await verifyWithEscalation(req, response, rawBuffer, clientId, latestManifest)
+        );
     };
 
     return { verifyFileWithContext };

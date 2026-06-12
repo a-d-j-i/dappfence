@@ -7,8 +7,8 @@ import {
 import {
     toPathname,
     verifyManifestSignature,
-    verifyImportedScript,
     verifyLocation,
+    verifyImportedScript,
 } from '../manifest/verification.js';
 import { normalizeManifestData } from '../storage/manifest-store.js';
 import { createSingleFlight } from '../../core/utils.js';
@@ -475,7 +475,7 @@ describe('verifyLocation', () => {
         delete globalThis.__FEATURES__;
     });
 
-    it('fetches the URL and returns the verifyFile result', async () => {
+    it('fetches the URL and returns the verifyFile result enriched with url', async () => {
         const verifyFileResult = {
             status: 'MATCH',
             fileKey: '/lib.js',
@@ -488,6 +488,7 @@ describe('verifyLocation', () => {
         const deps = {
             swContext: {
                 fetch: vi.fn().mockResolvedValue(response),
+                getLocationHref: () => 'https://example.com/sw.js',
             },
             manifestService: mockManifestService(verifyFile),
         };
@@ -504,11 +505,12 @@ describe('verifyLocation', () => {
         expect(result).toEqual(verifyFileResult);
     });
 
-    it('returns verifyFile-compatible error on fetch failure', async () => {
+    it('returns error with httpStatus on fetch failure', async () => {
         const verifyFile = vi.fn();
         const deps = {
             swContext: {
                 fetch: vi.fn().mockResolvedValue({ ok: false, status: 500, statusText: 'Error' }),
+                getLocationHref: () => 'https://example.com/sw.js',
             },
             manifestService: mockManifestService(verifyFile),
         };
@@ -516,7 +518,7 @@ describe('verifyLocation', () => {
         const result = await verifyLocation(deps, '/missing.js');
 
         expect(verifyFile).not.toHaveBeenCalled();
-        expect(result).toEqual({ status: VERIFICATION_STATUS.ERROR });
+        expect(result).toEqual({ status: VERIFICATION_STATUS.ERROR, httpStatus: 500 });
     });
 });
 
@@ -538,6 +540,7 @@ describe('verifyImportedScript', () => {
             appStore: { recordSecurityViolation: vi.fn() },
             swContext: {
                 fetch: vi.fn().mockResolvedValue(response),
+                getLocationHref: () => 'https://example.com/sw.js',
             },
         };
 
@@ -563,6 +566,7 @@ describe('verifyImportedScript', () => {
             appStore: { recordSecurityViolation: vi.fn() },
             swContext: {
                 fetch: vi.fn().mockResolvedValue(new Response('bad content')),
+                getLocationHref: () => 'https://example.com/sw.js',
             },
         };
 
@@ -585,6 +589,7 @@ describe('verifyImportedScript', () => {
                 fetch: vi
                     .fn()
                     .mockResolvedValue({ ok: false, status: 404, statusText: 'Not Found' }),
+                getLocationHref: () => 'https://example.com/sw.js',
             },
         };
 
@@ -610,6 +615,7 @@ describe('verifyImportedScript', () => {
             appStore: { recordSecurityViolation: vi.fn() },
             swContext: {
                 fetch: vi.fn().mockResolvedValue(new Response('content')),
+                getLocationHref: () => 'https://example.com/sw.js',
             },
         };
 

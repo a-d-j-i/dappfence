@@ -10,7 +10,9 @@
  * @param {string} env.userAgent
  * @param {string} env.origin
  */
+import { devAssert } from '../../core/utils.js';
 import { createLogger } from '../../core/logger.js';
+import { ASSET_TYPE } from '../../core/constants.js';
 import { createManifestStore } from './manifest-store.js';
 import {
     createActiveBlocksStore,
@@ -62,6 +64,10 @@ export function createAppStore(db, { userAgent, origin } = {}) {
      * @returns {Promise<boolean>} mustBlock — true if the caller should block the request
      */
     async function recordSecurityViolation(details) {
+        devAssert(details.status && typeof details.status.description === 'string');
+        devAssert(Object.values(ASSET_TYPE).includes(details.assetType));
+        devAssert(details.url);
+        devAssert(details.fileKey);
         try {
             // status is the runtime verdict object; persistence + log lines want
             // the description string. Normalize once and use it everywhere below.

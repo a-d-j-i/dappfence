@@ -82,7 +82,7 @@ export const verifyManifestSignature = (
  * @param {object} deps.swContext
  * @param {object} deps.manifestService
  * @param {string} url
- * @returns {Promise<object>}
+ * @returns {Promise<{ status, httpStatus? }>}
  */
 export async function verifyLocation({ swContext, manifestService }, url) {
     try {
@@ -92,14 +92,18 @@ export async function verifyLocation({ swContext, manifestService }, url) {
                 ? { headers: { 'x-dappfence': 'sw-verification' } }
                 : {}
         );
-        if (response && response.ok) {
-            const ctx = await manifestService.resolveManifest();
-            return await ctx.verifyFile(
-                { url, destination: 'script', method: 'GET', mode: '' },
-                response
-            );
+        if (response) {
+            if (response.ok) {
+                const ctx = await manifestService.resolveManifest();
+                return ctx.verifyFile(
+                    { url, destination: 'script', method: 'GET', mode: '' },
+                    response
+                );
+            }
+            logger.error(`Failed to fetch ${url}: ${response.status}`);
+            return { status: VERIFICATION_STATUS.ERROR, httpStatus: response.status };
         }
-        logger.error(`Failed to fetch ${url}: ${response.status} ${response.statusText}`);
+        logger.error(`Failed to fetch ${url}: null response`);
     } catch (error) {
         logger.error(`Error verifying ${url}:`, error);
     }
@@ -115,12 +119,14 @@ export async function verifyLocation({ swContext, manifestService }, url) {
  * @param {string} scriptPath
  */
 export async function verifyImportedScript(deps, scriptPath) {
+    const fileKey = toPathname(scriptPath, deps.swContext.getLocationHref());
     const verificationResult = await verifyLocation(deps, scriptPath);
     if (verificationResult.status.isViolation) {
         await deps.appStore.recordSecurityViolation({
             ...verificationResult,
-            assetType: ASSET_TYPE.SERVICE_WORKER,
             url: scriptPath,
+            fileKey,
+            assetType: ASSET_TYPE.SERVICE_WORKER,
         });
         logger.log(
             `Security violation detected for ${scriptPath}: ${verificationResult.status.description}`
