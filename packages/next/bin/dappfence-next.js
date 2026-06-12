@@ -1,28 +1,41 @@
 #!/usr/bin/env node
 /**
- * dappfence-next — postbuild CLI for Next.js static export (output: 'export').
+ * dappfence-next — build wrapper + postbuild CLI for Next.js.
  *
- * Reads the config written by the webpack plugin during `next build`, then:
- *   1. Copies dappfence.js into the export output directory.
- *   2. Injects the dappfence script tag into every HTML file.
- *   3. Hashes all tracked files and writes a signed integrity-manifest.json.
+ * Usage:
+ *   "build": "dappfence-next build"    ← preferred: wraps next build
+ *   "build": "next build && dappfence-next"  ← alternative: explicit chain
  *
- * Add to package.json:
- *   "scripts": {
- *     "build": "next build",
- *     "postbuild": "dappfence-next"
- *   }
+ * In wrapper mode (`dappfence-next build`), spawns `next build` as a child
+ * process. Because `next build` calls process.exit(0) internally, npm's
+ * postbuild lifecycle never fires — but the parent process continues after
+ * the child exits, so we can generate the manifest here.
+ *
+ * Supports two project types detected from the config written by the
+ * webpack plugin during `next build`:
+ *
+ *   Static export (output: 'export'):
+ *     1. Copies dappfence.js into the export output directory.
+ *     2. Injects the dappfence script tag into every HTML file.
+ *     3. Hashes all tracked files and writes integrity-manifest.json.
+ *
+ *   SSR (default Next.js mode):
+ *     1. Hashes all files in .next/static/ (served at /_next/static/).
+ *     2. Reads pre-rendered HTML from .next/server/{app,pages}/ and hashes them.
+ *     3. Writes integrity-manifest.json to public/.
  */
 import { createRequire } from 'node:module';
 import { promises as fs } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { readDynamicRoutes } from '../src/routes.js';
+import { hashPrerenderedPages, hashPublicFiles } from '../src/ssr.js';
 
 const _require = createRequire(import.meta.url);
 const { generateManifest } = _require('@dappfence/manifest-tools/manifest');
 const DAPPFENCE_JS_PATH = _require.resolve('@dappfence/core');
 
-const DEFAULT_PATH_RULES = [{ type: 'directory-index' }, { type: 'html-extension' }];
+const STATIC_EXPORT_PATH_RULES = [{ type: 'directory-index' }, { type: 'html-extension' }];
 
 function buildContentRules({ isNetlify = false } = {}) {
     if (isNetlify) {
@@ -36,8 +49,102 @@ function buildContentRules({ isNetlify = false } = {}) {
     return [];
 }
 
-async function main() {
-    const configPath = path.join(process.cwd(), '.next', 'dappfence-config.json');
+const logger = {
+    info: (msg) => console.log(msg),
+    warn: (msg) => console.warn(msg),
+    error: (msg) => console.error(msg),
+};
+
+async function runSSR(opts, projectRoot) {
+    const basePath = opts.basePath || '';
+    const isNetlify = Boolean(process.env.NETLIFY);
+    const secretKey = process.env.DAPPFENCE_SECRET_KEY || opts.secretKey || null;
+
+    const nextStaticDir = path.join(projectRoot, '.next', 'static');
+    const publicDir = path.join(projectRoot, 'public');
+
+    const nextStaticExists = await fs
+        .stat(nextStaticDir)
+        .then(() => true)
+        .catch(() => false);
+    if (!nextStaticExists) {
+        logger.warn('DappFence: no .next/static directory found — did `next build` complete?');
+        process.exit(1);
+    }
+
+    const [dynamicRoutes, pageHashes, publicHashes] = await Promise.all([
+        readDynamicRoutes(projectRoot),
+        hashPrerenderedPages(projectRoot, basePath, logger),
+        hashPublicFiles(projectRoot, opts.manifestPath, basePath, logger),
+    ]);
+    const extraHashes = { ...pageHashes, ...publicHashes };
+
+    const ssrPathRules = [{ type: 'directory-index' }];
+    const notFoundKey = extraHashes[basePath + '/404']
+        ? basePath + '/404'
+        : extraHashes['/404']
+          ? '/404'
+          : null;
+    if (notFoundKey) {
+        ssrPathRules.push({ type: 'not-found', fallback: notFoundKey });
+    }
+
+    await generateManifest({
+        outDir: nextStaticDir,
+        manifestPath: path.relative(nextStaticDir, path.join(publicDir, opts.manifestPath)),
+        pathPrefix: basePath + '/_next/static',
+        exclude: opts.exclude,
+        secretKey,
+        mode: opts.mode,
+        dynamicRoutes: dynamicRoutes.map((r) => (basePath ? basePath + r : r)),
+        pathRules: ssrPathRules,
+        contentRules: buildContentRules({ isNetlify }),
+        scriptAttrs: null,
+        logger,
+        ...(Object.keys(extraHashes).length > 0 && { extraHashes }),
+    });
+
+    logger.info(`DappFence: manifest written → public/${opts.manifestPath}`);
+}
+
+async function runStaticExport(opts, projectRoot) {
+    const outDir = path.join(projectRoot, opts.distDir || 'out');
+
+    const outDirExists = await fs
+        .stat(outDir)
+        .then(() => true)
+        .catch(() => false);
+    if (!outDirExists) {
+        console.error(`DappFence: output directory not found: ${outDir}`);
+        process.exit(1);
+    }
+
+    const destRel = opts.scriptSrc.replace(/^\//, '');
+    const destAbs = path.join(outDir, destRel);
+    await fs.mkdir(path.dirname(destAbs), { recursive: true });
+    await fs.copyFile(DAPPFENCE_JS_PATH, destAbs);
+    console.log(`DappFence: copied dappfence.js → ${destRel}`);
+
+    const secretKey = process.env.DAPPFENCE_SECRET_KEY || null;
+    const dynamicRoutes = await readDynamicRoutes(projectRoot);
+    const isNetlify = Boolean(process.env.NETLIFY);
+
+    await generateManifest({
+        outDir,
+        manifestPath: opts.manifestPath,
+        exclude: opts.exclude,
+        secretKey,
+        mode: opts.mode,
+        dynamicRoutes,
+        pathRules: STATIC_EXPORT_PATH_RULES,
+        contentRules: buildContentRules({ isNetlify }),
+        scriptAttrs: opts,
+        logger,
+    });
+}
+
+async function generateManifestFromConfig(projectRoot) {
+    const configPath = path.join(projectRoot, '.next', 'dappfence-config.json');
 
     let opts;
     try {
@@ -50,49 +157,33 @@ async function main() {
         process.exit(1);
     }
 
-    // Next.js static export writes to out/ by default.
-    const outDir = path.join(process.cwd(), opts.distDir || 'out');
-
-    const outDirExists = await fs
-        .stat(outDir)
-        .then(() => true)
-        .catch(() => false);
-    if (!outDirExists) {
-        console.error(`DappFence: output directory not found: ${outDir}`);
-        process.exit(1);
+    if (opts.buildType === 'ssr') {
+        await runSSR(opts, projectRoot);
+    } else {
+        await runStaticExport(opts, projectRoot);
     }
+}
 
-    // Copy dappfence.js into the output directory.
-    const destRel = opts.scriptSrc.replace(/^\//, '');
-    const destAbs = path.join(outDir, destRel);
-    await fs.mkdir(path.dirname(destAbs), { recursive: true });
-    await fs.copyFile(DAPPFENCE_JS_PATH, destAbs);
-    console.log(`DappFence: copied dappfence.js → ${destRel}`);
+async function main() {
+    const args = process.argv.slice(2);
+    const projectRoot = process.cwd();
 
-    const logger = {
-        info: (msg) => console.log(msg),
-        warn: (msg) => console.warn(msg),
-        error: (msg) => console.error(msg),
-    };
-
-    // secretKey is never written to the config file; read it from the environment.
-    const secretKey = process.env.DAPPFENCE_SECRET_KEY || null;
-
-    const dynamicRoutes = await readDynamicRoutes(process.cwd());
-    const isNetlify = Boolean(process.env.NETLIFY);
-
-    await generateManifest({
-        outDir,
-        manifestPath: opts.manifestPath,
-        exclude: opts.exclude,
-        secretKey,
-        mode: opts.mode,
-        dynamicRoutes,
-        pathRules: DEFAULT_PATH_RULES,
-        contentRules: buildContentRules({ isNetlify }),
-        scriptAttrs: opts,
-        logger,
-    });
+    if (args[0] === 'build') {
+        // Wrapper mode: spawn next build as a child process, then generate the
+        // manifest. next build calls process.exit(0) internally which would kill
+        // a parent process only if we were using fork() — spawnSync is safe.
+        const result = spawnSync('next', ['build', ...args.slice(1)], {
+            stdio: 'inherit',
+            shell: process.platform === 'win32',
+        });
+        if (result.status !== 0) {
+            process.exit(result.status ?? 1);
+        }
+        await generateManifestFromConfig(projectRoot);
+    } else {
+        // Postbuild mode: next build already ran, just generate the manifest.
+        await generateManifestFromConfig(projectRoot);
+    }
 }
 
 main().catch((err) => {

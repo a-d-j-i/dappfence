@@ -75,5 +75,14 @@ export async function readDynamicRoutes(projectRoot) {
         if (!prerendered.has(urlPath)) patterns.add(urlPath);
     }
 
+    // App Router API route handlers — keys end in "/route" (e.g. "/api/version/route").
+    // These are request handlers that produce dynamic responses; they have no HTML
+    // on disk and can never be content-hashed at build time.
+    for (const appPath of Object.keys(appPathsManifest ?? {})) {
+        if (!appPath.endsWith('/route')) continue;
+        const urlPath = appPath.slice(0, -'/route'.length) || '/';
+        patterns.add(urlPath);
+    }
+
     return [...patterns];
 }

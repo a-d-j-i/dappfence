@@ -61,6 +61,8 @@ export default function dappfence(options = {}) {
     let resolvedRoutes = [];
     let resolvedBuildFormat = 'directory';
     let resolvedServerDir = null;
+    // Normalized base path (e.g. '/my-app'); empty string when site is at root.
+    let resolvedBase = '';
 
     return {
         name: '@dappfence/astro',
@@ -77,6 +79,9 @@ export default function dappfence(options = {}) {
                 if (config.build?.server) {
                     resolvedServerDir = fileURLToPath(config.build.server);
                 }
+                // Normalize base: strip trailing slash; treat '/' as no prefix.
+                const rawBase = config.base ?? '/';
+                resolvedBase = rawBase === '/' ? '' : rawBase.replace(/\/$/, '');
             },
 
             // Fires after Astro resolves all routes (dev and build).
@@ -117,7 +122,8 @@ export default function dappfence(options = {}) {
                 const tier2Routes = entryExists
                     ? await extractTier2Routes(resolvedRoutes, serverDir, logger)
                     : [];
-                const allSSRRoutes = [...tier1Routes, ...tier2Routes];
+                const prefixRoute = resolvedBase ? (r) => resolvedBase + r : (r) => r;
+                const allSSRRoutes = [...tier1Routes, ...tier2Routes].map(prefixRoute);
 
                 if (allSSRRoutes.length) {
                     if (entryExists) {
@@ -139,6 +145,7 @@ export default function dappfence(options = {}) {
                     pages,
                     routes: resolvedRoutes,
                     buildFormat: resolvedBuildFormat,
+                    base: resolvedBase,
                     scriptAttrs: opts,
                     logger,
                     ...(extraHashes && { extraHashes }),

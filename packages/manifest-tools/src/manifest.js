@@ -38,15 +38,15 @@ function injectScriptTag(html, opts) {
     return html.replace(/(<head[^>]*>)/i, `$1\n    ${tag}`);
 }
 
-async function walk(base, dir, excludes) {
+async function walk(base, dir, excludes, pathPrefix = '') {
     const entries = await fs.readdir(dir, { withFileTypes: true });
     const results = await Promise.all(
         entries.map(async (entry) => {
             const abs = path.join(dir, entry.name);
-            const web = '/' + path.relative(base, abs).replace(/\\/g, '/');
+            const web = pathPrefix + '/' + path.relative(base, abs).replace(/\\/g, '/');
             if (entry.isDirectory()) {
                 if (excludes.some((e) => web.startsWith(e))) return [];
-                return walk(base, abs, excludes);
+                return walk(base, abs, excludes, pathPrefix);
             }
             if (entry.isFile()) {
                 if (excludes.some((e) => web.startsWith(e))) return [];
@@ -79,6 +79,8 @@ async function walk(base, dir, excludes) {
  * @param {object}   opts.logger            - Logger with .info / .warn / .error
  * @param {object}   [opts.extraHashes]     - Pre-computed { webPath: sriHash } entries merged into files
  *                                           (e.g. SSR routes hashed by the integration at build time)
+ * @param {string}   [opts.pathPrefix]      - URL prefix prepended to every hashed file's web path.
+ *                                           Use when outDir maps to a URL sub-path (e.g. '/_next/static').
  */
 async function generateManifest({
     outDir,
@@ -93,15 +95,16 @@ async function generateManifest({
     scriptAttrs,
     logger,
     extraHashes,
+    pathPrefix = '',
 }) {
-    const excludes = [...(exclude || []), '/' + manifestPath];
+    const excludes = [...(exclude || []), pathPrefix + '/' + manifestPath];
     const isPage = pageFilter || ((_webPath, ext) => ext === '.html' || ext === '.htm');
 
     if (dynamicRoutes?.length) {
         logger.info(`DappFence: ${dynamicRoutes.length} dynamic (SSR) routes captured`);
     }
 
-    const files = await walk(outDir, outDir, excludes);
+    const files = await walk(outDir, outDir, excludes, pathPrefix);
     logger.info(`DappFence: hashing ${files.length} files`);
 
     const fileHashes = {};
