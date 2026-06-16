@@ -121,7 +121,7 @@ describe('buildContentRules', () => {
 
     it('returns netlify-cdp transform rule on Netlify', () => {
         const rules = buildContentRules({ isNetlify: true });
-        expect(rules).toHaveLength(1);
+        expect(rules).toHaveLength(3);
         expect(rules[0].action.type).toBe('transform');
         expect(rules[0].action.transform).toBe('netlify-cdp');
         expect(rules[0].condition.resourceTypes).toContain('document');
@@ -463,7 +463,7 @@ describe('generateManifest', () => {
         const manifest = JSON.parse(
             await fs.readFile(path.join(outDir, 'integrity-manifest.json'), 'utf8')
         );
-        expect(manifest.pay.contentRules).toHaveLength(1);
+        expect(manifest.pay.contentRules).toHaveLength(3);
         expect(manifest.pay.contentRules[0].action.transform).toBe('netlify-cdp');
     });
 });
