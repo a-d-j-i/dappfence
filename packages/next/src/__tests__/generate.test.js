@@ -6,6 +6,7 @@ import { createRequire } from 'node:module';
 import { readDynamicRoutes } from '../routes.js';
 import { hashPrerenderedPages } from '../ssr.js';
 import { withDappfence, getDappfenceScriptAttrs, ATTRS_ENV_KEY } from '../index.js';
+import { buildContentRules } from '../webpack-plugin.js';
 
 const _require = createRequire(import.meta.url);
 const { buildScriptAttrs, buildScriptTag, injectScriptTag, generateManifest } = _require(
@@ -181,6 +182,20 @@ describe('generateManifest', () => {
         );
         expect(manifest.pay.pathRules).toEqual(pathRules);
         expect(manifest.pay.contentRules).toEqual(contentRules);
+    });
+});
+
+describe('buildContentRules', () => {
+    it('returns empty array when not on Netlify', () => {
+        expect(buildContentRules()).toEqual([]);
+        expect(buildContentRules({ isNetlify: false })).toEqual([]);
+    });
+
+    it('returns netlify-cdp transform rule when isNetlify is true', () => {
+        const rules = buildContentRules({ isNetlify: true });
+        expect(rules).toHaveLength(1);
+        expect(rules[0].action.transform).toBe('netlify-cdp');
+        expect(rules[0].condition.resourceTypes).toContain('document');
     });
 });
 
