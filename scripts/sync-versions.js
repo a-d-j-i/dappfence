@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /**
- * Sync all publishable package versions to a single version.
+ * Sync all workspace package versions to a single version (private and public alike).
+ * The private flag only gates `npm publish`, not version syncing.
  *
  * Usage:
  *   node scripts/sync-versions.js                                list current versions
@@ -35,23 +36,27 @@ const packageJsonPaths = workspacePatterns.flatMap((pattern) => {
         .map((e) => `${base}/${e.name}/package.json`);
 });
 
-const publishable = packageJsonPaths.filter((relPath) => {
+// All workspace packages get their version bumped (private or not).
+// The private flag only gates `npm publish`, not version syncing.
+const allPackages = packageJsonPaths.filter((relPath) => {
     try {
-        return !JSON.parse(readFileSync(resolve(ROOT, relPath), 'utf8')).private;
+        JSON.parse(readFileSync(resolve(ROOT, relPath), 'utf8'));
+        return true;
     } catch {
         return false;
     }
 });
 
 const workspaceNames = new Set(
-    publishable.map((p) => JSON.parse(readFileSync(resolve(ROOT, p), 'utf8')).name)
+    allPackages.map((p) => JSON.parse(readFileSync(resolve(ROOT, p), 'utf8')).name)
 );
 
 if (!version) {
     console.log('Current package versions:\n');
-    for (const relPath of publishable) {
+    for (const relPath of allPackages) {
         const pkg = JSON.parse(readFileSync(resolve(ROOT, relPath), 'utf8'));
-        console.log(`  ${pkg.name}  ${pkg.version}`);
+        const tag = pkg.private ? ' (private)' : '';
+        console.log(`  ${pkg.name}  ${pkg.version}${tag}`);
     }
     console.log('\nTo preview a bump:  npm run sync-versions <version>');
     console.log('To apply a bump:    npm run sync-versions <version> -- --apply');
@@ -68,7 +73,7 @@ if (!apply) {
     );
 }
 
-for (const relPath of publishable) {
+for (const relPath of allPackages) {
     const abs = resolve(ROOT, relPath);
     const pkg = JSON.parse(readFileSync(abs, 'utf8'));
     const oldVersion = pkg.version;

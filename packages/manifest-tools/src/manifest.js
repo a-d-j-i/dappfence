@@ -6,6 +6,71 @@ const { promises: fs } = require('fs');
 const path = require('path');
 const { calculateFileHash, signManifest } = require('./build');
 
+const CDP_SCRIPT_PATH = '/.netlify/scripts/cdp';
+
+// Pre-computed hashes for known Netlify CDP script versions.
+// Add new entries here when Netlify ships an updated script.
+const NETLIFY_CDP_KNOWN_HASHES = [
+    'sha256-pTgm3D8vQpOitZlnprm7whsvUg/r487ILpgWI9NblUQ=', // 2026-06
+];
+
+function buildNetlifyContentRules() {
+    return [
+        {
+            condition: { resourceTypes: ['document'] },
+            action: { type: 'transform', transform: 'netlify-cdp' },
+        },
+        {
+            condition: { urlFilter: CDP_SCRIPT_PATH },
+            action: { type: 'verify' },
+        },
+        {
+            condition: { urlFilter: CDP_SCRIPT_PATH },
+            action: { type: 'rewrite' },
+        },
+    ];
+}
+
+/**
+ * Return SRI hashes for the Netlify CDP script: always includes NETLIFY_CDP_KNOWN_HASHES,
+ * plus a freshly fetched hash when process.env.URL is available.
+ * The rewrite content rule handles any version not yet in the known list.
+ */
+async function resolveNetlifyCdpHashes(logger) {
+    const hashes = [...NETLIFY_CDP_KNOWN_HASHES];
+    const siteUrl = process.env.URL;
+    if (!siteUrl) {
+        logger.warn(
+            `DappFence: NETLIFY=true but URL env var not set; ${CDP_SCRIPT_PATH} verification limited to known hashes`
+        );
+        return hashes;
+    }
+    try {
+        const res = await fetch(siteUrl + CDP_SCRIPT_PATH);
+        if (res.ok) {
+            const hash = calculateFileHash(Buffer.from(await res.arrayBuffer()));
+            if (!hashes.includes(hash)) {
+                hashes.unshift(hash);
+                logger.warn(
+                    `DappFence: ${CDP_SCRIPT_PATH} — fetched an unknown hash (${hash}); Netlify may have updated the script. ` +
+                        'Add it to NETLIFY_CDP_KNOWN_HASHES in @dappfence/manifest-tools.'
+                );
+            } else {
+                logger.info(`DappFence: fetched and verified ${CDP_SCRIPT_PATH} hash`);
+            }
+        } else {
+            logger.warn(
+                `DappFence: ${CDP_SCRIPT_PATH} fetch returned HTTP ${res.status}; falling back to known hashes`
+            );
+        }
+    } catch (err) {
+        logger.warn(
+            `DappFence: could not fetch ${CDP_SCRIPT_PATH} — ${err.message}; falling back to known hashes`
+        );
+    }
+    return hashes;
+}
+
 const SCRIPT_ATTRS_DEFAULTS = {
     scriptSrc: '/dappfence.js',
     manifestUrl: '/integrity-manifest.json',
@@ -176,4 +241,7 @@ module.exports = {
     injectScriptTag,
     walk,
     generateManifest,
+    buildNetlifyContentRules,
+    NETLIFY_CDP_KNOWN_HASHES,
+    resolveNetlifyCdpHashes,
 };

@@ -10,6 +10,8 @@ const {
     buildScriptTag,
     injectScriptTag,
     generateManifest: _generateManifest,
+    buildNetlifyContentRules,
+    resolveNetlifyCdpHashes,
 } = _require('@dappfence/manifest-tools/manifest');
 
 export { buildScriptAttrs, buildScriptTag, injectScriptTag };
@@ -236,18 +238,11 @@ export function buildPathRules(buildFormat, notFoundKey = null) {
 
 /**
  * Build contentRules for this deployment environment.
- * Netlify injects a CDP snippet into served HTML; strip it before hashing.
+ * Netlify injects a CDP snippet into served HTML; strip it before hashing,
+ * and verify (then rewrite) the CDP script itself.
  */
 export function buildContentRules({ isNetlify = false } = {}) {
-    if (isNetlify) {
-        return [
-            {
-                condition: { resourceTypes: ['document'] },
-                action: { type: 'transform', transform: 'netlify-cdp' },
-            },
-        ];
-    }
-    return [];
+    return isNetlify ? buildNetlifyContentRules() : [];
 }
 
 export async function generateManifest({
@@ -257,6 +252,7 @@ export async function generateManifest({
     extraHashes,
     base = '',
     netlify = false,
+    logger,
     ...rest
 }) {
     const prefixRoute = base ? (r) => base + r : (r) => r;
@@ -275,8 +271,15 @@ export async function generateManifest({
             ? base + (buildFormat === 'file' ? '/404.html' : '/404/index.html')
             : null;
 
+    const cdpHashes = isNetlify ? await resolveNetlifyCdpHashes(logger) : null;
+    const mergedExtraHashes = {
+        ...(cdpHashes && { '/.netlify/scripts/cdp': cdpHashes }),
+        ...(extraHashes || {}),
+    };
+
     return _generateManifest({
         ...rest,
+        logger,
         dynamicRoutes,
         pathRules: buildPathRules(buildFormat, notFoundKey),
         contentRules: buildContentRules({ isNetlify }),
@@ -287,6 +290,6 @@ export async function generateManifest({
             ? (webPath) => pageSet.has(base ? webPath.slice(base.length) : webPath)
             : undefined,
         pathPrefix: base,
-        ...(extraHashes && { extraHashes }),
+        ...(Object.keys(mergedExtraHashes).length > 0 && { extraHashes: mergedExtraHashes }),
     });
 }

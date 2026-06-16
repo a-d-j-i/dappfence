@@ -32,22 +32,12 @@ import { readDynamicRoutes } from '../src/routes.js';
 import { hashPrerenderedPages, hashPublicFiles } from '../src/ssr.js';
 
 const _require = createRequire(import.meta.url);
-const { generateManifest } = _require('@dappfence/manifest-tools/manifest');
+const { generateManifest, buildNetlifyContentRules, resolveNetlifyCdpHashes } = _require(
+    '@dappfence/manifest-tools/manifest'
+);
 const DAPPFENCE_JS_PATH = _require.resolve('@dappfence/core');
 
 const STATIC_EXPORT_PATH_RULES = [{ type: 'directory-index' }, { type: 'html-extension' }];
-
-function buildContentRules({ isNetlify = false } = {}) {
-    if (isNetlify) {
-        return [
-            {
-                condition: { resourceTypes: ['document'] },
-                action: { type: 'transform', transform: 'netlify-cdp' },
-            },
-        ];
-    }
-    return [];
-}
 
 const logger = {
     info: (msg) => console.log(msg),
@@ -72,12 +62,17 @@ async function runSSR(opts, projectRoot) {
         process.exit(1);
     }
 
-    const [dynamicRoutes, pageHashes, publicHashes] = await Promise.all([
+    const [dynamicRoutes, pageHashes, publicHashes, cdpHashes] = await Promise.all([
         readDynamicRoutes(projectRoot),
         hashPrerenderedPages(projectRoot, basePath, logger),
         hashPublicFiles(projectRoot, opts.manifestPath, basePath, logger),
+        isNetlify ? resolveNetlifyCdpHashes(logger) : Promise.resolve(null),
     ]);
-    const extraHashes = { ...pageHashes, ...publicHashes };
+    const extraHashes = {
+        ...(cdpHashes && { '/.netlify/scripts/cdp': cdpHashes }),
+        ...pageHashes,
+        ...publicHashes,
+    };
 
     const ssrPathRules = [{ type: 'directory-index' }];
     const notFoundKey = extraHashes[basePath + '/404']
@@ -98,7 +93,7 @@ async function runSSR(opts, projectRoot) {
         mode: opts.mode,
         dynamicRoutes: dynamicRoutes.map((r) => (basePath ? basePath + r : r)),
         pathRules: ssrPathRules,
-        contentRules: buildContentRules({ isNetlify }),
+        contentRules: isNetlify ? buildNetlifyContentRules() : [],
         scriptAttrs: null,
         logger,
         ...(Object.keys(extraHashes).length > 0 && { extraHashes }),
@@ -126,8 +121,11 @@ async function runStaticExport(opts, projectRoot) {
     console.log(`DappFence: copied dappfence.js → ${destRel}`);
 
     const secretKey = process.env.DAPPFENCE_SECRET_KEY || null;
-    const dynamicRoutes = await readDynamicRoutes(projectRoot);
     const isNetlify = Boolean(process.env.NETLIFY) || Boolean(opts.netlify);
+    const [dynamicRoutes, cdpHashes] = await Promise.all([
+        readDynamicRoutes(projectRoot),
+        isNetlify ? resolveNetlifyCdpHashes(logger) : Promise.resolve(null),
+    ]);
 
     await generateManifest({
         outDir,
@@ -137,9 +135,10 @@ async function runStaticExport(opts, projectRoot) {
         mode: opts.mode,
         dynamicRoutes,
         pathRules: STATIC_EXPORT_PATH_RULES,
-        contentRules: buildContentRules({ isNetlify }),
+        contentRules: isNetlify ? buildNetlifyContentRules() : [],
         scriptAttrs: opts,
         logger,
+        ...(cdpHashes && { extraHashes: { '/.netlify/scripts/cdp': cdpHashes } }),
     });
 }
 
