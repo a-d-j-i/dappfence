@@ -14,7 +14,9 @@ import { readFileSync } from 'fs';
 import { resolve } from 'path';
 import { fileURLToPath } from 'url';
 
-const root = resolve(fileURLToPath(import.meta.url), '..', '..');
+const args = process.argv.slice(2);
+const cwdArg = args.find((a) => !a.startsWith('-'));
+const root = cwdArg ? resolve(cwdArg) : resolve(fileURLToPath(import.meta.url), '..', '..');
 const lock = JSON.parse(readFileSync(resolve(root, 'package-lock.json'), 'utf8'));
 
 const failures = [];
