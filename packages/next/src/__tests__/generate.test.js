@@ -193,7 +193,7 @@ describe('buildContentRules', () => {
 
     it('returns netlify-cdp transform rule when isNetlify is true', () => {
         const rules = buildContentRules({ isNetlify: true });
-        expect(rules).toHaveLength(1);
+        expect(rules).toHaveLength(3);
         expect(rules[0].action.transform).toBe('netlify-cdp');
         expect(rules[0].condition.resourceTypes).toContain('document');
     });
