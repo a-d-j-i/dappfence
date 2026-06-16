@@ -27,7 +27,9 @@ const install = args.includes('--install');
 const consumerArg = args.find((a) => !a.startsWith('-'));
 
 if (!consumerArg) {
-    console.error('Usage: node scripts/update-local-consumer.js <consumer-dir> [--apply] [--install]');
+    console.error(
+        'Usage: node scripts/update-local-consumer.js <consumer-dir> [--apply] [--install]'
+    );
     process.exit(1);
 }
 
