@@ -448,4 +448,22 @@ describe('generateManifest', () => {
         );
         expect(manifest.pay.contentRules).toEqual([]);
     });
+
+    it('emits netlify-cdp contentRule when netlify: true option is set', async () => {
+        const outDir = await setup();
+        await generateManifest({
+            outDir,
+            manifestPath: 'integrity-manifest.json',
+            netlify: true,
+            exclude: [],
+            mode: 'protected',
+            logger: LOGGER,
+            scriptAttrs: MINIMAL,
+        });
+        const manifest = JSON.parse(
+            await fs.readFile(path.join(outDir, 'integrity-manifest.json'), 'utf8')
+        );
+        expect(manifest.pay.contentRules).toHaveLength(1);
+        expect(manifest.pay.contentRules[0].action.transform).toBe('netlify-cdp');
+    });
 });

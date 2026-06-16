@@ -57,7 +57,7 @@ const logger = {
 
 async function runSSR(opts, projectRoot) {
     const basePath = opts.basePath || '';
-    const isNetlify = Boolean(process.env.NETLIFY);
+    const isNetlify = Boolean(process.env.NETLIFY) || Boolean(opts.netlify);
     const secretKey = process.env.DAPPFENCE_SECRET_KEY || opts.secretKey || null;
 
     const nextStaticDir = path.join(projectRoot, '.next', 'static');
@@ -127,7 +127,7 @@ async function runStaticExport(opts, projectRoot) {
 
     const secretKey = process.env.DAPPFENCE_SECRET_KEY || null;
     const dynamicRoutes = await readDynamicRoutes(projectRoot);
-    const isNetlify = Boolean(process.env.NETLIFY);
+    const isNetlify = Boolean(process.env.NETLIFY) || Boolean(opts.netlify);
 
     await generateManifest({
         outDir,

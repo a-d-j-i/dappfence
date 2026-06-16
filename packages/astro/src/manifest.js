@@ -256,12 +256,13 @@ export async function generateManifest({
     buildFormat,
     extraHashes,
     base = '',
+    netlify = false,
     ...rest
 }) {
     const prefixRoute = base ? (r) => base + r : (r) => r;
     const dynamicRoutes = extractDynamicRoutes(routes).map(prefixRoute);
     const pageSet = pages?.length ? buildPageSet(pages) : null;
-    const isNetlify = Boolean(process.env.NETLIFY);
+    const isNetlify = Boolean(process.env.NETLIFY) || Boolean(netlify);
 
     // Determine the not-found fallback key for the `not-found` pathRule.
     // Prefer the SSR-hashed 404 page; fall back to the prerendered static 404.
