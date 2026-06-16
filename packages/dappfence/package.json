@@ -1,6 +1,6 @@
 {
     "name": "@dappfence/core",
-    "version": "0.1.0",
+    "version": "0.1.1",
     "description": "Security framework for web applications using service worker content verification",
     "license": "MIT",
     "repository": {

@@ -1,6 +1,6 @@
 {
     "name": "@dappfence/astro",
-    "version": "0.1.0",
+    "version": "0.1.1",
     "description": "Astro integration for DappFence — script injection, manifest generation, dynamic content tagging",
     "license": "MIT",
     "type": "module",
