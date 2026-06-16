@@ -20,7 +20,7 @@ One package per commit. Never batch multiple upgrades.
 
     ```bash
     npm audit          # find CVEs — this is the trigger
-    ncu                # see what's outdated (informational only)
+    npx npm-check-updates            # see what's outdated (informational only)
     ```
 
 2. **Review before upgrading** (for each package)
@@ -36,7 +36,7 @@ One package per commit. Never batch multiple upgrades.
 3. **Apply and test**
 
     ```bash
-    ncu <package-name>     # updates package.json to exact new version
+    npx npm-check-updates <package-name>     # updates package.json to exact new version
     npm install            # updates package-lock.json
     npm test               # full suite including e2e
     ```

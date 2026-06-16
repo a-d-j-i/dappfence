@@ -4,19 +4,12 @@ import path from 'node:path';
 
 const _require = createRequire(import.meta.url);
 const DAPPFENCE_JS_PATH = _require.resolve('@dappfence/core');
+const { buildNetlifyContentRules } = _require('@dappfence/manifest-tools/manifest');
 
 const DEFAULT_PATH_RULES = [{ type: 'directory-index' }, { type: 'html-extension' }];
 
 function buildContentRules({ isNetlify = false } = {}) {
-    if (isNetlify) {
-        return [
-            {
-                condition: { resourceTypes: ['document'] },
-                action: { type: 'transform', transform: 'netlify-cdp' },
-            },
-        ];
-    }
-    return [];
+    return isNetlify ? buildNetlifyContentRules() : [];
 }
 
 const logger = {

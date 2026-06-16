@@ -1,16 +1,21 @@
 #!/usr/bin/env node
 /**
- * Update a local @dappfence tarball consumer.
+ * Update a local @dappfence tarball consumer (supports monorepos).
  *
- * Finds all file:*.tgz references to @dappfence packages in the consumer's
- * package.json, copies fresh tarballs from dist/, updates the version references,
- * clears stale @dappfence entries from package-lock.json, and runs the lock
- * integrity check.
+ * Scans the consumer root package.json and all workspace members (resolved from
+ * the root "workspaces" field, same simple "dir/*" patterns as sync-versions.js)
+ * for file:*.tgz references to @dappfence packages. For each found reference it:
+ *   1. Copies the fresh tarball from dist/ (matched by slug, deduplicated).
+ *   2. Updates the file: ref in whichever package.json owned the entry.
+ *   3. Patches the root package-lock.json: updates @dappfence tarball refs inside
+ *      workspace member entries by slug-matching against dist/ (independent of
+ *      what changed this run, so it handles pre-updated package.json files too),
+ *      and removes node_modules/@dappfence/* entries for clean reinstall.
  *
  * Usage:
- *   node scripts/update-local-consumer.js <consumer-dir>             dry run
- *   node scripts/update-local-consumer.js <consumer-dir> --apply     write changes
- *   node scripts/update-local-consumer.js <consumer-dir> --apply --install   also npm install
+ *   node scripts/update-local-consumer.js <consumer-dir>                      dry run
+ *   node scripts/update-local-consumer.js <consumer-dir> --apply              write changes
+ *   node scripts/update-local-consumer.js <consumer-dir> --apply --install    also npm install
  */
 import { readFileSync, writeFileSync, copyFileSync, unlinkSync, readdirSync, existsSync } from 'fs';
 import { resolve, dirname, relative } from 'path';
@@ -42,20 +47,49 @@ if (!existsSync(consumerPkgPath)) {
     process.exit(1);
 }
 
-const pkg = JSON.parse(readFileSync(consumerPkgPath, 'utf8'));
-const allDeps = { ...pkg.dependencies, ...pkg.devDependencies, ...pkg.optionalDependencies };
+// Collect root + workspace member package.json paths.
+// Supports the same simple "dir/*" patterns as sync-versions.js.
+const rootPkg = JSON.parse(readFileSync(consumerPkgPath, 'utf8'));
+const workspacePatterns = rootPkg.workspaces ?? [];
+const memberPkgPaths = workspacePatterns.flatMap((pattern) => {
+    const parts = pattern.split('/');
+    const glob = parts.at(-1);
+    const baseDir = resolve(consumerDir, ...parts.slice(0, -1)); // '' parts resolve to consumerDir
+    if (glob !== '*') {
+        const p = resolve(consumerDir, pattern, 'package.json');
+        return existsSync(p) ? [p] : [];
+    }
+    return readdirSync(baseDir, { withFileTypes: true })
+        .filter((e) => e.isDirectory())
+        .map((e) => resolve(baseDir, e.name, 'package.json'))
+        .filter(existsSync);
+});
+const allPkgPaths = [consumerPkgPath, ...memberPkgPaths];
 
-// Find all @dappfence entries that use a local file: tarball reference
-const tgzEntries = Object.entries(allDeps).filter(
-    ([name, ref]) =>
-        name.startsWith('@dappfence/') &&
-        typeof ref === 'string' &&
-        ref.startsWith('file:') &&
-        ref.endsWith('.tgz')
-);
+// Gather all @dappfence file:*.tgz entries across root + members.
+const tgzEntries = []; // { pkgPath, pkgName, ref }
+for (const pkgPath of allPkgPaths) {
+    let pkg;
+    try {
+        pkg = JSON.parse(readFileSync(pkgPath, 'utf8'));
+    } catch {
+        continue;
+    }
+    const allDeps = { ...pkg.dependencies, ...pkg.devDependencies, ...pkg.optionalDependencies };
+    for (const [pkgName, ref] of Object.entries(allDeps)) {
+        if (
+            pkgName.startsWith('@dappfence/') &&
+            typeof ref === 'string' &&
+            ref.startsWith('file:') &&
+            ref.endsWith('.tgz')
+        ) {
+            tgzEntries.push({ pkgPath, pkgName, ref });
+        }
+    }
+}
 
 if (tgzEntries.length === 0) {
-    console.log('No @dappfence file: tarball references found in consumer package.json.');
+    console.log('No @dappfence file: tarball references found in consumer package.json files.');
     process.exit(0);
 }
 
@@ -68,10 +102,11 @@ const label = apply ? '→' : '(dry run)';
 
 const updates = [];
 
-for (const [pkgName, ref] of tgzEntries) {
-    // ref is like "file:./dependencies/dappfence-astro-0.1.0.tgz"
-    const refPath = ref.slice('file:'.length); // "./dependencies/dappfence-astro-0.1.0.tgz"
-    const destDir = resolve(consumerDir, dirname(refPath));
+for (const { pkgPath, pkgName, ref } of tgzEntries) {
+    // ref is like "file:../vendor/dappfence-astro-0.1.0.tgz"
+    const refPath = ref.slice('file:'.length);
+    const pkgDir = dirname(pkgPath);
+    const destDir = resolve(pkgDir, dirname(refPath));
     const oldFilename = refPath.split('/').at(-1); // "dappfence-astro-0.1.0.tgz"
 
     const match = TARBALL_RE.exec(oldFilename);
@@ -103,7 +138,16 @@ for (const [pkgName, ref] of tgzEntries) {
     }
 
     const oldPath = resolve(destDir, oldFilename);
-    updates.push({ pkgName, oldRef: ref, newRef, srcPath, destPath, oldFilename, oldPath });
+    updates.push({
+        pkgPath,
+        pkgName,
+        oldRef: ref,
+        newRef,
+        srcPath,
+        destPath,
+        oldFilename,
+        oldPath,
+    });
 }
 
 if (updates.length === 0) {
@@ -116,34 +160,79 @@ if (!apply) {
     process.exit(0);
 }
 
-// Copy tarballs, then delete the old file if the filename changed
+// Copy tarballs (deduplicated by destPath), delete old file if filename changed.
+const copiedDest = new Set();
 for (const { srcPath, destPath, oldPath } of updates) {
-    copyFileSync(srcPath, destPath);
+    if (!copiedDest.has(destPath)) {
+        copyFileSync(srcPath, destPath);
+        copiedDest.add(destPath);
+    }
     if (oldPath !== destPath && existsSync(oldPath)) {
         unlinkSync(oldPath);
     }
 }
 
-// Update package.json references
-let pkgRaw = readFileSync(consumerPkgPath, 'utf8');
-for (const { oldRef, newRef } of updates) {
-    pkgRaw = pkgRaw.replaceAll(oldRef, newRef);
+// Update each package.json that had references changed, grouped by file.
+const byPkgPath = new Map();
+for (const { pkgPath, oldRef, newRef } of updates) {
+    if (!byPkgPath.has(pkgPath)) byPkgPath.set(pkgPath, []);
+    byPkgPath.get(pkgPath).push({ oldRef, newRef });
 }
-writeFileSync(consumerPkgPath, pkgRaw);
-console.log(`\nUpdated ${consumerPkgPath}`);
+for (const [pkgPath, changes] of byPkgPath) {
+    let raw = readFileSync(pkgPath, 'utf8');
+    for (const { oldRef, newRef } of changes) {
+        raw = raw.replaceAll(oldRef, newRef);
+    }
+    writeFileSync(pkgPath, raw);
+    console.log(`\nUpdated ${relative(consumerDir, pkgPath)}`);
+}
 
-// Clear stale @dappfence entries from package-lock.json
+// Clean stale @dappfence entries from package-lock.json.
+// Two passes:
+//   1. Update any file:*.tgz ref for an @dappfence package inside workspace entries'
+//      dep fields — resolved by slug against the current dist/ tarballs, not just
+//      the set of refs that changed. This handles the case where some package.json
+//      files were already updated before this script ran.
+//   2. Delete node_modules/@dappfence/* entries so they get reinstalled from the new tarballs.
 if (existsSync(consumerLockPath)) {
     const lock = JSON.parse(readFileSync(consumerLockPath, 'utf8'));
+    let patched = 0;
     let removed = 0;
-    for (const key of Object.keys(lock.packages ?? {})) {
-        if (key.includes('@dappfence') || key.includes('node_modules/@dappfence')) {
+
+    for (const [key, entry] of Object.entries(lock.packages ?? {})) {
+        if (key.includes('node_modules/@dappfence')) {
             delete lock.packages[key];
             removed++;
+            continue;
+        }
+        for (const field of ['dependencies', 'devDependencies', 'optionalDependencies']) {
+            const deps = entry[field];
+            if (!deps) continue;
+            for (const [depName, depRef] of Object.entries(deps)) {
+                if (
+                    !depName.startsWith('@dappfence/') ||
+                    typeof depRef !== 'string' ||
+                    !depRef.startsWith('file:') ||
+                    !depRef.endsWith('.tgz')
+                ) {
+                    continue;
+                }
+                const oldFilename = depRef.split('/').at(-1);
+                const slugMatch = TARBALL_RE.exec(oldFilename);
+                if (!slugMatch) continue;
+                const slug = slugMatch[1];
+                const newFilename = distFiles.find((f) => f.startsWith(slug + '-'));
+                if (!newFilename || newFilename === oldFilename) continue;
+                deps[depName] = depRef.replace(oldFilename, newFilename);
+                patched++;
+            }
         }
     }
+
     writeFileSync(consumerLockPath, JSON.stringify(lock, null, 2) + '\n');
-    console.log(`Cleared ${removed} stale @dappfence entries from package-lock.json`);
+    console.log(
+        `Updated ${patched} @dappfence ref(s) and removed ${removed} node_modules entries from package-lock.json`
+    );
 }
 
 // npm install
