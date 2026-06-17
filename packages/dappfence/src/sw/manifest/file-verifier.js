@@ -78,10 +78,10 @@ export const createFileVerifier = ({ swContext, appStore, config }, manifestLoad
             return VERIFICATION_STATUS.ERROR;
         }
         logger.log(
-            `[shouldSkipVerification] ${req.method} destination=${destination} response.ok=${response?.ok} response.type=${response?.type}`
+            `shouldSkipVerification ${req.url} ${req.method} destination=${destination} response.ok=${response?.ok} response.type=${response?.type}`
         );
         const skip = (reason) => {
-            logger.log(`⏭️  Skipping: ${reason}`);
+            logger.log(`⏭️ Skipping: ${reason} ${req.url}`);
             return VERIFICATION_STATUS.SKIPPED;
         };
 
@@ -98,10 +98,10 @@ export const createFileVerifier = ({ swContext, appStore, config }, manifestLoad
             if (destination !== 'script') {
                 return skip('non-script opaque');
             }
-            logger.log(`↩️  Rewriting opaque script`);
+            logger.log(`↩️  Rewriting opaque script ${req.url}`);
             return VERIFICATION_STATUS.REWRITE;
         }
-        return null;
+        return false;
     };
 
     const getExpectedHashes = (fileKey, manifest) => {
@@ -243,10 +243,10 @@ export const createFileVerifier = ({ swContext, appStore, config }, manifestLoad
             assetType: ASSET_TYPE.ASSET,
         });
 
-        const skipStatus = shouldSkipVerification(req, response);
-        if (skipStatus !== null) {
-            logger.log(`⏭️  ${skipStatus.description}: ${fileKey}`);
-            return fileResult({ status: skipStatus });
+        const shouldSkip = shouldSkipVerification(req, response);
+        if (shouldSkip) {
+            logger.log(`⏭️  ${shouldSkip.description}: ${fileKey}`);
+            return fileResult({ status: shouldSkip });
         }
 
         const isNavigation = req.mode === 'navigate';

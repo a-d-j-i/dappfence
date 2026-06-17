@@ -174,7 +174,7 @@ export function createSecurityFetchHandler({
         const clientId = request.mode === 'navigate' ? event.resultingClientId : event.clientId;
 
         logger.log(
-            `%cFetch: ${request.method} ${request.url} mode: ${request.mode} clientId: ${clientId} `,
+            `%cRequest: ${request.url} method:${request.method} mode:${request.mode} destination:${request.destination === '' ? 'empty' : request.destination} clientId:${clientId} credentials:${request.credentials}`,
             'color:cyan'
         );
 
@@ -217,7 +217,10 @@ export function createSecurityFetchHandler({
             logger.warn('Child SW fetch failed, retrying direct:', request.url, error);
             response = await swContext.fetch(request);
         }
-
+        logger.log(
+            `%cResponse ${request.url} ${response?.url} status:${response?.status} type:${response?.type ?? 'empty'} ${response?.redirected ? 'redirected' : ''}`,
+            'color:cyan'
+        );
         return await applyIntegrityPolicy(ctx, markedRequest, response, clientId);
     }
 
