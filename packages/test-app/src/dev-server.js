@@ -557,6 +557,8 @@ function startServer({
         res.end('File not found');
     });
 
+    const proxySockets = new Set();
+
     server.on('connect', (req, socket) => {
         const [targetHost, targetPortStr] = req.url.split(':');
         const isLocal = targetHost === 'localhost' || targetHost === '127.0.0.1';
@@ -567,10 +569,14 @@ function startServer({
             remote.pipe(socket);
             socket.pipe(remote);
         });
+        proxySockets.add(socket);
+        proxySockets.add(remote);
         remote.on('close', () => {
+            proxySockets.delete(remote);
             socket.destroy();
         });
         socket.on('close', () => {
+            proxySockets.delete(socket);
             remote.destroy();
         });
         remote.on('error', (e) => {
@@ -586,6 +592,8 @@ function startServer({
             remote.destroy();
         });
     });
+
+    server.destroyProxySockets = () => proxySockets.forEach((s) => s.destroy());
 
     server.setMaxListeners(Infinity);
 
@@ -623,6 +631,7 @@ if (require.main === module) {
         console.log('Press Ctrl+C to stop');
         process.on('SIGINT', () => {
             console.log('\n👋 Shutting down dev server...');
+            server.destroyProxySockets();
             server.closeAllConnections();
             server.close(() => {
                 console.log('✅ Dev server stopped');
