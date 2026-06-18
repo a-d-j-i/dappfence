@@ -53,7 +53,7 @@ test.describe('non-OK response verification', () => {
         await expect(page).toHaveTitle('DappFence - Manifest Mode Example');
     });
 
-    test('should skip and not block when a sub-resource script has a non-OK status', async ({
+    test('should block when a known script returns a non-OK status', async ({
         page,
         swHelper,
     }, testInfo) => {
@@ -68,8 +68,42 @@ test.describe('non-OK response verification', () => {
         });
         await page.goto('about:blank');
         await page.goto('');
-        // Non-OK sub-resource is SKIPPED — page loads without triggering security block
-        await expect(page).not.toHaveURL(/.*\/sw-api/);
-        await expect(page).toHaveTitle('DappFence - Manifest Mode Example');
+        // Non-OK script is now verified — empty 404 body mismatches the manifest → security block
+        await page.waitForURL(/.*\/sw-api/);
+        await expect(page.getByText('Security Warning')).toBeVisible();
+    });
+
+    test('should execute no-cors script when its hash matches the manifest', async ({ page }) => {
+        // no-cors-test.js is loaded without crossorigin → mode=no-cors. The SW upgrades the
+        // request to cors+omit so the response body is readable, then verifies the hash against
+        // the manifest. Hash matches → pass through and execute normally (no opaque rewrite).
+        await page.goto('about:blank');
+        await page.goto('');
+        const ran = await page.evaluate(
+            () => (window as unknown as { __noCorsScriptRan?: string }).__noCorsScriptRan
+        );
+        expect(ran).toBe('yes');
+    });
+
+    test('should fail to load no-cors script from a server that does not support CORS', async ({
+        page,
+    }) => {
+        // DappFence forces cors+omit on every no-cors script request, so the response body
+        // is readable for hash verification. This is a hard requirement: if the origin server
+        // does not respond with Access-Control-Allow-Origin, the browser rejects the response,
+        // and the script never executes (TypeError — treated as a network failure).
+        // cors-unsupported-cdn.com is a test server that intentionally returns no CORS headers.
+        await page.goto('about:blank');
+        await page.goto('');
+        const loadError = await page.evaluate(() => {
+            return new Promise<string>((resolve) => {
+                const script = document.createElement('script');
+                script.src = 'http://cors-unsupported-cdn.com/no-cors-test.js';
+                script.onload = () => resolve('loaded');
+                script.onerror = () => resolve('error');
+                document.head.appendChild(script);
+            });
+        });
+        expect(loadError).toBe('error');
     });
 });

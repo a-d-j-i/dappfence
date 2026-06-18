@@ -90,7 +90,6 @@ export const createFileVerifier = ({ swContext, appStore, config }, manifestLoad
             return skip('non-GET/non-POST-navigate request');
         }
         if (!destination) return skip('programmatic fetch (destination="")');
-        if (!response.ok && destination !== 'document') return skip('non-ok sub-resource');
         if (response.type === 'opaqueredirect' || response.type === 'error') {
             return skip(`empty body, response type ${response.type}`);
         }
@@ -98,8 +97,14 @@ export const createFileVerifier = ({ swContext, appStore, config }, manifestLoad
             if (destination !== 'script') {
                 return skip('non-script opaque');
             }
+            // fetch-handler.js upgrades no-cors script requests to cors+omit before fetching,
+            // so script responses are never opaque in practice. This REWRITE fallback remains
+            // as a safety net for any opaque script response that slips through.
             logger.log(`↩️  Rewriting opaque script ${req.url}`);
             return VERIFICATION_STATUS.REWRITE;
+        }
+        if (!response.ok && destination !== 'document' && destination !== 'script') {
+            return skip('non-ok sub-resource');
         }
         return false;
     };

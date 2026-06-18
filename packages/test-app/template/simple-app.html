@@ -545,6 +545,8 @@
             integrity="sha256-/JqT3SQfawRcv/BIHPThkBvs0OEvtFFmqPF/lYI/Cxo="
             crossorigin="anonymous"
         ></script>
+        <!-- No-cors external script: no crossorigin attribute → mode=no-cors → SW upgrades to cors+omit -->
+        <script src="http://external-cdn.com/no-cors-test.js"></script>
     </head>
     <body>
         <header class="site-header">
