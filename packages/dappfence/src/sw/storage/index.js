@@ -28,7 +28,7 @@ const STATUS_LOG = {
     REWRITE: (d) => [`SW file response rewritten: ${d.fileKey}`],
     MISMATCH: (d) => [
         `SECURITY ALERT: Service Worker file integrity violation!`,
-        `File: ${d.url}\nExpected: ${d.expectedHash}`,
+        `File: ${d.url}\nExpected: ${d.expectedHashes?.join(', ')}`,
         `Actual: ${d.actualHash}`,
     ],
     NOT_FOUND_IN_MANIFEST: (d) => [
@@ -60,7 +60,7 @@ export function createAppStore(db, { userAgent, origin } = {}) {
      * Returns whether the caller must block the current request. Recurrences of
      * already-known blocks (including previously cleared ones) are still logged
      * and counted, but return false. Storage failures fail-safe and return true.
-     * @param {object} details - Violation details (status, fileKey, url, expectedHash, actualHash, assetType)
+     * @param {object} details - Violation details (status, fileKey, url, expectedHashes, actualHash, assetType)
      * @returns {Promise<boolean>} mustBlock — true if the caller should block the request
      */
     async function recordSecurityViolation(details) {
@@ -91,7 +91,7 @@ export function createAppStore(db, { userAgent, origin } = {}) {
                     timestamp: new Date().toISOString(),
                     url: details.url,
                     fileKey: details.fileKey,
-                    expectedHash: details.expectedHash,
+                    expectedHashes: details.expectedHashes,
                     actualHash: details.actualHash,
                     httpStatus: details.httpStatus,
                     userAgent,

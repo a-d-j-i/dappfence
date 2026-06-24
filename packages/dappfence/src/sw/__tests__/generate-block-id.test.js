@@ -5,7 +5,7 @@ describe('generateBlockId', () => {
     const BLOCK_DATA = {
         status: 'MISMATCH',
         fileKey: '/app.js',
-        expectedHash: 'expected123',
+        expectedHashes: ['expected123'],
         actualHash: 'actual456',
         assetType: 'ASSET',
     };
@@ -36,7 +36,7 @@ describe('generateBlockId', () => {
         expect(id1).not.toBe(id2);
     });
 
-    it('handles missing expectedHash gracefully', async () => {
+    it('handles missing expectedHashes gracefully', async () => {
         const id = await generateBlockId({
             status: 'MISMATCH',
             fileKey: '/app.js',
