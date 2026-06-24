@@ -40,7 +40,7 @@ function renderConfigScript(config) {
 function enrichActiveBlocks(blocks) {
     return blocks.map((block) => ({
         ...block,
-        expectedHash: block.expectedHash || 'N/A',
+        expectedHashes: block.expectedHashes || [],
         actualHash: block.actualHash || 'N/A',
         occurrenceCount: block.occurrenceCount || 1,
         formattedTimestamp: new Date(block.timestamp).toLocaleString(),

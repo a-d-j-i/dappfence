@@ -74,7 +74,7 @@ describe('recordSecurityViolation', () => {
         status: VERIFICATION_STATUS.MISMATCH,
         fileKey: '/app.js',
         url: 'https://example.com/app.js',
-        expectedHash: 'aaaa1111bbbb2222',
+        expectedHashes: ['aaaa1111bbbb2222'],
         actualHash: 'cccc3333dddd4444',
         assetType: 'asset',
     };
@@ -199,5 +199,49 @@ describe('recordSecurityViolation', () => {
         };
         const mustBlock = await appStore.recordSecurityViolation(mismatchDetails);
         expect(mustBlock).toBe(true);
+    });
+
+    describe('expectedHashes array contract (shape from file-verifier)', () => {
+        it('persists expectedHashes in the security event', async () => {
+            const appStore = createStore();
+            await appStore.recordSecurityViolation(mismatchDetails);
+            const events = await appStore.securityEventsStore.getSecurityEvents();
+            expect(events[0].expectedHashes).toEqual(['aaaa1111bbbb2222']);
+        });
+
+        it('persists expectedHashes in the active block record', async () => {
+            const appStore = createStore();
+            await appStore.recordSecurityViolation(mismatchDetails);
+            const blocks = await appStore.activeBlocksStore.getActiveBlocks();
+            expect(blocks[0].expectedHashes).toEqual(['aaaa1111bbbb2222']);
+        });
+
+        it('deduplicates correctly when the same multi-hash array is reported twice', async () => {
+            const multiHash = {
+                ...mismatchDetails,
+                expectedHashes: ['hash-a', 'hash-b'],
+            };
+            const appStore = createStore();
+            const first = await appStore.recordSecurityViolation(multiHash);
+            const second = await appStore.recordSecurityViolation(multiHash);
+            expect(first).toBe(true);
+            expect(second).toBe(false);
+            const blocks = await appStore.activeBlocksStore.getActiveBlocks();
+            expect(blocks).toHaveLength(1);
+        });
+
+        it('treats different expectedHashes arrays as distinct violations', async () => {
+            const appStore = createStore();
+            await appStore.recordSecurityViolation({
+                ...mismatchDetails,
+                expectedHashes: ['hash-a'],
+            });
+            await appStore.recordSecurityViolation({
+                ...mismatchDetails,
+                expectedHashes: ['hash-b'],
+            });
+            const blocks = await appStore.activeBlocksStore.getActiveBlocks();
+            expect(blocks).toHaveLength(2);
+        });
     });
 });

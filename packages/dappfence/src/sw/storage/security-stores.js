@@ -30,13 +30,13 @@ const BLOCKS_KEY = 'blocks';
  * @param {object} blockData
  * @param {string} blockData.status - Type of security violation
  * @param {string} blockData.fileKey - The file key that triggered the violation
- * @param {string} [blockData.expectedHash] - Expected hash from manifest
+ * @param {string[]} [blockData.expectedHashes] - Expected hashes from manifest
  * @param {string} blockData.actualHash - Actual hash of the file content
  * @returns {Promise<string>} Deterministic block ID like "block_<hash prefix>"
  */
-export async function generateBlockId({ status, fileKey, expectedHash, actualHash, assetType }) {
+export async function generateBlockId({ status, fileKey, expectedHashes, actualHash, assetType }) {
     devAssert(status && assetType && fileKey);
-    const contentKey = `${assetType}_${status}_${fileKey}_${expectedHash || 'N/A'}_${actualHash || 'N/A'}`;
+    const contentKey = `${assetType}_${status}_${fileKey}_${expectedHashes?.join(',') || 'N/A'}_${actualHash || 'N/A'}`;
     const encoder = new TextEncoder();
     const data = encoder.encode(contentKey);
     const hashBuffer = await crypto.subtle.digest('SHA-256', data);

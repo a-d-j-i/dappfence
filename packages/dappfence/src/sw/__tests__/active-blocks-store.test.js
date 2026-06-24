@@ -20,7 +20,7 @@ function createInMemoryDatabase() {
 const BLOCK_DATA = {
     status: 'MISMATCH',
     fileKey: '/app.js',
-    expectedHash: 'expected123',
+    expectedHashes: ['expected123'],
     actualHash: 'actual456',
     assetType: 'ASSET',
 };
@@ -28,7 +28,7 @@ const BLOCK_DATA = {
 const BLOCK_DATA_2 = {
     status: 'MISMATCH',
     fileKey: '/style.css',
-    expectedHash: 'expectedABC',
+    expectedHashes: ['expectedABC'],
     actualHash: 'actualDEF',
     assetType: 'ASSET',
 };
@@ -326,7 +326,7 @@ describe('createActiveBlocksStore', () => {
             const blockData = {
                 status: 'MISMATCH',
                 fileKey: '/app.js',
-                expectedHash: 'expected123',
+                expectedHashes: ['expected123'],
                 actualHash: 'actual456',
                 assetType: 'ASSET',
             };

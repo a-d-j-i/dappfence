@@ -132,7 +132,7 @@ describe('fetchAndStoreManifest', () => {
         it('returns violation enriched with assetType and fileKey when signature is a mismatch', async () => {
             verifyManifestSignature.mockReturnValue({
                 status: VERIFICATION_STATUS.MISMATCH,
-                expectedHash: 'addr-expected',
+                expectedHashes: ['addr-expected'],
                 actualHash: 'addr-got',
             });
             const result = await makeLoader().fetchAndStoreManifest();

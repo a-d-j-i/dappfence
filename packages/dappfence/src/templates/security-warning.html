@@ -202,9 +202,16 @@
                         const body = document.createElement('div');
                         body.className = 'block-body';
                         body.appendChild(infoRow('Reason', getBlockReason(block)));
-                        body.appendChild(
-                            infoRow('Expected hash', block.expectedHash || 'Not available', 'hash')
-                        );
+                        const hashes = block.expectedHashes || [];
+                        if (hashes.length === 0) {
+                            body.appendChild(infoRow('Expected hash', 'Not available', 'hash'));
+                        } else if (hashes.length === 1) {
+                            body.appendChild(infoRow('Expected hash', hashes[0], 'hash'));
+                        } else {
+                            hashes.forEach((h, i) => {
+                                body.appendChild(infoRow(`Expected hash ${i + 1}`, h, 'hash'));
+                            });
+                        }
                         body.appendChild(
                             infoRow('Actual hash', block.actualHash || 'Not available', 'hash')
                         );

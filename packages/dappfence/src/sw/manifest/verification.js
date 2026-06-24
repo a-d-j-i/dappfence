@@ -37,7 +37,7 @@ export const toPathname = (url, baseUrl) => {
  * @param {string} manifestSignatureType
  * @param {string} manifestSignatureIdentity
  * @param {object} manifestData - Manifest with .pay (payload) and .sig (signature)
- * @returns {{ status, payload?, expectedHash?, actualHash? }}
+ * @returns {{ status, payload?, expectedHashes?, actualHash? }}
  */
 export const verifyManifestSignature = (
     manifestSignatureType,
@@ -58,7 +58,7 @@ export const verifyManifestSignature = (
                 );
                 return {
                     status: VERIFICATION_STATUS.MISMATCH,
-                    expectedHash: manifestSignatureIdentity,
+                    expectedHashes: [manifestSignatureIdentity],
                     actualHash: recovered,
                 };
             }
