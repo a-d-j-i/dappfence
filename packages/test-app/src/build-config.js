@@ -9,6 +9,10 @@ const EXTERNAL_ASSETS = {
     ],
     'https://code.jquery.com/jquery-3.7.1.min.js':
         'sha256-/JqT3SQfawRcv/BIHPThkBvs0OEvtFFmqPF/lYI/Cxo=',
+    'http://external-cdn.com/no-cors-test.js':
+        'sha256-95XmetShyFXMsPtGjtYrWOVIOH96OQjUiODx8UmBMeg=',
+    'http://cors-unsupported-cdn.com/no-cors-test.js':
+        'sha256-95XmetShyFXMsPtGjtYrWOVIOH96OQjUiODx8UmBMeg=',
 };
 
 const ROOT_DIR = path.resolve(__dirname, '..');

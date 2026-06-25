@@ -456,8 +456,17 @@ function startServer({
         };
     }
 
+    // Hosts that simulate servers with no CORS support.
+    // DappFence forces cors+omit on no-cors script requests, so scripts from these
+    // hosts will fail with a TypeError — the browser rejects responses without
+    // Access-Control-Allow-Origin even though the SW upgraded the request mode.
+    const NO_CORS_HOSTS = new Set(['cors-unsupported-cdn.com']);
+
     const server = http.createServer((req, res) => {
         const testParams = getTestParameters(req);
+        const host = (req.headers.host || '').split(':')[0];
+        const isCorsSupported = !NO_CORS_HOSTS.has(host);
+
         const CORS_HEADERS = [
             'Access-Control-Allow-Origin',
             'Access-Control-Allow-Methods',
@@ -465,13 +474,20 @@ function startServer({
         ].reduce((acc, header) => ({ ...acc, [header]: '*' }), {});
 
         if (req.method === 'OPTIONS') {
-            res.writeHead(204, CORS_HEADERS);
+            if (isCorsSupported) {
+                res.writeHead(204, CORS_HEADERS);
+            } else {
+                // No CORS headers → preflight denied → browser won't send the actual request.
+                res.writeHead(403);
+            }
             res.end();
             return;
         }
-        Object.keys(CORS_HEADERS).forEach((header) => {
-            res.setHeader(header, CORS_HEADERS[header]);
-        });
+        if (isCorsSupported) {
+            Object.keys(CORS_HEADERS).forEach((header) => {
+                res.setHeader(header, CORS_HEADERS[header]);
+            });
+        }
 
         if (testParams.requestPath.startsWith('/api/')) {
             return serveApi(res, req, testParams);
