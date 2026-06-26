@@ -5,101 +5,9 @@
 
 import { createBlockResponse, createRewriteResponse } from './response.js';
 import { createLogger } from '../core/logger.js';
-import {
-    API_PREFIX,
-    isExecutableDestination,
-    MODE,
-    VERIFICATION_STATUS,
-} from '../core/constants.js';
-import { isFeatureEnabled } from '../core/utils.js';
+import { API_PREFIX, MODE, VERIFICATION_STATUS } from '../core/constants.js';
 
 const logger = createLogger();
-
-/**
- * Prepare a request for the security pipeline:
- *   - Upgrades no-cors script requests to cors+omit so the response body is readable
- *     (when force_cors_scripts is enabled, which is the default).
- *   - Adds DappFence tracking markers (same-origin only, when mark_request is enabled).
- * Returns the original request unchanged when no transformation is needed.
- *
- * Request properties are prototype getters, not own enumerable properties, so
- * `{ ...request }` yields `{}`. We must list each property explicitly.
- * `toRequestInit` captures the safe-to-copy subset; `mode`, `body`, `keepalive`,
- * and `signal` are added per-branch because `'navigate'` is rejected by the
- * Request constructor and body/keepalive/signal doesn't apply to navigate requests.
- */
-export function prepareRequest(request, locationOrigin) {
-    const url = new URL(request.url);
-    const isSameOrigin = url.origin === locationOrigin;
-    const isNoCorsExecutable =
-        request.mode === 'no-cors' &&
-        isExecutableDestination(request.destination) &&
-        isFeatureEnabled('force_cors_scripts');
-
-    if (!isNoCorsExecutable) {
-        if (!isSameOrigin) {
-            logger.log(`[SW-X-ORIGIN] Cross-origin (no tracking): ${request.url}`);
-            return request;
-        }
-        if (!isFeatureEnabled('mark_request')) {
-            logger.log(`[SW-NO-TRACKING] No tracking: ${request.url}`);
-            return request;
-        }
-    }
-
-    // Creates a modified copy of the request, preserving the safe-to-copy subset
-    // (mode/body/keepalive/signal omitted — navigate rejects 'navigate' and doesn't
-    // use stream properties) and stamping destination back via defineProperty because
-    // it is not part of RequestInit and would otherwise reset to ''.
-    const createRequest = (overrides) => {
-        const req = new Request(url.href, {
-            method: request.method, // safe to copy always
-            credentials: request.credentials,
-            cache: request.cache,
-            redirect: request.redirect,
-            referrer: request.referrer,
-            referrerPolicy: request.referrerPolicy,
-            integrity: request.integrity,
-            ...overrides,
-        });
-        Object.defineProperty(req, 'destination', {
-            value: request.destination,
-            configurable: true,
-        });
-        return req;
-    };
-
-    try {
-        if (request.mode === 'navigate') {
-            logger.log(`[DFSW-NAVIGATE] Navigation request (URL tracking only): ${request.url}`);
-            return createRequest({
-                headers: new Headers({
-                    ...Object.fromEntries(request.headers),
-                    'x-dappfence': 'processed',
-                }),
-            });
-        }
-        // no-cors upgrade: force cors+omit so the response body is readable.
-        // non-navigate marking: preserve original mode and credentials.
-        if (isNoCorsExecutable) {
-            logger.log(`[DFSW-NO-CORS] Upgrading no-cors executable to cors: ${request.url}`);
-        } else {
-            logger.log(`[DFSW-HEADER+URL] Added header to: ${url.href}`);
-        }
-        const markHeader = isFeatureEnabled('mark_request') ? { 'x-dappfence': 'processed' } : {};
-        return createRequest({
-            mode: isNoCorsExecutable ? 'cors' : request.mode,
-            credentials: isNoCorsExecutable ? 'omit' : request.credentials,
-            headers: new Headers({ ...Object.fromEntries(request.headers), ...markHeader }),
-            body: request.body,
-            keepalive: request.keepalive,
-            signal: request.signal,
-        });
-    } catch (error) {
-        logger.warn(`Failed to prepare request: ${request.url}`, error);
-    }
-    return request;
-}
 
 /**
  * @param {object} deps
@@ -117,7 +25,6 @@ export function createSecurityFetchHandler({
     handleApiEndpoint,
 }) {
     const { activeBlocksStore } = appStore;
-    const locationOrigin = swContext.getLocationOrigin();
     const locationHref = swContext.getLocationHref();
 
     /**
@@ -159,7 +66,7 @@ export function createSecurityFetchHandler({
 
     async function applyIntegrityPolicy(ctx, request, response, clientId) {
         logger.log('Verifying security-critical asset:', request.url);
-        const verificationResult = await ctx.verifyFile(request, response.clone(), clientId);
+        const verificationResult = await ctx.verifyResponse(request, response, clientId);
         let mustBlock = false;
         if (
             verificationResult.status !== VERIFICATION_STATUS.MATCH &&
@@ -209,7 +116,7 @@ export function createSecurityFetchHandler({
             }
         }
 
-        // Resolve the manifest context once per request — mode and verifyFile
+        // Resolve the manifest context once per request — mode and verifyResponse
         // share the single IndexedDB lookup done here.
         const ctx = await manifestService.resolveManifest();
         logger.log(`Client mode: ${clientId} ${ctx.mode}`);
@@ -221,9 +128,10 @@ export function createSecurityFetchHandler({
             return createBlockResponse(request, locationHref);
         }
 
-        // Prepare request: upgrade no-cors scripts to cors+omit and add tracking
-        // markers (same-origin, when mark_request feature is enabled).
-        const preparedRequest = prepareRequest(request, locationOrigin);
+        // Prepare request: upgrade no-cors executables to cors+omit and add
+        // tracking markers (same-origin, when mark_request feature is enabled).
+        // contentRules allow-by-destination checking before any CORS upgrade.
+        const preparedRequest = ctx.prepareRequest(request);
         if (preparedRequest !== request) {
             // Replace event.request so ALL child handlers see the prepared version.
             Object.defineProperty(event, 'request', {
