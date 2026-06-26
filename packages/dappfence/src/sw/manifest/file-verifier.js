@@ -14,7 +14,7 @@
  * page load, so any failure is a genuine violation.
  */
 
-import { ASSET_TYPE, VERIFICATION_STATUS } from '../../core/constants.js';
+import { ASSET_TYPE, isExecutableDestination, VERIFICATION_STATUS } from '../../core/constants.js';
 import { applyTransform, collectContentRuleActions, resolveManifestKey } from './rules.js';
 import { toPathname } from './verification.js';
 import { createLogger } from '../../core/logger.js';
@@ -103,7 +103,7 @@ export const createFileVerifier = ({ swContext, appStore, config }, manifestLoad
             logger.log(`↩️  Rewriting opaque script ${req.url}`);
             return VERIFICATION_STATUS.REWRITE;
         }
-        if (!response.ok && destination !== 'document' && destination !== 'script') {
+        if (!response.ok && !isExecutableDestination(destination)) {
             return skip('non-ok sub-resource');
         }
         return false;

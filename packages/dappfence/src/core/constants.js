@@ -74,3 +74,37 @@ export const ASSET_TYPE = {
     SERVICE_WORKER: 'service-worker',
     MANIFEST: 'manifest',
 };
+
+// Known-inert destinations: responses that the browser never executes as code.
+// Unknown future destinations default to executable (fail-closed) — only
+// destinations proven safe are listed here.
+//   style  — CSS has no JS execution path in modern browsers; expression() and
+//             background:url('javascript:...') are dead (IE-only). Verified on
+//             Playwright's Chromium/Firefox/WebKit in sw-destination-safety.spec.ts.
+//   xslt   — <xsl:script> (XSLT 1.1 draft) was only ever supported by Firefox and
+//             has since been removed. Chrome and Safari never supported it. Verified
+//             in sw-destination-safety.spec.ts.
+//   "" (empty) — programmatic fetch/XHR; the browser never auto-executes the
+//             response. Modern frameworks (React, Vue, Svelte, HTMX 2.x) process
+//             fetch results as data via JSON parsing or innerHTML — neither path
+//             runs scripts. The blanket skip for destination="" is intentional and
+//             correct, not a gap.
+//   image, font, track, video, audio, manifest, report —
+//             none execute JavaScript in any browser.
+//   embed, object, frame — NOT listed here; they do execute code (PDF JavaScript,
+//             plugin scripting, frameset documents) and are covered by SW intercept.
+//             See docs/js-execution-vectors.md sections 4 and 3a.
+const INERT_DESTINATIONS = new Set([
+    'style',
+    'xslt',
+    'image',
+    'font',
+    'track',
+    'video',
+    'audio',
+    'manifest',
+    'report',
+]);
+
+export const isExecutableDestination = (destination) =>
+    !(INERT_DESTINATIONS.has(destination) || !destination);
