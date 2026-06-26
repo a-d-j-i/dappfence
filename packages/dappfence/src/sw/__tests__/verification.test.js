@@ -126,33 +126,29 @@ describe('toPathname', () => {
 describe('resolveManifestKey', () => {
     const base = 'https://example.com/dappfence.js';
     const req = (url, destination = 'document') => ({ url, destination });
-    const nonOk = { ok: false };
-    const ok = { ok: true };
     const manifest = (pathRules, files) => ({ pathRules, files });
 
     describe('no pathRules', () => {
         it('returns pathname for same-origin URL', () => {
-            expect(resolveManifestKey(req('https://example.com/app.js'), null, base)).toBe(
-                '/app.js'
-            );
+            expect(resolveManifestKey(req('https://example.com/app.js'), base)).toBe('/app.js');
         });
 
         it('returns full URL for cross-origin', () => {
-            expect(resolveManifestKey(req('https://cdn.other.com/lib.js'), null, base)).toBe(
+            expect(resolveManifestKey(req('https://cdn.other.com/lib.js'), base)).toBe(
                 'https://cdn.other.com/lib.js'
             );
         });
 
         it('falls back to pathname when no rule matches', () => {
             expect(
-                resolveManifestKey(req('/about'), null, base, {
+                resolveManifestKey(req('/about'), base, {
                     files: { '/about/index.html': 'h' },
                 })
             ).toBe('/about');
         });
 
         it('returns pathname for relative path', () => {
-            expect(resolveManifestKey(req('/style.css'), null, base)).toBe('/style.css');
+            expect(resolveManifestKey(req('/style.css'), base)).toBe('/style.css');
         });
     });
 
@@ -161,49 +157,44 @@ describe('resolveManifestKey', () => {
         const pathRules = [{ type: 'directory-index' }];
 
         it('resolves "/" to "/index.html"', () => {
-            expect(resolveManifestKey(req('/'), null, base, manifest(pathRules, files))).toBe(
+            expect(resolveManifestKey(req('/'), base, manifest(pathRules, files))).toBe(
                 '/index.html'
             );
         });
 
         it('resolves "/docs/" to "/docs/index.html"', () => {
-            expect(resolveManifestKey(req('/docs/'), null, base, manifest(pathRules, files))).toBe(
+            expect(resolveManifestKey(req('/docs/'), base, manifest(pathRules, files))).toBe(
                 '/docs/index.html'
             );
         });
 
         it('resolves extensionless "/docs" to "/docs/index.html"', () => {
-            expect(resolveManifestKey(req('/docs'), null, base, manifest(pathRules, files))).toBe(
+            expect(resolveManifestKey(req('/docs'), base, manifest(pathRules, files))).toBe(
                 '/docs/index.html'
             );
         });
 
         it('resolves "/about" to "/about/index.html"', () => {
-            expect(resolveManifestKey(req('/about'), null, base, manifest(pathRules, files))).toBe(
+            expect(resolveManifestKey(req('/about'), base, manifest(pathRules, files))).toBe(
                 '/about/index.html'
             );
         });
 
         it('does not remap paths that already have an extension', () => {
-            expect(resolveManifestKey(req('/app.js'), null, base, manifest(pathRules, files))).toBe(
+            expect(resolveManifestKey(req('/app.js'), base, manifest(pathRules, files))).toBe(
                 '/app.js'
             );
         });
 
         it('falls back to pathname when candidate not in files', () => {
-            expect(
-                resolveManifestKey(req('/missing'), null, base, manifest(pathRules, files))
-            ).toBe('/missing');
+            expect(resolveManifestKey(req('/missing'), base, manifest(pathRules, files))).toBe(
+                '/missing'
+            );
         });
 
         it('never applies to cross-origin URLs', () => {
             expect(
-                resolveManifestKey(
-                    req('https://cdn.com/lib.js'),
-                    null,
-                    base,
-                    manifest(pathRules, files)
-                )
+                resolveManifestKey(req('https://cdn.com/lib.js'), base, manifest(pathRules, files))
             ).toBe('https://cdn.com/lib.js');
         });
     });
@@ -213,27 +204,27 @@ describe('resolveManifestKey', () => {
         const pathRules = [{ type: 'html-extension' }];
 
         it('resolves "/about" to "/about.html"', () => {
-            expect(resolveManifestKey(req('/about'), null, base, manifest(pathRules, files))).toBe(
+            expect(resolveManifestKey(req('/about'), base, manifest(pathRules, files))).toBe(
                 '/about.html'
             );
         });
 
         it('does not remap paths with extension', () => {
-            expect(resolveManifestKey(req('/app.js'), null, base, manifest(pathRules, files))).toBe(
+            expect(resolveManifestKey(req('/app.js'), base, manifest(pathRules, files))).toBe(
                 '/app.js'
             );
         });
 
         it('does not remap trailing-slash paths', () => {
-            expect(resolveManifestKey(req('/about/'), null, base, manifest(pathRules, files))).toBe(
+            expect(resolveManifestKey(req('/about/'), base, manifest(pathRules, files))).toBe(
                 '/about/'
             );
         });
 
         it('falls back to pathname when candidate not in files', () => {
-            expect(
-                resolveManifestKey(req('/missing'), null, base, manifest(pathRules, files))
-            ).toBe('/missing');
+            expect(resolveManifestKey(req('/missing'), base, manifest(pathRules, files))).toBe(
+                '/missing'
+            );
         });
     });
 
@@ -242,109 +233,15 @@ describe('resolveManifestKey', () => {
         const pathRules = [{ match: '/landing', resolveAs: '/campaigns/landing/index.html' }];
 
         it('returns resolveAs for exact match', () => {
-            expect(
-                resolveManifestKey(req('/landing'), null, base, manifest(pathRules, files))
-            ).toBe('/campaigns/landing/index.html');
+            expect(resolveManifestKey(req('/landing'), base, manifest(pathRules, files))).toBe(
+                '/campaigns/landing/index.html'
+            );
         });
 
         it('falls through for non-matching paths', () => {
-            expect(resolveManifestKey(req('/other'), null, base, manifest(pathRules, files))).toBe(
+            expect(resolveManifestKey(req('/other'), base, manifest(pathRules, files))).toBe(
                 '/other'
             );
-        });
-    });
-
-    describe('not-found rule', () => {
-        const files = { '/index.html': 'h', '/about.html': 'h2', '/404.html': 'notfound' };
-        const pathRules = [
-            { type: 'directory-index' },
-            { type: 'not-found', fallback: '/404.html' },
-        ];
-
-        it('returns raw pathname without a response (no fallback applied)', () => {
-            expect(
-                resolveManifestKey(req('/nonexistent'), null, base, manifest(pathRules, files))
-            ).toBe('/nonexistent');
-        });
-
-        it('returns raw pathname when response.ok is true', () => {
-            expect(
-                resolveManifestKey(req('/nonexistent'), ok, base, manifest(pathRules, files))
-            ).toBe('/nonexistent');
-        });
-
-        it('applies fallback when response is non-OK and path is not in files', () => {
-            expect(
-                resolveManifestKey(req('/nonexistent'), nonOk, base, manifest(pathRules, files))
-            ).toBe('/404.html');
-        });
-
-        it('does not apply fallback when path is already in files (even with non-OK response)', () => {
-            expect(
-                resolveManifestKey(req('/about.html'), nonOk, base, manifest(pathRules, files))
-            ).toBe('/about.html');
-        });
-
-        it('directory-index takes precedence over not-found regardless of array order', () => {
-            const filesWithIndex = { ...files, '/docs/index.html': 'h3' };
-            const rulesNotFoundFirst = [
-                { type: 'not-found', fallback: '/404.html' },
-                { type: 'directory-index' },
-            ];
-            expect(
-                resolveManifestKey(
-                    req('/docs'),
-                    nonOk,
-                    base,
-                    manifest(rulesNotFoundFirst, filesWithIndex)
-                )
-            ).toBe('/docs/index.html');
-        });
-
-        it('does not apply when fallback key is not in files', () => {
-            const rules = [{ type: 'not-found', fallback: '/missing-404.html' }];
-            expect(
-                resolveManifestKey(req('/nonexistent'), nonOk, base, manifest(rules, files))
-            ).toBe('/nonexistent');
-        });
-
-        it('does not apply to cross-origin URLs', () => {
-            expect(
-                resolveManifestKey(
-                    req('https://cdn.com/missing.js'),
-                    nonOk,
-                    base,
-                    manifest(pathRules, files)
-                )
-            ).toBe('https://cdn.com/missing.js');
-        });
-
-        it('respects condition.urlFilter — applies only to matching path prefix', () => {
-            const rules = [
-                { type: 'not-found', fallback: '/404.html', condition: { urlFilter: '/blog/' } },
-            ];
-            expect(
-                resolveManifestKey(req('/blog/missing'), nonOk, base, manifest(rules, files))
-            ).toBe('/404.html');
-            expect(
-                resolveManifestKey(req('/other/missing'), nonOk, base, manifest(rules, files))
-            ).toBe('/other/missing');
-        });
-
-        it('respects condition.resourceTypes — applies only to matching destination', () => {
-            const rules = [
-                {
-                    type: 'not-found',
-                    fallback: '/404.html',
-                    condition: { resourceTypes: ['document'] },
-                },
-            ];
-            expect(
-                resolveManifestKey(req('/missing', 'document'), nonOk, base, manifest(rules, files))
-            ).toBe('/404.html');
-            expect(
-                resolveManifestKey(req('/missing', 'script'), nonOk, base, manifest(rules, files))
-            ).toBe('/missing');
         });
     });
 
@@ -356,14 +253,14 @@ describe('resolveManifestKey', () => {
         ];
 
         it('applies scoped rule only to matching prefix', () => {
-            expect(resolveManifestKey(req('/docs/'), null, base, manifest(pathRules, files))).toBe(
+            expect(resolveManifestKey(req('/docs/'), base, manifest(pathRules, files))).toBe(
                 '/docs/index.html'
             );
         });
 
         it('falls through to next rule when prefix does not match', () => {
             const files2 = { ...files, '/about.html': 'h2' };
-            expect(resolveManifestKey(req('/about'), null, base, manifest(pathRules, files2))).toBe(
+            expect(resolveManifestKey(req('/about'), base, manifest(pathRules, files2))).toBe(
                 '/about.html'
             );
         });
@@ -463,8 +360,8 @@ describe('verifyManifestSignature', () => {
 
 // ── verifyLocation ────────────────────────────────────────────────────────────
 
-const mockManifestService = (verifyFileMock) => ({
-    resolveManifest: vi.fn().mockResolvedValue({ verifyFile: verifyFileMock }),
+const mockManifestService = (verifyResponseMock) => ({
+    resolveManifest: vi.fn().mockResolvedValue({ verifyResponse: verifyResponseMock }),
 });
 
 describe('verifyLocation', () => {
@@ -475,22 +372,22 @@ describe('verifyLocation', () => {
         delete globalThis.__FEATURES__;
     });
 
-    it('fetches the URL and returns the verifyFile result enriched with url', async () => {
-        const verifyFileResult = {
+    it('fetches the URL and returns the verifyResponse result enriched with url', async () => {
+        const verifyResponseResult = {
             status: 'MATCH',
             fileKey: '/lib.js',
             expectedHashes: ['abc'],
             actualHash: 'abc',
             timestamp: '2026-01-01T00:00:00.000Z',
         };
-        const verifyFile = vi.fn().mockResolvedValue(verifyFileResult);
+        const verifyResponse = vi.fn().mockResolvedValue(verifyResponseResult);
         const response = new Response('file content');
         const deps = {
             swContext: {
                 fetch: vi.fn().mockResolvedValue(response),
                 getLocationHref: () => 'https://example.com/sw.js',
             },
-            manifestService: mockManifestService(verifyFile),
+            manifestService: mockManifestService(verifyResponse),
         };
 
         const result = await verifyLocation(deps, '/lib.js');
@@ -498,26 +395,26 @@ describe('verifyLocation', () => {
         expect(deps.swContext.fetch).toHaveBeenCalledWith('/lib.js', {
             headers: { 'x-dappfence': 'sw-verification' },
         });
-        expect(verifyFile).toHaveBeenCalledWith(
+        expect(verifyResponse).toHaveBeenCalledWith(
             { url: '/lib.js', destination: 'script', method: 'GET', mode: '' },
             response
         );
-        expect(result).toEqual(verifyFileResult);
+        expect(result).toEqual(verifyResponseResult);
     });
 
     it('returns error with httpStatus on fetch failure', async () => {
-        const verifyFile = vi.fn();
+        const verifyResponse = vi.fn();
         const deps = {
             swContext: {
                 fetch: vi.fn().mockResolvedValue({ ok: false, status: 500, statusText: 'Error' }),
                 getLocationHref: () => 'https://example.com/sw.js',
             },
-            manifestService: mockManifestService(verifyFile),
+            manifestService: mockManifestService(verifyResponse),
         };
 
         const result = await verifyLocation(deps, '/missing.js');
 
-        expect(verifyFile).not.toHaveBeenCalled();
+        expect(verifyResponse).not.toHaveBeenCalled();
         expect(result).toEqual({ status: VERIFICATION_STATUS.ERROR, httpStatus: 500 });
     });
 });
@@ -532,11 +429,11 @@ describe('verifyImportedScript', () => {
         delete globalThis.__FEATURES__;
     });
 
-    it('calls verifyFile with script URL and the fetched response', async () => {
-        const verifyFile = vi.fn().mockResolvedValue({ status: 'MATCH' });
+    it('calls verifyResponse with script URL and the fetched response', async () => {
+        const verifyResponse = vi.fn().mockResolvedValue({ status: 'MATCH' });
         const response = new Response('script content');
         const core = {
-            manifestService: mockManifestService(verifyFile),
+            manifestService: mockManifestService(verifyResponse),
             appStore: { recordSecurityViolation: vi.fn() },
             swContext: {
                 fetch: vi.fn().mockResolvedValue(response),
@@ -549,7 +446,7 @@ describe('verifyImportedScript', () => {
         expect(core.swContext.fetch).toHaveBeenCalledWith('https://example.com/lib.js', {
             headers: { 'x-dappfence': 'sw-verification' },
         });
-        expect(verifyFile).toHaveBeenCalledWith(
+        expect(verifyResponse).toHaveBeenCalledWith(
             { url: 'https://example.com/lib.js', destination: 'script', method: 'GET', mode: '' },
             response
         );
@@ -557,12 +454,12 @@ describe('verifyImportedScript', () => {
     });
 
     it('records violation on mismatch', async () => {
-        const verifyFile = vi.fn().mockResolvedValue({
+        const verifyResponse = vi.fn().mockResolvedValue({
             status: VERIFICATION_STATUS.MISMATCH,
             fileKey: '/lib.js',
         });
         const core = {
-            manifestService: mockManifestService(verifyFile),
+            manifestService: mockManifestService(verifyResponse),
             appStore: { recordSecurityViolation: vi.fn() },
             swContext: {
                 fetch: vi.fn().mockResolvedValue(new Response('bad content')),
@@ -581,9 +478,9 @@ describe('verifyImportedScript', () => {
     });
 
     it('records violation on fetch failure', async () => {
-        const verifyFile = vi.fn();
+        const verifyResponse = vi.fn();
         const core = {
-            manifestService: mockManifestService(verifyFile),
+            manifestService: mockManifestService(verifyResponse),
             appStore: { recordSecurityViolation: vi.fn() },
             swContext: {
                 fetch: vi
@@ -595,7 +492,7 @@ describe('verifyImportedScript', () => {
 
         await verifyImportedScript(core, 'https://example.com/missing.js');
 
-        expect(verifyFile).not.toHaveBeenCalled();
+        expect(verifyResponse).not.toHaveBeenCalled();
         expect(core.appStore.recordSecurityViolation).toHaveBeenCalledWith(
             expect.objectContaining({
                 status: VERIFICATION_STATUS.ERROR,
@@ -606,12 +503,12 @@ describe('verifyImportedScript', () => {
     });
 
     it('treats SKIPPED results as non-violations', async () => {
-        const verifyFile = vi.fn().mockResolvedValue({
+        const verifyResponse = vi.fn().mockResolvedValue({
             status: VERIFICATION_STATUS.SKIPPED,
             fileKey: '/lib.js',
         });
         const core = {
-            manifestService: mockManifestService(verifyFile),
+            manifestService: mockManifestService(verifyResponse),
             appStore: { recordSecurityViolation: vi.fn() },
             swContext: {
                 fetch: vi.fn().mockResolvedValue(new Response('content')),

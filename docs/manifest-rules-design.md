@@ -358,6 +358,51 @@ Plain verify against `files[key]`, no transforms, no allow/deny overrides. If `f
 found, the action list is exhausted and the request is **blocked**. Dynamic endpoints (APIs, CDN
 resources) require an explicit `allow` contentRule.
 
+### Cross-origin `<embed>` and `<object>` (PDFs, plugins)
+
+`<embed>` and `<object>` elements load content with `destination="embed"` or `destination="object"`.
+When the source is cross-origin and the CDN does not support CORS, the browser issues a `no-cors`
+request. DappFence upgrades `no-cors` requests for executable destinations to `cors+omit` so the
+response body is readable for hash verification — but a CDN without CORS support will reject the
+upgraded request and the embed will break.
+
+**Required manifest rule:**
+
+```json
+{
+    "contentRules": [
+        {
+            "condition": { "resourceTypes": ["embed", "object"] },
+            "action": { "type": "allow" }
+        }
+    ]
+}
+```
+
+With this rule in place:
+
+1. `prepareRequest` detects the `allow` match before applying the CORS upgrade and returns the
+   original request unchanged — the CDN receives its expected `no-cors` request.
+2. `verifyResponse` sees the opaque response and skips verification (opaque bodies are unreadable).
+
+Without the rule, the CORS upgrade fires unconditionally and the embed fails on CDNs that do not
+support CORS.
+
+Scope the rule to a `urlFilter` prefix if you only want to allow specific origins:
+
+```json
+{
+    "condition": {
+        "urlFilter": "https://docs.example.com/",
+        "resourceTypes": ["embed", "object"]
+    },
+    "action": { "type": "allow" }
+}
+```
+
+Same-origin `<embed>`/`<object>` elements do not need this rule — same-origin responses are always
+readable and are verified normally against `files[key]`.
+
 ---
 
 ## Named operations reference

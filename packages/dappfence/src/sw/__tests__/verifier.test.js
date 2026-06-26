@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { createFileVerifier } from '../manifest/file-verifier.js';
+import { createVerifier } from '../manifest/verifier.js';
 import { VERIFICATION_STATUS } from '../../core/constants.js';
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -60,11 +60,13 @@ function makeSubResource(path = '/app.js') {
 }
 
 function makeOkResponse() {
-    return {
+    const r = {
         ok: true,
         type: 'basic',
         arrayBuffer: vi.fn(() => Promise.resolve(new ArrayBuffer(8))),
     };
+    r.clone = vi.fn(() => makeOkResponse());
+    return r;
 }
 
 function makeVerifier({
@@ -85,16 +87,13 @@ function makeVerifier({
     const config = { manifestUrl: 'https://example.com/integrity-manifest.json' };
     const manifestLoader = { fetchAndStoreManifest, storeManifestFromResponse, getManifestHistory };
 
-    const { verifyFileWithContext } = createFileVerifier(
-        { swContext, appStore, config },
-        manifestLoader
-    );
+    const { verifyResponse } = createVerifier({ swContext, appStore, config }, manifestLoader);
 
     const verify = (req, response, clientId = 'client-1') =>
-        verifyFileWithContext(req, response, clientId, latestManifest);
+        verifyResponse(req, response, clientId, latestManifest);
 
     return {
-        verifyFileWithContext,
+        verifyResponse,
         verify,
         fetchAndStoreManifest,
         storeManifestFromResponse,
@@ -167,14 +166,14 @@ describe('step 2 — latestManifest', () => {
     });
 
     it('pins client to latestManifest on step-2 success', async () => {
-        const { verifyFileWithContext, fetchAndStoreManifest } = makeVerifier();
+        const { verifyResponse, fetchAndStoreManifest } = makeVerifier();
         const response = makeOkResponse();
-        await verifyFileWithContext(makeNav('/'), response, 'client-1', INFO_V1);
+        await verifyResponse(makeNav('/'), response, 'client-1', INFO_V1);
 
         // Second request (sub-resource, non-navigation) should use the pin without escalating.
         fetchAndStoreManifest.mockClear();
         const response2 = makeOkResponse();
-        const result = await verifyFileWithContext(
+        const result = await verifyResponse(
             makeSubResource('/index.html'),
             response2,
             'client-1',
@@ -185,14 +184,9 @@ describe('step 2 — latestManifest', () => {
     });
 
     it('does not pin when clientId is null', async () => {
-        const { verifyFileWithContext, fetchAndStoreManifest } = makeVerifier();
-        await verifyFileWithContext(makeNav('/'), makeOkResponse(), null, INFO_V1);
-        await verifyFileWithContext(
-            makeSubResource('/index.html'),
-            makeOkResponse(),
-            null,
-            INFO_V1
-        );
+        const { verifyResponse, fetchAndStoreManifest } = makeVerifier();
+        await verifyResponse(makeNav('/'), makeOkResponse(), null, INFO_V1);
+        await verifyResponse(makeSubResource('/index.html'), makeOkResponse(), null, INFO_V1);
         // Without pinning, step 2 is always re-evaluated (no escalation needed here since it passes).
         expect(fetchAndStoreManifest).not.toHaveBeenCalled();
     });
@@ -202,15 +196,15 @@ describe('step 2 — latestManifest', () => {
 
 describe('step 1 — pinned client', () => {
     it('uses pinned manifest for sub-resources, no escalation', async () => {
-        const { verifyFileWithContext, fetchAndStoreManifest, getManifestHistory } = makeVerifier();
+        const { verifyResponse, fetchAndStoreManifest, getManifestHistory } = makeVerifier();
         // Pin the client via a navigation.
-        await verifyFileWithContext(makeNav('/'), makeOkResponse(), 'client-1', INFO_V1);
+        await verifyResponse(makeNav('/'), makeOkResponse(), 'client-1', INFO_V1);
 
         fetchAndStoreManifest.mockClear();
         getManifestHistory.mockClear();
 
         // Sub-resource should use the pin directly.
-        const result = await verifyFileWithContext(
+        const result = await verifyResponse(
             makeSubResource('/index.html'),
             makeOkResponse(),
             'client-1',
@@ -222,15 +216,15 @@ describe('step 1 — pinned client', () => {
     });
 
     it('returns violation without escalating when pinned manifest fails', async () => {
-        const { verifyFileWithContext, fetchAndStoreManifest } = makeVerifier();
-        await verifyFileWithContext(makeNav('/'), makeOkResponse(), 'client-1', INFO_V1);
+        const { verifyResponse, fetchAndStoreManifest } = makeVerifier();
+        await verifyResponse(makeNav('/'), makeOkResponse(), 'client-1', INFO_V1);
         fetchAndStoreManifest.mockClear();
 
         // Simulate a file whose hash doesn't match the pinned manifest.
         // applyAction returns null on verify failure so the pipeline falls through
         // to NOT_FOUND_IN_MANIFEST — still a violation, just not escalated.
         calculateHash.mockResolvedValueOnce('sha256-tampered');
-        const result = await verifyFileWithContext(
+        const result = await verifyResponse(
             makeSubResource('/index.html'),
             makeOkResponse(),
             'client-1',
@@ -241,17 +235,12 @@ describe('step 1 — pinned client', () => {
     });
 
     it('bypasses pin for navigation requests', async () => {
-        const { verifyFileWithContext, fetchAndStoreManifest } = makeVerifier();
-        await verifyFileWithContext(makeNav('/'), makeOkResponse(), 'client-1', INFO_V1);
+        const { verifyResponse, fetchAndStoreManifest } = makeVerifier();
+        await verifyResponse(makeNav('/'), makeOkResponse(), 'client-1', INFO_V1);
         fetchAndStoreManifest.mockClear();
 
         // Navigation bypasses pin and re-evaluates (step 2 passes here).
-        const result = await verifyFileWithContext(
-            makeNav('/'),
-            makeOkResponse(),
-            'client-1',
-            INFO_V1
-        );
+        const result = await verifyResponse(makeNav('/'), makeOkResponse(), 'client-1', INFO_V1);
         expect(result.status).toBe(VERIFICATION_STATUS.MATCH);
     });
 });
@@ -286,14 +275,14 @@ describe('step 3 — historic manifests', () => {
 
     it('pins client to historic manifest on step-3 success', async () => {
         const wrongManifest = { appVersion: 'v-wrong', manifest: MANIFEST_V2 };
-        const { verifyFileWithContext, fetchAndStoreManifest } = makeVerifier({
+        const { verifyResponse, fetchAndStoreManifest } = makeVerifier({
             latestManifest: wrongManifest,
             historicManifests: [INFO_V1],
         });
-        await verifyFileWithContext(makeNav('/'), makeOkResponse(), 'client-1', wrongManifest);
+        await verifyResponse(makeNav('/'), makeOkResponse(), 'client-1', wrongManifest);
         fetchAndStoreManifest.mockClear();
 
-        const result = await verifyFileWithContext(
+        const result = await verifyResponse(
             makeSubResource('/index.html'),
             makeOkResponse(),
             'client-1',
@@ -335,7 +324,7 @@ describe('step 4 — fetchAndStoreManifest (terminal)', () => {
                 fileKey: '/integrity-manifest.json',
             })
         );
-        const { verifyFileWithContext: verify } = createFileVerifier(
+        const { verifyResponse: verify } = createVerifier(
             {
                 swContext: makeSwContext(),
                 appStore: makeAppStore(),
@@ -351,16 +340,16 @@ describe('step 4 — fetchAndStoreManifest (terminal)', () => {
     });
 
     it('pins client to fresh manifest after step 4', async () => {
-        const { verifyFileWithContext, fetchAndStoreManifest: fetch1 } = makeVerifier({
+        const { verifyResponse, fetchAndStoreManifest: fetch1 } = makeVerifier({
             latestManifest: { appVersion: 'v-stale', manifest: MANIFEST_V2 },
             findByHashResult: null,
             fetchResult: INFO_V1,
         });
         const staleInfo = { appVersion: 'v-stale', manifest: MANIFEST_V2 };
-        await verifyFileWithContext(makeNav('/'), makeOkResponse(), 'client-1', staleInfo);
+        await verifyResponse(makeNav('/'), makeOkResponse(), 'client-1', staleInfo);
         fetch1.mockClear();
 
-        const result = await verifyFileWithContext(
+        const result = await verifyResponse(
             makeSubResource('/index.html'),
             makeOkResponse(),
             'client-1',
@@ -433,8 +422,8 @@ describe('pipeline action semantics', () => {
 
 describe('stale client pruning', () => {
     it('calls matchAllClients after pinning', async () => {
-        const { verifyFileWithContext, swContext } = makeVerifier();
-        await verifyFileWithContext(makeNav('/'), makeOkResponse(), 'client-1', INFO_V1);
+        const { verifyResponse, swContext } = makeVerifier();
+        await verifyResponse(makeNav('/'), makeOkResponse(), 'client-1', INFO_V1);
         await new Promise((r) => setTimeout(r, 0));
         expect(swContext.matchAllClients).toHaveBeenCalled();
     });
@@ -444,7 +433,7 @@ describe('stale client pruning', () => {
         const fetchAndStoreManifest = vi.fn(() =>
             Promise.resolve({ status: VERIFICATION_STATUS.MATCH, ...INFO_V1 })
         );
-        const { verifyFileWithContext } = createFileVerifier(
+        const { verifyResponse } = createVerifier(
             {
                 swContext,
                 appStore: makeAppStore(),
@@ -454,13 +443,13 @@ describe('stale client pruning', () => {
         );
 
         // First call pins client-1 (but pruning evicts it immediately).
-        await verifyFileWithContext(makeNav('/'), makeOkResponse(), 'client-1', INFO_V1);
+        await verifyResponse(makeNav('/'), makeOkResponse(), 'client-1', INFO_V1);
         await new Promise((r) => setTimeout(r, 0));
         fetchAndStoreManifest.mockClear();
 
         // Second call (sub-resource) — client evicted, so no pin, escalates to step 4.
         const staleInfo = { appVersion: 'v-stale', manifest: MANIFEST_V2 };
-        await verifyFileWithContext(
+        await verifyResponse(
             makeSubResource('/index.html'),
             makeOkResponse(),
             'client-1',

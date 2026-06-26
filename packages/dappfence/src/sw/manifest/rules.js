@@ -76,6 +76,19 @@ const applyPathRule = (rule, pathname, files) => {
     return null;
 };
 
+// Predicate: rule participates in normal key resolution (not a not-found fallback rule).
+const isApplicableRule = (pathname) => (r) =>
+    r.type !== 'not-found' &&
+    (!r.condition?.urlFilter || pathname.startsWith(r.condition.urlFilter));
+
+// Predicate: rule is a not-found fallback whose fallback key exists in files and whose
+// condition matches the current request. Used as pathRules.find(isNotFoundRule(...)).
+const isNotFoundRule = (pathname, destination, files) => (r) =>
+    r.type === 'not-found' &&
+    r.fallback &&
+    files[r.fallback] !== undefined &&
+    matchesCondition(r.condition, pathname, destination);
+
 /**
  * Resolve a request URL to its canonical manifest key using pathRules.
  *
@@ -84,17 +97,17 @@ const applyPathRule = (rule, pathname, files) => {
  *
  * A named-type rule succeeds when the resolved candidate exists in `files`.
  * A match/resolveAs rule always succeeds (terminal).
- * A not-found rule applies only when response is non-OK and the pathname is
- * not in files — it maps to a fallback key for hash verification.
+ * When `response` is supplied and non-OK, a `not-found` pathRule can map the
+ * pathname to a fallback key (last-resort, regardless of rule position).
  * Falls back to pathname if no rule matches.
  *
  * @param {{ url: string, destination: string }} req
- * @param {{ ok: boolean }|null} response
  * @param {string} base - SW location href
  * @param {object} manifest - manifest object with pathRules and files
+ * @param {{ ok: boolean }|null} [response] - supply to enable not-found fallback
  * @returns {string}
  */
-export const resolveManifestKey = (req, response, base, manifest = {}) => {
+export const resolveManifestKey = (req, base, manifest = {}, response = null) => {
     const { pathRules = [], files = {} } = manifest;
     const { url } = req;
 
@@ -112,32 +125,38 @@ export const resolveManifestKey = (req, response, base, manifest = {}) => {
 
     const { pathname } = fileUrl;
 
-    const isApplicableRule = (r) =>
-        r.type !== 'not-found' &&
-        (!r.condition?.urlFilter || pathname.startsWith(r.condition.urlFilter));
-
-    const applyRule = (r) => applyPathRule(r, pathname, files);
-
-    const fileKey = pathRules.filter(isApplicableRule).map(applyRule).find(Boolean);
+    const fileKey = pathRules
+        .filter(isApplicableRule(pathname))
+        .map((r) => applyPathRule(r, pathname, files))
+        .find(Boolean);
     if (fileKey) {
         return fileKey;
     }
 
     // not-found is last resort regardless of its position in pathRules
     if (response && !response.ok && files[pathname] === undefined) {
-        const rule = pathRules.find(
-            (r) =>
-                r.type === 'not-found' &&
-                r.fallback &&
-                files[r.fallback] !== undefined &&
-                matchesCondition(r.condition, pathname, req.destination)
-        );
-        if (rule) {
-            return rule.fallback;
-        }
+        const rule = pathRules.find(isNotFoundRule(pathname, req.destination, files));
+        if (rule) return rule.fallback;
     }
 
     return pathname;
+};
+
+/**
+ * Returns true when a manifest contentRule with action `allow` matches the
+ * request — used to short-circuit CORS upgrade and verification.
+ *
+ * @param {{ url: string, destination: string }} req
+ * @param {string} locationHref - SW location href (for origin comparison)
+ * @param {object|null|undefined} manifest
+ * @returns {boolean}
+ */
+export const isRequestAllowed = (req, locationHref, manifest) => {
+    if (!manifest) return false;
+    const key = resolveManifestKey(req, locationHref, manifest);
+    return collectContentRuleActions(key, req.destination, manifest.contentRules).some(
+        (a) => a.type === 'allow'
+    );
 };
 
 // ── content transforms ────────────────────────────────────────────────────────

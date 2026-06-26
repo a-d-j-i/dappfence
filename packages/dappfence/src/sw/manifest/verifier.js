@@ -15,7 +15,13 @@
  */
 
 import { ASSET_TYPE, isExecutableDestination, VERIFICATION_STATUS } from '../../core/constants.js';
-import { applyTransform, collectContentRuleActions, resolveManifestKey } from './rules.js';
+import {
+    applyTransform,
+    collectContentRuleActions,
+    isRequestAllowed,
+    resolveManifestKey,
+} from './rules.js';
+import { isFeatureEnabled } from '../../core/utils.js';
 import { toPathname } from './verification.js';
 import { createLogger } from '../../core/logger.js';
 import { calculateHash } from '../../core/crypto.js';
@@ -40,10 +46,11 @@ const manifestDecidedAbout = (result) =>
  * @param {object} deps.config
  * @param {object} manifestLoader
  */
-export const createFileVerifier = ({ swContext, appStore, config }, manifestLoader) => {
+export const createVerifier = ({ swContext, appStore, config }, manifestLoader) => {
     const { storeManifestFromResponse, fetchAndStoreManifest, getManifestHistory } = manifestLoader;
     const { verificationResultsStore } = appStore;
     const locationHref = swContext.getLocationHref();
+    const locationOrigin = new URL(locationHref).origin;
     const manifestFileKey = config.manifestUrl
         ? toPathname(config.manifestUrl, locationHref)
         : null;
@@ -94,13 +101,13 @@ export const createFileVerifier = ({ swContext, appStore, config }, manifestLoad
             return skip(`empty body, response type ${response.type}`);
         }
         if (response.type === 'opaque') {
-            if (destination !== 'script') {
-                return skip('non-script opaque');
+            if (!isExecutableDestination(destination)) {
+                return skip('non-executable opaque');
             }
-            // fetch-handler.js upgrades no-cors script requests to cors+omit before fetching,
-            // so script responses are never opaque in practice. This REWRITE fallback remains
-            // as a safety net for any opaque script response that slips through.
-            logger.log(`↩️  Rewriting opaque script ${req.url}`);
+            // prepareRequest upgrades no-cors executable requests to cors+omit; if we
+            // still get an opaque response, the body is unreadable — stub it.
+            // (allow rules are checked before this point so allowed embeds never reach here.)
+            logger.log(`↩️  Rewriting opaque executable ${req.url}`);
             return VERIFICATION_STATUS.REWRITE;
         }
         if (!response.ok && !isExecutableDestination(destination)) {
@@ -166,7 +173,7 @@ export const createFileVerifier = ({ swContext, appStore, config }, manifestLoad
 
     const runPipeline = async (req, response, manifestInfo, rawBuffer) => {
         const { manifest } = manifestInfo;
-        const fileKey = resolveManifestKey(req, response, locationHref, manifest);
+        const fileKey = resolveManifestKey(req, locationHref, manifest, response);
         const actions = collectContentRuleActions(fileKey, req.destination, manifest?.contentRules);
         const actionsToWalk = actions.length ? actions : [{ type: 'verify' }];
         let lastResult = { status: VERIFICATION_STATUS.NOT_FOUND_IN_MANIFEST };
@@ -183,6 +190,8 @@ export const createFileVerifier = ({ swContext, appStore, config }, manifestLoad
         return { ...lastResult, fileKey };
     };
 
+    // For unpinned clients, escalate from the latest manifest → historic manifests → network fetch
+    // on MISMATCH / NOT_FOUND only. All other results (MATCH, DENIED_BY_RULE, etc.) are final.
     const verifyWithEscalation = async (req, response, rawBuffer, clientId, latestManifest) => {
         const triedVersions = new Set();
         const tryManifest = async (manifestInfo) => {
@@ -232,7 +241,7 @@ export const createFileVerifier = ({ swContext, appStore, config }, manifestLoad
         return [fetchedResult, latestResult, ...historicResults].find((r) => r !== null) ?? fetched;
     };
 
-    const verifyFileWithContext = async (req, response, clientId, latestManifest) => {
+    const verifyResponse = async (req, response, clientId, latestManifest) => {
         const fileKey = toPathname(req.url, locationHref);
 
         if (fileKey === manifestFileKey) {
@@ -241,44 +250,142 @@ export const createFileVerifier = ({ swContext, appStore, config }, manifestLoad
 
         // fileKey from fields overrides the default (resolveManifestKey may differ);
         // assetType is last so it always wins.
-        const fileResult = (fields) => ({
+        const result = (fields) => ({
             fileKey,
             url: req.url,
             ...fields,
             assetType: ASSET_TYPE.ASSET,
         });
 
+        // Allow rule pre-check: if the manifest explicitly allows this request,
+        // skip verification before shouldSkipVerification runs — so the opaque
+        // REWRITE path never fires for intentionally un-upgraded resources (e.g.
+        // cross-origin embeds/objects on CDNs that don't support CORS).
+        if (isRequestAllowed(req, locationHref, latestManifest?.manifest)) {
+            logger.log(`⏭️  Skipping (allow rule): ${req.url}`);
+            return result({ status: VERIFICATION_STATUS.SKIPPED });
+        }
+
         const shouldSkip = shouldSkipVerification(req, response);
         if (shouldSkip) {
             logger.log(`⏭️  ${shouldSkip.description}: ${fileKey}`);
-            return fileResult({ status: shouldSkip });
+            return result({ status: shouldSkip });
         }
 
         const isNavigation = req.mode === 'navigate';
         logger.log(
-            `[verifyFileWithContext] req.method=${req.method} clientId=${clientId} isNavigation=${isNavigation}`
+            `[verifyResponse] req.method=${req.method} clientId=${clientId} isNavigation=${isNavigation}`
         );
 
         let rawBuffer;
         try {
-            rawBuffer = await response.arrayBuffer();
+            rawBuffer = await response.clone().arrayBuffer();
         } catch (err) {
             logger.warn(`Failed to read response body: ${req.url}`, err);
-            return fileResult({ status: VERIFICATION_STATUS.ERROR });
+            return result({ status: VERIFICATION_STATUS.ERROR });
         }
 
         if (clientId && !isNavigation) {
             const pinned = clientIdXManifest.get(clientId);
             if (pinned) {
-                logger.log(`[verifyFileWithContext] clientId=${clientId} (pinned)`);
-                return fileResult(await runPipeline(req, response, pinned, rawBuffer));
+                logger.log(`[verifyResponse] clientId=${clientId} (pinned)`);
+                return result(await runPipeline(req, response, pinned, rawBuffer));
             }
         }
 
-        return fileResult(
+        return result(
             await verifyWithEscalation(req, response, rawBuffer, clientId, latestManifest)
         );
     };
 
-    return { verifyFileWithContext };
+    // ── prepareRequest ────────────────────────────────────────────────────────
+    // Upgrades no-cors executable requests to cors+omit, so the response body is
+    // readable, unless a contentRule with action `allow` matches the request
+    // (e.g., embed/object allow rules for PDF CDNs that don't support CORS).
+    // Adds DappFence tracking markers on same-origin requests when mark_request
+    // is enabled.
+    //
+    // Request properties are prototype getters, not own enumerable properties, so
+    // `{ ...request }` yields `{}`. We must list each property explicitly.
+    const prepareRequest = (request, latestManifest) => {
+        const url = new URL(request.url);
+        const isSameOrigin = url.origin === locationOrigin;
+
+        const isNoCorsExecutable =
+            request.mode === 'no-cors' &&
+            isExecutableDestination(request.destination) &&
+            isFeatureEnabled('force_cors_scripts');
+
+        if (
+            isNoCorsExecutable &&
+            isRequestAllowed(request, locationHref, latestManifest?.manifest)
+        ) {
+            logger.log(`[DFSW-NO-CORS-ALLOW] Skipping CORS upgrade (allow rule): ${request.url}`);
+            return request;
+        }
+
+        if (!isNoCorsExecutable) {
+            if (!isSameOrigin) {
+                logger.log(`[SW-X-ORIGIN] Cross-origin (no tracking): ${request.url}`);
+                return request;
+            }
+            if (!isFeatureEnabled('mark_request')) {
+                logger.log(`[SW-NO-TRACKING] No tracking: ${request.url}`);
+                return request;
+            }
+        }
+
+        const createRequest = (overrides) => {
+            const req = new Request(url.href, {
+                method: request.method,
+                credentials: request.credentials,
+                cache: request.cache,
+                redirect: request.redirect,
+                referrer: request.referrer,
+                referrerPolicy: request.referrerPolicy,
+                integrity: request.integrity,
+                ...overrides,
+            });
+            Object.defineProperty(req, 'destination', {
+                value: request.destination,
+                configurable: true,
+            });
+            return req;
+        };
+
+        try {
+            if (request.mode === 'navigate') {
+                logger.log(
+                    `[DFSW-NAVIGATE] Navigation request (URL tracking only): ${request.url}`
+                );
+                return createRequest({
+                    headers: new Headers({
+                        ...Object.fromEntries(request.headers),
+                        'x-dappfence': 'processed',
+                    }),
+                });
+            }
+            if (isNoCorsExecutable) {
+                logger.log(`[DFSW-NO-CORS] Upgrading no-cors executable to cors: ${request.url}`);
+            } else {
+                logger.log(`[DFSW-HEADER+URL] Added header to: ${url.href}`);
+            }
+            const markHeader = isFeatureEnabled('mark_request')
+                ? { 'x-dappfence': 'processed' }
+                : {};
+            return createRequest({
+                mode: isNoCorsExecutable ? 'cors' : request.mode,
+                credentials: isNoCorsExecutable ? 'omit' : request.credentials,
+                headers: new Headers({ ...Object.fromEntries(request.headers), ...markHeader }),
+                body: request.body,
+                keepalive: request.keepalive,
+                signal: request.signal,
+            });
+        } catch (error) {
+            logger.warn(`Failed to prepare request: ${request.url}`, error);
+        }
+        return request;
+    };
+
+    return { verifyResponse, prepareRequest };
 };

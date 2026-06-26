@@ -95,7 +95,7 @@ export async function verifyLocation({ swContext, manifestService }, url) {
         if (response) {
             if (response.ok) {
                 const ctx = await manifestService.resolveManifest();
-                return ctx.verifyFile(
+                return ctx.verifyResponse(
                     { url, destination: 'script', method: 'GET', mode: '' },
                     response
                 );

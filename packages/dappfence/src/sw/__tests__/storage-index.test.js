@@ -201,7 +201,7 @@ describe('recordSecurityViolation', () => {
         expect(mustBlock).toBe(true);
     });
 
-    describe('expectedHashes array contract (shape from file-verifier)', () => {
+    describe('expectedHashes array contract (shape from verifier)', () => {
         it('persists expectedHashes in the security event', async () => {
             const appStore = createStore();
             await appStore.recordSecurityViolation(mismatchDetails);
