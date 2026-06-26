@@ -5,7 +5,12 @@
 
 import { createBlockResponse, createRewriteResponse } from './response.js';
 import { createLogger } from '../core/logger.js';
-import { API_PREFIX, MODE, VERIFICATION_STATUS } from '../core/constants.js';
+import {
+    API_PREFIX,
+    isExecutableDestination,
+    MODE,
+    VERIFICATION_STATUS,
+} from '../core/constants.js';
 import { isFeatureEnabled } from '../core/utils.js';
 
 const logger = createLogger();
@@ -26,12 +31,12 @@ const logger = createLogger();
 export function prepareRequest(request, locationOrigin) {
     const url = new URL(request.url);
     const isSameOrigin = url.origin === locationOrigin;
-    const isNoCorsScript =
+    const isNoCorsExecutable =
         request.mode === 'no-cors' &&
-        request.destination === 'script' &&
+        isExecutableDestination(request.destination) &&
         isFeatureEnabled('force_cors_scripts');
 
-    if (!isNoCorsScript) {
+    if (!isNoCorsExecutable) {
         if (!isSameOrigin) {
             logger.log(`[SW-X-ORIGIN] Cross-origin (no tracking): ${request.url}`);
             return request;
@@ -76,15 +81,15 @@ export function prepareRequest(request, locationOrigin) {
         }
         // no-cors upgrade: force cors+omit so the response body is readable.
         // non-navigate marking: preserve original mode and credentials.
-        if (isNoCorsScript) {
-            logger.log(`[DFSW-NO-CORS] Upgrading no-cors script to cors: ${request.url}`);
+        if (isNoCorsExecutable) {
+            logger.log(`[DFSW-NO-CORS] Upgrading no-cors executable to cors: ${request.url}`);
         } else {
             logger.log(`[DFSW-HEADER+URL] Added header to: ${url.href}`);
         }
         const markHeader = isFeatureEnabled('mark_request') ? { 'x-dappfence': 'processed' } : {};
         return createRequest({
-            mode: isNoCorsScript ? 'cors' : request.mode,
-            credentials: isNoCorsScript ? 'omit' : request.credentials,
+            mode: isNoCorsExecutable ? 'cors' : request.mode,
+            credentials: isNoCorsExecutable ? 'omit' : request.credentials,
             headers: new Headers({ ...Object.fromEntries(request.headers), ...markHeader }),
             body: request.body,
             keepalive: request.keepalive,

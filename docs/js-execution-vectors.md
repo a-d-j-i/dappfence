@@ -31,9 +31,28 @@ per entry.
 > Short version: **inline `<script>` blocks are covered** on SSR via the `inline-script` synthetic
 > destination and `#scripts` manifest entries (see
 > [manifest-rules-design.md](manifest-rules-design.md)). **`on*` event handler attributes,
-> `javascript:` hrefs, and import maps** are not extracted by that mechanism today, but all three
-> have a planned fix via the same DOMParser post-fetch extraction phase — see
-> [Section 17](#17-ssr-inline-content-verification) for details.
+> `javascript:` hrefs, and import maps** are covered by the same post-fetch tokenizer extraction
+> phase — see [Section 17](#17-ssr-inline-content-verification) for details.
+
+> **Conservative parsing policy.** DappFence does not aim for spec-compliant HTML parsing. The goal
+> is to extract every byte sequence that _could_ execute JavaScript in any browser under any
+> conditions — including non-standard, malformed, or edge-case markup. A script inside `<template>`,
+> an `on*` attribute on a foreign-content element, or a `xlink:href="javascript:"` on an SVG anchor
+> are all treated as execution vectors regardless of whether the HTML5 spec requires the browser to
+> execute them. False positives (flagging something the browser would not execute) are acceptable
+> and resolved via manifest exceptions. False negatives (missing something the browser executes) are
+> not acceptable.
+
+> **DappFence as a forcing function.** When the tokenizer finds a pattern that must appear in the
+> manifest — an inline `on*` attribute, a `<script>` inside `<template>`, a
+> `xlink:href="javascript:"`, an unusual inline script — the developer has two options: add the hash
+> to the manifest (acknowledging it consciously) or refactor the code to eliminate the pattern. Both
+> outcomes improve security. DappFence is not designed to silently accommodate every coding pattern;
+> it is designed to surface patterns that carry execution risk and force an explicit decision. The
+> manifest exception mechanism is a controlled escape valve for cases where the pattern is
+> intentional and understood, not a silent default that absorbs anything the framework emits. This
+> is the same principle that makes DappFence incompatible with tag managers and JSONP: the
+> incompatibility is the security property, not a gap to be bridged.
 
 ---
 
@@ -296,24 +315,23 @@ not supported the only safe option is removing `'unsafe-inline'`.
 **DappFence**: **HTML doc** the handler text lives in the HTML response body. Covered on static
 routes because the full document hash is in the manifest.
 
-**On SSR routes this is not yet covered; the planned `#handlers` DOMParser pass (see below) closes
-it.** The `inline-script` extraction mechanism only finds `<script>` elements; it does not walk
-element attributes. Injected `onerror`, `onload`, `onfocus`, etc. on arbitrary HTML elements are
-invisible to the pipeline until that pass is implemented. CSP with `'unsafe-inline'` absent is the
-outside-DappFence enforcement point in the interim.
+**On SSR routes this is covered by the `#handlers` tokenizer extraction (see below).** The tokenizer
+walks all opening tags and collects every `on*` attribute value. Injected `onerror`, `onload`,
+`onfocus`, etc. on arbitrary HTML elements are extracted and checked against the manifest.
 
-**Planned mitigation `DOMParser` in the SW.** As of Chrome 119 (Oct 2023) and Firefox (earlier),
-`DOMParser` is available in service worker context. The planned implementation extends the existing
-post-fetch extraction phase: after the SW fetches an HTML response, it parses the body with
-`new DOMParser().parseFromString(text, 'text/html')`, walks the resulting DOM, and collects the
-value of every attribute whose name begins with `on` on every element. Those values are hashed and
-checked against a `pageKey + "#handlers"` manifest entry using the same set-membership logic as
-`#scripts`. An injected attribute not in the manifest set triggers a violation before the response
-reaches the browser.
+**Mitigation: custom tokenizer post-fetch extraction.** After the SW fetches an HTML response, a
+purpose-built HTML tokenizer (bundled into `dappfence.js`, identical to the one used at build time
+by the integration packages) scans the raw response bytes. It collects the value of every attribute
+whose name begins with `on` on every opening tag, regardless of element type or namespace. Those
+values are hashed and checked against a `pageKey + "#handlers"` manifest entry using the same
+set-membership logic as `#scripts`. An injected attribute not in the manifest set triggers a
+violation before the response reaches the browser.
 
-The performance cost is one extra parse of the HTML document, the same engine doing the same work it
-would do anyway, with correct HTML semantics and no regex fragility. Browser support: Chrome 119+
-and Firefox.
+The tokenizer deliberately extracts more broadly than a spec-compliant parser: `on*` attributes
+inside `<template>`, on SVG/MathML elements, and in structurally invalid positions are all
+extracted. If a developer's legitimate HTML uses `on*` attributes in unusual positions, those hashes
+must appear in the `#handlers` manifest entry — or the markup should be refactored to use event
+listeners.
 
 ---
 
@@ -338,14 +356,14 @@ form is submitted.
 **DappFence**: **HTML doc** the `javascript:` literal is inside the HTML. Verified on static routes
 via the document hash. Runtime injection from a verified script is transitively trusted.
 
-**On SSR routes this is not yet covered; the same planned `#handlers` pass as section 2 closes it.**
-`href`/`action`/`formaction` attribute values are not extracted by the `inline-script` mechanism. An
-attacker controlling the server can inject `<a href="javascript:steal()">` into the SSR response
-undetected. CSP `navigate-to` (CSP3) can restrict this but browser support is limited.
+**On SSR routes this is covered by the same tokenizer pass as section 2.** The tokenizer collects
+`href`, `action`, `formaction`, `xlink:href`, and `src` (on `<iframe>` and `<frame>`) values that
+begin with `javascript:` (case-insensitive prefix check) on every element. All are included in the
+`pageKey + "#handlers"` manifest entry — one extraction phase closes all these gaps.
 
-The same DOMParser pass planned for `on*` attributes (see section 2) also collects `href`, `action`,
-`formaction`, and `src` (on `<iframe>` and `<frame>`) values that begin with `javascript:`. All are
-included in the `pageKey + "#handlers"` manifest entry — one extraction phase closes all these gaps.
+`xlink:href="javascript:"` on SVG `<a>` and `<use>` elements and MathML `<mi>` elements is treated
+identically to `href="javascript:"` — it is an execution vector in all modern browsers and is
+extracted regardless of namespace.
 
 ---
 
@@ -390,15 +408,19 @@ doesn't match prevents execution entirely.
 
 SVG has its own `<script>` element. Execution context depends on how the SVG is loaded.
 
-| Load method                    | Scripts run?              | DappFence                                                                                                             |
-| ------------------------------ | ------------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| Inline `<svg><script>` in HTML | Yes, same context         | **HTML doc** (static) / **#scripts** via DOMParser walk (SSR) — DOMParser visits the full tree including SVG elements |
-| `<img src="...svg">`           | No                        | N/A                                                                                                                   |
-| `<object data="...svg">`       | Yes, own browsing context | **SW intercept**                                                                                                      |
-| `<iframe src="...svg">`        | Yes, own browsing context | **SW intercept**                                                                                                      |
-| Direct navigation              | Yes, own browsing context | **SW intercept**                                                                                                      |
+| Load method                         | Scripts run?              | DappFence                                                                                                    |
+| ----------------------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| Inline `<svg><script>` in HTML      | Yes, same context         | **HTML doc** (static) / **#scripts** tokenizer extraction (SSR) — catches `<script>` anywhere in byte stream |
+| `<svg><a xlink:href="javascript:">` | Yes, on click             | **HTML doc** (static) / **#handlers** tokenizer extraction (SSR) — `xlink:href` checked alongside `href`     |
+| `<svg on*="...">` event handlers    | Yes, on event             | **HTML doc** (static) / **#handlers** tokenizer extraction (SSR)                                             |
+| `<img src="...svg">`                | No                        | N/A                                                                                                          |
+| `<object data="...svg">`            | Yes, own browsing context | **SW intercept**                                                                                             |
+| `<iframe src="...svg">`             | Yes, own browsing context | **SW intercept**                                                                                             |
+| Direct navigation                   | Yes, own browsing context | **SW intercept**                                                                                             |
 
-For inline SVG, the `<script>` text is part of the HTML body, see 1b.
+For inline SVG, the `<script>` text is part of the HTML body, see 1b. SVG `xlink:href` is covered by
+the same `#handlers` extraction as section 3a — the tokenizer checks every `xlink:href` attribute
+value for a `javascript:` prefix on all elements.
 
 ---
 
@@ -623,21 +645,20 @@ Remaps bare specifiers to URLs. The actual fetch happens when the remapped modul
 **DappFence**: The importmap JSON is **HTML doc** on static routes (covered by document hash). The
 remapped module URLs are fetched → **SW intercept** (unknown URLs fail the manifest check).
 
-**On SSR routes the importmap content is not yet covered; planned via `#importmap` (same DOMParser
-pass).** The `inline-script` extractor explicitly skips `type="importmap"`. An attacker can inject a
-remap that redirects a bare specifier (e.g., `"react"`) to an attacker-controlled URL. The SW will
-block unknown URLs, but remapping to an already-manifest-listed URL (e.g., redirecting `"react"` to
-`/app.js`) passes undetected, the SW verifies the hash of the wrong module and passes it through
-with no violation signal. An attacker with read-access to the manifest (a public signed document)
-can list every listed URL and craft a targeted remap with no new external dependency. This is a
-complete bypass on any SSR route that uses bare module specifiers.
+**On SSR routes the importmap content is covered by the `#importmap` tokenizer extraction (same pass
+as `#handlers`).** The `inline-script` extractor explicitly skips `type="importmap"` but the
+tokenizer collects it separately. An attacker can inject a remap that redirects a bare specifier
+(e.g., `"react"`) to an attacker-controlled URL. The SW blocks unknown URLs, but remapping to an
+already-manifest-listed URL (e.g., redirecting `"react"` to `/app.js`) passes undetected — the SW
+verifies the hash of the wrong module and passes it through with no violation signal. An attacker
+with read-access to the manifest (a public signed document) can list every listed URL and craft a
+targeted remap with no new external dependency. `#importmap` verification closes this entirely: any
+injected or modified importmap produces a hash not in the manifest → violation.
 
-**Planned mitigation, same DOMParser pass as `#handlers`.** The DOMParser walk planned for `on*`
-attributes and `javascript:` hrefs (see section 2) visits the full DOM. Adding importmap extraction
-to that pass is straightforward: collect the text content of every `<script type="importmap">`
-element, hash it, and check against a `pageKey + "#importmap"` manifest entry. All three
-extractions, `#handlers`, and `#importmap`, happen in the same single post-fetch phase with no
-additional parsing cost.
+**Mitigation: same tokenizer pass as `#handlers`.** The tokenizer pass (see section 2) collects the
+raw text content of every `<script type="importmap">` element and hashes it against a
+`pageKey + "#importmap"` manifest entry. All three extractions — `#scripts`, `#handlers`, and
+`#importmap` — happen in the same single post-fetch phase with no additional parsing cost.
 
 ---
 
@@ -656,7 +677,7 @@ Safari). Was a classic CSP bypass in older browsers.
 enforcement is the primary barrier; CSP is a secondary layer.
 
 **DappFence**: **Browser-blocked** — no fetch event fires for `data:` URIs; engine-level enforcement
-in all modern browsers makes this dead. For SSR routes, the DOMParser extraction phase detects an
+in all modern browsers makes this dead. For SSR routes, the tokenizer extraction phase detects an
 unexpected `<script src="data:...">` as an unrecognised `#scripts` entry, providing defense-in-depth
 even though browser execution is already blocked.
 
@@ -687,9 +708,8 @@ The **real residual concerns** are narrower:
     the parent has any `message` listener that does not check `event.origin` and passes data to an
     eval-equivalent API, this chains into the 16b (External data) vector.
 
-For SSR routes, the DOMParser extraction phase can detect an injected `<iframe src="data:...">` —
-extending the `#handlers` check to flag `src` attributes on `<iframe>` and `<frame>` that begin with
-`data:` would close this at the manifest level.
+For SSR routes, the tokenizer extraction phase detects an injected `<iframe src="data:...">` — the
+`#handlers` check flags `src` attributes on `<iframe>` and `<frame>` that begin with `data:`.
 
 ---
 
@@ -944,6 +964,40 @@ vector.
 
 ---
 
+### 16f. `<template>` with cloneable scripts
+
+```html
+<template id="t">
+    <script>
+        malicious();
+    </script>
+</template>
+<script>
+    document.body.appendChild(document.getElementById('t').content.cloneNode(true));
+</script>
+```
+
+`<template>` content is parsed into an inert DocumentFragment — scripts inside do not execute when
+the template is parsed. However, when JavaScript clones the template content into the live document,
+any `<script>` elements inside execute immediately.
+
+A compromised server can inject a `<script>` inside an existing `<template>` element knowing that
+the framework's own verified JavaScript will clone it. The injected script is never fetched (no SW
+intercept), and the `<template>` wrapper causes a naive extractor to skip it.
+
+**DappFence**: The tokenizer has no special `<template>` handling — it extracts `<script>` content
+from every element in the byte stream, including inside `<template>`. Any script found inside a
+`<template>` that does not appear in the path's `#scripts` manifest entry is a violation. If a
+developer legitimately uses `<template>` with known static script content, those hashes must be
+added to the manifest. If the `<template>` content is dynamic, it should not contain `<script>`
+elements — use event listeners in the cloning code instead.
+
+**CSP**: nonce/hash on the cloned `<script>` would be required under strict CSP, but the nonce
+changes per request and cannot be pre-committed. This is another reason not to use inline `<script>`
+inside `<template>` in SSR contexts.
+
+---
+
 ### 16e. `<link rel="preload" as="script">` + dynamic append
 
 ```html
@@ -1004,45 +1058,21 @@ and anything else embedded in markup.
 
 ### What each mechanism covers on SSR
 
-| Vector                                     | Static                      | SSR                                                   |
-| ------------------------------------------ | --------------------------- | ----------------------------------------------------- |
-| Inline `<script>` (1b)                     | Document hash               | `#scripts` verification ✓                             |
-| Inline `<script type="module">` (1d)       | Document hash               | `#scripts` verification ✓                             |
-| New `<script src>` injected by server (1a) | SW intercept fails manifest | SW intercept fails manifest ✓                         |
-| `on*` event handler attributes (2)         | Document hash               | Planned: `#handlers` (DOMParser pass)                 |
-| `javascript:` hrefs / actions (3a)         | Document hash               | Planned: `#handlers` (same DOMParser pass)            |
-| Inline SVG `<script>` (5)                  | Document hash               | `#scripts` via DOMParser walk ✓ (full tree incl. SVG) |
-| `<script type="importmap">` (9b)           | Document hash               | Planned: `#importmap` (same DOMParser pass)           |
+| Vector                                     | Static                      | SSR                                                             |
+| ------------------------------------------ | --------------------------- | --------------------------------------------------------------- |
+| Inline `<script>` (1b)                     | Document hash               | `#scripts` tokenizer extraction ✓                               |
+| Inline `<script type="module">` (1d)       | Document hash               | `#scripts` tokenizer extraction ✓                               |
+| New `<script src>` injected by server (1a) | SW intercept fails manifest | SW intercept fails manifest ✓                                   |
+| `on*` event handler attributes (2)         | Document hash               | `#handlers` tokenizer extraction ✓                              |
+| `javascript:` hrefs / actions (3a)         | Document hash               | `#handlers` tokenizer extraction ✓ (incl. `xlink:href`)         |
+| Inline SVG `<script>` (5)                  | Document hash               | `#scripts` tokenizer extraction ✓ (catches `<script>` anywhere) |
+| `<script>` inside `<template>` (16f)       | Document hash               | `#scripts` tokenizer extraction ✓ (template not skipped)        |
+| `<script type="importmap">` (9b)           | Document hash               | `#importmap` tokenizer extraction ✓                             |
 
 ### Pending SSR coverage
 
-Three classes of injection are not currently covered, but all three have a planned fix via the same
-DOMParser extraction phase (see section 2 for the full design):
-
-**1. `on*` event handler attributes** — planned: `#handlers` The extractor finds `<script>` elements
-only. Attributes like `onerror`, `onload`, `onfocus`, `onclick` on arbitrary elements are not
-checked. An attacker with server access can inject `<img src=x onerror="steal()">` into an SSR
-response invisibly. The planned DOMParser pass collects all `on*` attribute values and hashes them
-against `pageKey + "#handlers"`.
-
-**2. `javascript:` protocol in attributes** — planned: `#handlers` (same pass)
-`href="javascript:..."`, `action="javascript:..."`, `formaction="javascript:..."` — attribute
-values, not script elements. Not extracted. The same DOMParser walk checks these attributes and
-includes them in the `#handlers` manifest entry.
-
-**3. Import map content** — planned: `#importmap` (same pass) `<script type="importmap">` is
-intentionally skipped by the `inline-script` extractor. An injected importmap can remap bare module
-specifiers to attacker-controlled URLs or, more dangerously, to already-manifest-listed URLs —
-executing the wrong verified module with no violation signal. The DOMParser pass collects importmap
-content and checks it against `pageKey + "#importmap"`.
-
-### Status and open questions
-
-All three share a single planned fix. Until implemented, each one is a **complete bypass of the
-integrity model** — an attacker who controls the server can use any of them to execute arbitrary
-code on the page regardless of what else is verified. All three are closed by the same DOMParser
-post-fetch extraction phase described in section 2, which adds `#handlers` and `#importmap` manifest
-entries alongside the existing `#scripts` mechanism.
+No classes remain unaddressed. The tokenizer extraction phase covers all four vectors in a single
+post-fetch pass.
 
 **Current outside-DappFence controls (not a substitute):**
 
@@ -1070,19 +1100,29 @@ must ensure that framework-injected inline scripts (hydration bootstraps, config
 payloads) either use `type="application/json"` (skipped by the extractor) or are fully static. This
 assumption should be validated against each framework's output during integration, not assumed.
 
-**Implementation plan:**
+**Implementation:**
 
-**1. `on*` handlers** — see section 2. `DOMParser` is available in SW context (Chrome 119+ and
-Firefox). The implementation extends the post-fetch extraction phase to walk the parsed DOM and hash
-`on*` attribute values against a `pageKey + "#handlers"` manifest entry.
+All extraction runs in a single post-fetch tokenizer pass. The tokenizer is a purpose-built
+byte-level state machine bundled into `dappfence.js` and shared with the build-time integration
+packages (`@dappfence/astro`, `@dappfence/next`) via `@dappfence/manifest-tools`. Both sides use
+identical extraction logic, which guarantees hash alignment between what the manifest records at
+build time and what the SW computes at runtime.
 
-**2. `javascript:` attributes** — same `DOMParser` pass. After walking for `on*` attributes, the
-extractor also checks `href`, `action`, and `formaction` attribute values for a `javascript:` prefix
-and includes them in the `#handlers` manifest entry.
+**1. `on*` handlers (`#handlers`)** — the tokenizer fires a callback for every opening tag with its
+full attribute map. The extraction layer picks every attribute whose name begins with `on`, hashes
+the raw value, and checks against `pageKey + "#handlers"`.
 
-**3. Import maps** — same DOMParser pass. The walk already visits every `<script>` element;
-collecting `type="importmap"` content and hashing it against `pageKey + "#importmap"` is an additive
-step in the same phase, with no extra parsing.
+**2. `javascript:` attributes (`#handlers`, same entry)** — the same callback checks `href`,
+`action`, `formaction`, `xlink:href`, and `src` (on `<iframe>`/`<frame>`) for a `javascript:` prefix
+(case-insensitive). Matches are hashed and added to the `#handlers` set.
+
+**3. Import maps (`#importmap`)** — the tokenizer fires a callback for every `<script>` element with
+its content and attributes. The extraction layer checks `attrs.type === "importmap"` and hashes the
+raw text content against `pageKey + "#importmap"`.
+
+**4. `<template>` content** — the tokenizer has no special `<template>` handling. `<script>`
+elements inside `<template>` are extracted identically to those outside it and checked against
+`#scripts`.
 
 ---
 
@@ -1145,47 +1185,50 @@ compatible if the vendor's CDN supports CORS and the hash is stable between upda
 
 ## Summary matrix
 
-| #     | Vector                              | Fetch fires? | Static coverage                | SSR coverage                   | Notes                                                                                    |
-| ----- | ----------------------------------- | ------------ | ------------------------------ | ------------------------------ | ---------------------------------------------------------------------------------------- |
-| 1a    | `<script src>` (same-origin)        | Yes          | SW intercept                   | SW intercept                   | Primary case                                                                             |
-| 1a    | `<script src>` cross-origin + CORS  | Yes          | SW intercept                   | SW intercept                   | Body accessible; verify against full-URL key                                             |
-| 1a    | `<script src>` cross-origin no-cors | Yes          | SW CORS retry → verify or stub | SW CORS retry → verify or stub | SW re-issues as CORS; body accessible if CDN supports CORS; stubs + warns otherwise      |
-| 1b    | Inline `<script>`                   | No           | HTML doc                       | #scripts verify                | Requires static inline scripts                                                           |
-| 1c    | `<script type=module src>`          | Yes          | SW intercept                   | SW intercept                   | Includes transitive imports                                                              |
-| 1d    | Inline module                       | Partial      | HTML doc + SW intercept        | #scripts + SW intercept        | Extractor keeps type=module                                                              |
-| 2     | `on*` event handlers                | No           | HTML doc                       | Planned: #handlers             | Attributes not extracted; DOMParser pass planned                                         |
-| 3a    | `javascript:` in markup             | No           | HTML doc                       | Planned: #handlers             | Same DOMParser pass as section 2                                                         |
-| 3b    | `location.href = 'javascript:'`     | No           | Source-controlled              | Source-controlled              | Runtime JS from verified script; `location` not patchable                                |
-| 4     | `<object>` / `<embed>`              | Yes          | SW intercept                   | SW intercept                   | Plugin internals opaque                                                                  |
-| 5     | SVG via `<object>`/`<iframe>`       | Yes          | SW intercept                   | SW intercept                   |                                                                                          |
-| 5     | Inline SVG `<script>`               | No           | HTML doc                       | #scripts via DOMParser ✓       | DOMParser walks full tree incl. SVG; definitively covered                                |
-| 6     | XSLT                                | Yes          | SW intercept                   | SW intercept                   | Output scripts are inline                                                                |
-| 7a    | `eval()`                            | No           | Source-controlled              | Source-controlled              | External data into eval is an External data case; requires static analysis               |
-| 7b    | `new Function()`                    | No           | Source-controlled              | Source-controlled              | Same as eval                                                                             |
-| 7c    | `setTimeout(string)`                | No           | Source-controlled              | Source-controlled              | Same as eval                                                                             |
-| 7d    | `document.write(<script src>)`      | Yes          | SW intercept                   | SW intercept                   |                                                                                          |
-| 7d    | `document.write(inline script)`     | No           | Source-controlled              | Source-controlled              | String is part of the verified script                                                    |
-| 8a    | Worker (URL)                        | Yes          | SW intercept                   | SW intercept                   |                                                                                          |
-| 8b    | Worker (Blob URL)                   | No           | Source-controlled              | Source-controlled              | Blob content generated by verified script; same model as eval                            |
-| 8c    | Shared Worker                       | Yes          | SW intercept                   | SW intercept                   |                                                                                          |
-| 8d    | App Service Worker                  | N/A          | SW monkey-patch                | SW monkey-patch                | Existing DappFence feature                                                               |
-| 8e    | `importScripts()`                   | Yes          | SW intercept + monkey-patch    | SW intercept + monkey-patch    |                                                                                          |
-| 8f    | Worklets                            | Yes          | SW intercept                   | SW intercept                   | Blob URL variant is Source-controlled                                                    |
-| 9a    | Dynamic `import()`                  | Yes          | SW intercept                   | SW intercept                   |                                                                                          |
-| 9b    | Import maps                         | Partial      | HTML doc + SW intercept        | Planned: #importmap            | Same DOMParser pass as #handlers; remap-to-known-URL bypass closes with #importmap       |
-| 10a   | `data:` script src                  | No           | Browser-blocked                | Browser-blocked                | Engine-level block in all modern browsers; DOMParser pass detects in SSR HTML            |
-| 10b   | `data:` iframe                      | No           | Browser-mitigated              | Browser-mitigated              | Null-origin blocks direct DOM access; residual: parent navigation + postMessage chaining |
-| 10c   | Blob URL iframe/script              | No           | Source-controlled              | Source-controlled              | Blob created by verified script; same-origin access makes external data caveat critical  |
-| 11a-b | CSS expression / HTC                | Yes          | SW intercept                   | SW intercept                   | IE only, dead                                                                            |
-| 11c   | CSS Houdini worklets                | Yes          | SW intercept                   | SW intercept                   | Blob URL variant is Source-controlled                                                    |
-| 12a   | `createElement` + src               | Yes          | SW intercept                   | SW intercept                   |                                                                                          |
-| 12b   | `createElement` + textContent       | No           | Source-controlled              | Source-controlled              | Text is part of the verified script                                                      |
-| 12c   | `innerHTML` injection               | No           | N/A                            | N/A                            | Browsers don't execute                                                                   |
-| 13    | WebAssembly (fetch)                 | Yes          | SW intercept                   | SW intercept                   |                                                                                          |
-| 13    | WebAssembly (buffer)                | No           | Source-controlled              | Source-controlled              | Buffer produced by verified script                                                       |
-| 14    | PDF JavaScript                      | Yes          | SW intercept                   | SW intercept                   | Binary contents opaque                                                                   |
-| 15a-c | VBScript / IE / HTML Imports        | Partial      | N/A (legacy, dead)             | N/A (legacy, dead)             | Dead vectors; removed from all modern browsers                                           |
-| 16a   | JSONP                               | Yes          | SW CORS retry fails → stub     | SW CORS retry fails → stub     | Dynamic content, not pre-hashable; no allow rule path must be replaced                   |
-| 16b   | `postMessage` + `eval`              | No           | External data                  | External data                  | Handler script verified; payload from external origin is not                             |
-| 16d   | meta-refresh `javascript:`          | No           | HTML doc                       | Browser-blocked                | Blocked in modern browsers                                                               |
-| 16e   | preload + append                    | Yes          | SW intercept                   | SW intercept                   | Verified on preload                                                                      |
+| #     | Vector                              | Fetch fires? | Static coverage                | SSR coverage                   | Notes                                                                                     |
+| ----- | ----------------------------------- | ------------ | ------------------------------ | ------------------------------ | ----------------------------------------------------------------------------------------- |
+| 1a    | `<script src>` (same-origin)        | Yes          | SW intercept                   | SW intercept                   | Primary case                                                                              |
+| 1a    | `<script src>` cross-origin + CORS  | Yes          | SW intercept                   | SW intercept                   | Body accessible; verify against full-URL key                                              |
+| 1a    | `<script src>` cross-origin no-cors | Yes          | SW CORS retry → verify or stub | SW CORS retry → verify or stub | SW re-issues as CORS; body accessible if CDN supports CORS; stubs + warns otherwise       |
+| 1b    | Inline `<script>`                   | No           | HTML doc                       | #scripts verify                | Requires static inline scripts                                                            |
+| 1c    | `<script type=module src>`          | Yes          | SW intercept                   | SW intercept                   | Includes transitive imports                                                               |
+| 1d    | Inline module                       | Partial      | HTML doc + SW intercept        | #scripts + SW intercept        | Extractor keeps type=module                                                               |
+| 2     | `on*` event handlers                | No           | HTML doc                       | #handlers tokenizer ✓          | All elements incl. SVG/MathML/template; refactor to listeners if not in manifest          |
+| 3a    | `javascript:` in markup             | No           | HTML doc                       | #handlers tokenizer ✓          | href/action/formaction/xlink:href/iframe-src; case-insensitive prefix check               |
+| 3b    | `location.href = 'javascript:'`     | No           | Source-controlled              | Source-controlled              | Runtime JS from verified script; `location` not patchable                                 |
+| 4     | `<object>` / `<embed>`              | Yes          | SW intercept                   | SW intercept                   | Plugin internals opaque                                                                   |
+| 5     | SVG via `<object>`/`<iframe>`       | Yes          | SW intercept                   | SW intercept                   |                                                                                           |
+| 5     | Inline SVG `<script>`               | No           | HTML doc                       | #scripts tokenizer ✓           | Tokenizer catches `<script>` anywhere in byte stream incl. inside SVG                     |
+| 5     | SVG `xlink:href="javascript:"`      | No           | HTML doc                       | #handlers tokenizer ✓          | Checked alongside href/action/formaction in same pass                                     |
+| 5     | SVG `on*` event handlers            | No           | HTML doc                       | #handlers tokenizer ✓          | All opening tags scanned; no element-type exclusion                                       |
+| 6     | XSLT                                | Yes          | SW intercept                   | SW intercept                   | Output scripts are inline                                                                 |
+| 7a    | `eval()`                            | No           | Source-controlled              | Source-controlled              | External data into eval is an External data case; requires static analysis                |
+| 7b    | `new Function()`                    | No           | Source-controlled              | Source-controlled              | Same as eval                                                                              |
+| 7c    | `setTimeout(string)`                | No           | Source-controlled              | Source-controlled              | Same as eval                                                                              |
+| 7d    | `document.write(<script src>)`      | Yes          | SW intercept                   | SW intercept                   |                                                                                           |
+| 7d    | `document.write(inline script)`     | No           | Source-controlled              | Source-controlled              | String is part of the verified script                                                     |
+| 8a    | Worker (URL)                        | Yes          | SW intercept                   | SW intercept                   |                                                                                           |
+| 8b    | Worker (Blob URL)                   | No           | Source-controlled              | Source-controlled              | Blob content generated by verified script; same model as eval                             |
+| 8c    | Shared Worker                       | Yes          | SW intercept                   | SW intercept                   |                                                                                           |
+| 8d    | App Service Worker                  | N/A          | SW monkey-patch                | SW monkey-patch                | Existing DappFence feature                                                                |
+| 8e    | `importScripts()`                   | Yes          | SW intercept + monkey-patch    | SW intercept + monkey-patch    |                                                                                           |
+| 8f    | Worklets                            | Yes          | SW intercept                   | SW intercept                   | Blob URL variant is Source-controlled                                                     |
+| 9a    | Dynamic `import()`                  | Yes          | SW intercept                   | SW intercept                   |                                                                                           |
+| 9b    | Import maps                         | Partial      | HTML doc + SW intercept        | #importmap tokenizer ✓         | Remap-to-known-URL bypass closed by #importmap; remapped URLs still SW-intercepted        |
+| 10a   | `data:` script src                  | No           | Browser-blocked                | Browser-blocked                | Engine-level block in all modern browsers; tokenizer detects in SSR HTML as unknown entry |
+| 10b   | `data:` iframe                      | No           | Browser-mitigated              | Browser-mitigated              | Null-origin blocks direct DOM access; residual: parent navigation + postMessage chaining  |
+| 10c   | Blob URL iframe/script              | No           | Source-controlled              | Source-controlled              | Blob created by verified script; same-origin access makes external data caveat critical   |
+| 11a-b | CSS expression / HTC                | Yes          | SW intercept                   | SW intercept                   | IE only, dead                                                                             |
+| 11c   | CSS Houdini worklets                | Yes          | SW intercept                   | SW intercept                   | Blob URL variant is Source-controlled                                                     |
+| 12a   | `createElement` + src               | Yes          | SW intercept                   | SW intercept                   |                                                                                           |
+| 12b   | `createElement` + textContent       | No           | Source-controlled              | Source-controlled              | Text is part of the verified script                                                       |
+| 12c   | `innerHTML` injection               | No           | N/A                            | N/A                            | Browsers don't execute                                                                    |
+| 13    | WebAssembly (fetch)                 | Yes          | SW intercept                   | SW intercept                   |                                                                                           |
+| 13    | WebAssembly (buffer)                | No           | Source-controlled              | Source-controlled              | Buffer produced by verified script                                                        |
+| 14    | PDF JavaScript                      | Yes          | SW intercept                   | SW intercept                   | Binary contents opaque                                                                    |
+| 15a-c | VBScript / IE / HTML Imports        | Partial      | N/A (legacy, dead)             | N/A (legacy, dead)             | Dead vectors; removed from all modern browsers                                            |
+| 16a   | JSONP                               | Yes          | SW CORS retry fails → stub     | SW CORS retry fails → stub     | Dynamic content, not pre-hashable; no allow rule path must be replaced                    |
+| 16b   | `postMessage` + `eval`              | No           | External data                  | External data                  | Handler script verified; payload from external origin is not                              |
+| 16d   | meta-refresh `javascript:`          | No           | HTML doc                       | Browser-blocked                | Blocked in modern browsers                                                                |
+| 16e   | preload + append                    | Yes          | SW intercept                   | SW intercept                   | Verified on preload                                                                       |
+| 16f   | `<template>` cloneable scripts      | No           | HTML doc                       | #scripts tokenizer ✓           | Template not skipped; scripts inside extracted same as any other inline script            |
