@@ -91,9 +91,15 @@ export const ASSET_TYPE = {
 //             correct, not a gap.
 //   image, font, track, video, audio, manifest, report —
 //             none execute JavaScript in any browser.
-//   embed, object, frame — NOT listed here; they do execute code (PDF JavaScript,
-//             plugin scripting, frameset documents) and are covered by SW intercept.
-//             See docs/js-execution-vectors.md sections 4 and 3a.
+//   json    — JSON module imports (`import x from '…' with { type: 'json' }`);
+//             browser parses the response as JSON data, not code.
+//   text    — text module imports (`with { type: 'text' }`); response is loaded
+//             as a plain string, not executed.
+//   speculationrules — <link rel="speculationrules"> fetches JSON configuration
+//             for prefetch/prerender hints; browser parses as config, not code.
+//   embed, object, frame, fencedframe — NOT listed here; they load full HTML
+//             documents or plugin content that can execute JavaScript and are
+//             covered by SW intercept. See docs/js-execution-vectors.md.
 const INERT_DESTINATIONS = new Set([
     'style',
     'xslt',
@@ -104,6 +110,9 @@ const INERT_DESTINATIONS = new Set([
     'audio',
     'manifest',
     'report',
+    'json',
+    'text',
+    'speculationrules',
 ]);
 
 export const isExecutableDestination = (destination) =>
