@@ -87,7 +87,7 @@ export type SWHelper = {
     consoleLogRegistration(registration: ServiceWorkerRegistration): void;
     getServiceWorkerState(serviceWorker: ServiceWorkerWithClose): Promise<string>;
     waitForServiceWorkerActivation: (onPage?: Page) => Promise<string>;
-    waitForServiceWorkerMessage: (msg: string) => Promise<Worker>;
+    waitForServiceWorkerMessage: (msg: string) => Promise<{ worker: Worker; msg: ConsoleMessage }>;
     interceptAndModifyPageContent: {
         (pattern: InterceptPattern | InterceptPattern[]): Promise<void>;
         // Flat params are intentionally unchecked — use InterceptPattern[] for type safety
@@ -220,7 +220,7 @@ async function swHelper(
             for (const r of messageResolvers) {
                 if (msg.text().includes(r.msg)) {
                     r.done = true;
-                    r.resolve(s);
+                    r.resolve({ worker: s, msg });
                 }
             }
         });
@@ -320,7 +320,9 @@ async function swHelper(
                 resolvers.push({ desiredLength, resolve, reject })
             );
         },
-        waitForServiceWorkerMessage: async (msg: string): Promise<Worker> => {
+        waitForServiceWorkerMessage: async (
+            msg: string
+        ): Promise<{ worker: Worker; msg: ConsoleMessage }> => {
             return new Promise((resolve, reject) =>
                 messageResolvers.push({ msg, resolve, reject })
             );

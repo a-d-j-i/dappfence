@@ -37,6 +37,7 @@ const MIME_TYPES = {
     '.gif': 'image/gif',
     '.ico': 'image/x-icon',
     '.svg': 'image/svg+xml',
+    '.xml': 'text/xml',
 };
 
 function getMimeType(filePath) {
