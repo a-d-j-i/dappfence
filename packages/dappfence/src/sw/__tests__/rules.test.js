@@ -1,8 +1,22 @@
 import { describe, it, expect } from 'vitest';
-import { applyTransform } from '../manifest/rules.js';
+import { TRANSFORMS } from '../manifest/html/transforms.js';
 
 const encode = (str) => new TextEncoder().encode(str);
 const decode = (buf) => new TextDecoder().decode(buf);
+
+const applyTransform = (buf, name) => {
+    const rule = TRANSFORMS[name];
+    if (!rule) {
+        return null;
+    }
+    const text = decode(buf);
+    const ranges = rule.findStripRanges(text);
+    let result = text;
+    for (const [start, end] of ranges.sort((a, b) => b[0] - a[0])) {
+        result = result.slice(0, start) + result.slice(end);
+    }
+    return encode(result);
+};
 
 const NETLIFY_SNIPPET = (deployId = 'aabbccdd', siteId = '00000000-0000-0000-0000-000000000000') =>
     `<div data-netlify-deploy-id="${deployId}" data-netlify-site-id="${siteId}" data-vcs="github" style="position:fixed">\n  \n  <script async src="/.netlify/scripts/cdp"></script>\n</div>`;
@@ -89,6 +103,20 @@ describe('applyTransform', () => {
 
         it('does not strip when attribute order differs', () => {
             const snippet = `<div data-netlify-site-id="00000000-0000-0000-0000-000000000000" data-netlify-deploy-id="aabbccdd" data-vcs="github" style="position:fixed">\n  <script async src="/.netlify/scripts/cdp"></script>\n</div>`;
+            const buf = encode(HTML(snippet));
+            const result = decode(applyTransform(buf, 'netlify-cdp'));
+            expect(result).toContain('data-netlify-deploy-id');
+        });
+
+        it('does not strip when cdp script has inline content', () => {
+            const snippet = `<div data-netlify-deploy-id="aabbccdd" data-netlify-site-id="00000000-0000-0000-0000-000000000000" data-vcs="github" style="position:fixed">\n  <script async src="/.netlify/scripts/cdp">alert(1)</script>\n</div>`;
+            const buf = encode(HTML(snippet));
+            const result = decode(applyTransform(buf, 'netlify-cdp'));
+            expect(result).toContain('data-netlify-deploy-id');
+        });
+
+        it('does not strip when div contains extra elements after the cdp script', () => {
+            const snippet = `<div data-netlify-deploy-id="aabbccdd" data-netlify-site-id="00000000-0000-0000-0000-000000000000" data-vcs="github" style="position:fixed">\n  <script async src="/.netlify/scripts/cdp"></script>\n  <script>extra()</script>\n</div>`;
             const buf = encode(HTML(snippet));
             const result = decode(applyTransform(buf, 'netlify-cdp'));
             expect(result).toContain('data-netlify-deploy-id');
