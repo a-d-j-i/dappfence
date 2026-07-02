@@ -116,13 +116,8 @@ export const createVerifier = ({ swContext, appStore, config }, manifestLoader) 
         return false;
     };
 
-    const getExpectedHashes = (fileKey, manifest) => {
-        const entry = manifest.files[fileKey];
-        if (entry === undefined) return [];
-        return Array.isArray(entry) ? entry : [entry];
-    };
-
     const applyAction = async (action, rawBuffer, fileKey, manifestInfo) => {
+        const { appVersion, manifest } = manifestInfo;
         logger.log(
             `[applyAction] fileKey=${fileKey} action.type=${action.type}${action.transform ? ` transform=${action.transform}` : ''}`
         );
@@ -144,9 +139,9 @@ export const createVerifier = ({ swContext, appStore, config }, manifestLoader) 
                 return null;
             }
             const fileHash = await calculateHash(transformed);
-            const expectedHashes = getExpectedHashes(fileKey, manifestInfo.manifest);
+            const expectedHashes = manifest.files[fileKey] ?? [];
             logger.log(
-                `Using manifest ${manifestInfo.appVersion} for ${fileKey} hash ${fileHash} expected: ${expectedHashes.join(', ')}`
+                `Using manifest ${appVersion} for ${fileKey} hash ${fileHash} expected: ${expectedHashes.join(', ')}`
             );
             if (expectedHashes.includes(fileHash)) {
                 return { status: VERIFICATION_STATUS.MATCH, expectedHashes, actualHash: fileHash };
@@ -156,9 +151,9 @@ export const createVerifier = ({ swContext, appStore, config }, manifestLoader) 
 
         if (action.type === 'verify') {
             const fileHash = await calculateHash(rawBuffer);
-            const expectedHashes = getExpectedHashes(fileKey, manifestInfo.manifest);
+            const expectedHashes = manifest.files[fileKey] ?? [];
             logger.log(
-                `Using manifest ${manifestInfo.appVersion} for ${fileKey} hash ${fileHash} expected: ${expectedHashes.join(', ')}`
+                `Using manifest ${appVersion} for ${fileKey} hash ${fileHash} expected: ${expectedHashes.join(', ')}`
             );
             if (expectedHashes.length === 0) {
                 return null;

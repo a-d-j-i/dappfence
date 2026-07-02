@@ -22,8 +22,8 @@ describe('normalizeManifestData', () => {
             files: { '/app.js': 'abc123', '/style.css': 'def456' },
         };
         const result = normalizeManifestData(input);
-        expect(result.files['/app.js']).toBe('abc123');
-        expect(result.files['/style.css']).toBe('def456');
+        expect(result.files['/app.js']).toEqual(['abc123']);
+        expect(result.files['/style.css']).toEqual(['def456']);
     });
 
     it('handles enhanced format with object entries', () => {
@@ -31,38 +31,39 @@ describe('normalizeManifestData', () => {
             files: { '/app.js': { hash: 'abc123' } },
         };
         const result = normalizeManifestData(input);
-        expect(result.files['/app.js']).toBe('abc123');
+        expect(result.files['/app.js']).toEqual(['abc123']);
     });
 
     it('handles legacy flat format with string values', () => {
         const input = { '/app.js': 'abc123' };
         const result = normalizeManifestData(input);
-        expect(result.files['/app.js']).toBe('abc123');
+        expect(result.files['/app.js']).toEqual(['abc123']);
     });
 
     it('handles legacy flat format with object entries', () => {
         const input = { '/app.js': { hash: 'abc123' } };
         const result = normalizeManifestData(input);
-        expect(result.files['/app.js']).toBe('abc123');
+        expect(result.files['/app.js']).toEqual(['abc123']);
     });
 
     it('preserves SRI hashes as-is (no encoding conversion)', () => {
         const sriHash = 'sha256-' + btoa('test');
         const input = { files: { '/app.js': sriHash } };
         const result = normalizeManifestData(input);
-        expect(result.files['/app.js']).toBe(sriHash);
+        expect(result.files['/app.js']).toEqual([sriHash]);
     });
 
     it('returns empty files for non-object input', () => {
-        expect(normalizeManifestData(42)).toEqual({ files: {} });
-        expect(normalizeManifestData(undefined)).toEqual({ files: {} });
+        const empty = { files: {}, pathRules: [], contentRules: [], mode: 'reporting' };
+        expect(normalizeManifestData(42)).toEqual(empty);
+        expect(normalizeManifestData(undefined)).toEqual(empty);
     });
 
-    it('skips entries with no hash value', () => {
+    it('stores empty array for unparseable entries', () => {
         const input = { files: { '/app.js': null, '/ok.js': 'hash' } };
         const result = normalizeManifestData(input);
-        expect(result.files['/app.js']).toBeUndefined();
-        expect(result.files['/ok.js']).toBe('hash');
+        expect(result.files['/app.js']).toEqual([]);
+        expect(result.files['/ok.js']).toEqual(['hash']);
     });
 
     it('handles enhanced format with array of hashes', () => {
@@ -71,11 +72,11 @@ describe('normalizeManifestData', () => {
         expect(result.files['/lib.js']).toEqual(['hash-a', 'hash-b']);
     });
 
-    it('skips entries with empty hash arrays', () => {
+    it('stores empty array for empty hash arrays', () => {
         const input = { files: { '/lib.js': [], '/ok.js': 'hash' } };
         const result = normalizeManifestData(input);
-        expect(result.files['/lib.js']).toBeUndefined();
-        expect(result.files['/ok.js']).toBe('hash');
+        expect(result.files['/lib.js']).toEqual([]);
+        expect(result.files['/ok.js']).toEqual(['hash']);
     });
 
     it('preserves top-level fields (mode, metadata, future fields) in enhanced format', () => {
@@ -89,7 +90,7 @@ describe('normalizeManifestData', () => {
         expect(result.mode).toBe('reporting');
         expect(result.metadata).toEqual({ extensions: ['.js', '.wasm'] });
         expect(result.customField).toEqual({ future: true });
-        expect(result.files['/app.js']).toBe('abc');
+        expect(result.files['/app.js']).toEqual(['abc']);
     });
 });
 

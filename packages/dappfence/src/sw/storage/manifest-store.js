@@ -7,6 +7,7 @@
  */
 
 import { calculateHash } from '../../core/crypto.js';
+import { MODE } from '../../core/constants.js';
 
 /**
  * Normalize manifest data from external sources (pure function).
@@ -23,40 +24,38 @@ import { calculateHash } from '../../core/crypto.js';
  * provider releases — listing all known-good hashes lets any current version
  * pass verification while still blocking unexpected content.
  * @param {object} manifestData - Raw manifest data
- * @returns {object} Normalized manifest with `files` map of fileKey -> hash or hash[]
+ * @returns {object} Normalized manifest: files (fileKey -> hash[]), pathRules ([]),
+ *   contentRules ([]), mode (MODE.REPORTING default)
  */
 export const normalizeManifestData = (manifestData) => {
-    const normalizedFiles = {};
+    const toArray = (entry) => {
+        if (Array.isArray(entry)) return entry;
+        if (typeof entry === 'string') return [entry];
+        if (entry?.hash) return [entry.hash];
+        return [];
+    };
 
+    const normalizedFiles = {};
     if (typeof manifestData === 'object') {
         // Enhanced format: { "files": { "/path/file.js": "sha256-..." }, "metadata": {...} }
         if (manifestData.files && typeof manifestData.files === 'object') {
             for (const [filePath, entry] of Object.entries(manifestData.files)) {
-                const hashValue = Array.isArray(entry)
-                    ? entry
-                    : typeof entry === 'string'
-                      ? entry
-                      : entry?.hash;
-                if (hashValue && (!Array.isArray(hashValue) || hashValue.length > 0)) {
-                    normalizedFiles[filePath] = hashValue;
-                }
+                normalizedFiles[filePath] = toArray(entry);
             }
-            return { ...manifestData, files: normalizedFiles };
-        }
-        // Legacy flat format: { "/path/file.js": "sha256-..." | { hash: "sha256-..." } }
-        for (const [filePath, entry] of Object.entries(manifestData)) {
-            const hashValue = Array.isArray(entry)
-                ? entry
-                : typeof entry === 'string'
-                  ? entry
-                  : entry?.hash;
-            if (hashValue && (!Array.isArray(hashValue) || hashValue.length > 0)) {
-                normalizedFiles[filePath] = hashValue;
+        } else {
+            // Legacy flat format: { "/path/file.js": "sha256-..." | { hash: "sha256-..." } }
+            for (const [filePath, entry] of Object.entries(manifestData)) {
+                normalizedFiles[filePath] = toArray(entry);
             }
         }
     }
-
-    return { files: normalizedFiles };
+    return {
+        ...manifestData,
+        files: normalizedFiles,
+        pathRules: Array.isArray(manifestData?.pathRules) ? manifestData.pathRules : [],
+        contentRules: Array.isArray(manifestData?.contentRules) ? manifestData.contentRules : [],
+        mode: manifestData?.mode ?? MODE.REPORTING,
+    };
 };
 
 // Trusted Manifest System constants
