@@ -54,9 +54,15 @@ describe('normalizeManifestData', () => {
     });
 
     it('returns empty files for non-object input', () => {
-        const empty = { files: {}, pathRules: [], contentRules: [], mode: 'reporting' };
-        expect(normalizeManifestData(42)).toEqual(empty);
-        expect(normalizeManifestData(undefined)).toEqual(empty);
+        const base = {
+            files: {},
+            encodings: ['utf-8'],
+            pathRules: [],
+            contentRules: [],
+            mode: 'reporting',
+        };
+        expect(normalizeManifestData(42)).toEqual(base);
+        expect(normalizeManifestData(undefined)).toEqual(base);
     });
 
     it('stores empty array for unparseable entries', () => {

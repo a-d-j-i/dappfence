@@ -19,9 +19,10 @@ import { collectContentRuleActions, isRequestAllowed, resolveManifestKey } from 
 import { isFeatureEnabled } from '../../core/utils.js';
 import { toPathname } from './verification.js';
 import { createLogger } from '../../core/logger.js';
+import { handleVerifyScripts } from './html/script-verifier.js';
 import { calculateHash } from '../../core/crypto.js';
-import { makeResponseWrapper } from './html/response-wrapper.js';
 import { handleTransform } from './html/transforms.js';
+import { makeResponseWrapper } from './html/response-wrapper.js';
 
 const logger = createLogger();
 
@@ -132,14 +133,16 @@ export const createVerifier = ({ swContext, appStore, config }, manifestLoader) 
             logger.log(`↩️  Rewriting by rule: ${fileKey}`);
             return { status: VERIFICATION_STATUS.REWRITE };
         },
+        'verify-scripts': handleVerifyScripts,
         transform: handleTransform,
         verify: async (fileKey, response, manifestInfo) => {
-            const bytes = await response.getBodyBytes();
-            if (bytes.status) {
-                return bytes;
+            const buf = await response.getBodyBytes();
+            if (buf.status) {
+                logger.warn(`[verify] failed to read response body at ${fileKey}`);
+                return buf;
             }
             const { appVersion, manifest } = manifestInfo;
-            const fileHash = await calculateHash(bytes.value);
+            const fileHash = await calculateHash(buf.value);
             const expectedHashes = manifest.files[fileKey] ?? [];
             logger.log(
                 `Using manifest ${appVersion} for ${fileKey} hash ${fileHash} expected: ${expectedHashes.join(', ')}`
@@ -166,11 +169,11 @@ export const createVerifier = ({ swContext, appStore, config }, manifestLoader) 
             );
             const handler = ACTION_HANDLERS[action.type];
             if (!handler) {
-                logger.warn(`Unknown action type: ${action.type}`);
+                logger.warn(`[evaluateManifestRules] unknown action type: ${action.type}`);
                 continue;
             }
             const r = await handler(fileKey, response, manifestInfo, action);
-            if (r === null) {
+            if (r == null) {
                 continue;
             }
             if (r.status.isTerminal) {
@@ -183,14 +186,15 @@ export const createVerifier = ({ swContext, appStore, config }, manifestLoader) 
         return { ...lastResult, fileKey };
     };
 
-    // For unpinned clients, escalate from the latest mangfifest → historic manifests → network fetch
+    // Pinned clients use their locked manifest directly — no escalation.
+    // Unpinned clients escalate: latest manifest → historic manifests → network fetch,
     // on MISMATCH / NOT_FOUND only. All other results (MATCH, DENIED_BY_RULE, etc.) are final.
     const verifyWithManifestSearch = async (req, response, clientId, latestManifest) => {
         const isNavigation = req.mode === 'navigate';
         if (clientId && !isNavigation) {
             const pinned = clientIdXManifest.get(clientId);
             if (pinned) {
-                logger.log(`[verifyResponse] clientId=${clientId} (pinned)`);
+                logger.log(`[verifyWithManifestSearch] clientId=${clientId} (pinned)`);
                 const result = await evaluateManifestRules(req, response, pinned);
                 await onManifestResult(clientId, pinned, result);
                 return result;
@@ -262,8 +266,9 @@ export const createVerifier = ({ swContext, appStore, config }, manifestLoader) 
             logger.log(`⏭️  Skipping (allow rule): ${req.url}`);
             return result({ status: VERIFICATION_STATUS.SKIPPED });
         }
-        const wrappedResponse = makeResponseWrapper(response);
-        const shouldSkip = shouldSkipVerification(req, wrappedResponse);
+
+        const wrapper = makeResponseWrapper(response);
+        const shouldSkip = shouldSkipVerification(req, wrapper);
         if (shouldSkip) {
             logger.log(`⏭️  ${shouldSkip.description}: ${fileKey}`);
             return result({ status: shouldSkip });
@@ -272,9 +277,7 @@ export const createVerifier = ({ swContext, appStore, config }, manifestLoader) 
         logger.log(
             `[verifyResponse] req.method=${req.method} clientId=${clientId} isNavigation=${req.mode === 'navigate'}`
         );
-        return result(
-            await verifyWithManifestSearch(req, wrappedResponse, clientId, latestManifest)
-        );
+        return result(await verifyWithManifestSearch(req, wrapper, clientId, latestManifest));
     };
 
     // ── prepareRequest ────────────────────────────────────────────────────────

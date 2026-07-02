@@ -14,6 +14,59 @@ const {
     keccak256,
 } = require('@dappfence/manifest-tools/crypto');
 const { BUILD_TARGETS, OUT_DIR, keys, EXTERNAL_ASSETS } = require('./build-config');
+const { createUtf8Tokenizer } = require('@dappfence/core/html-tokenizer');
+
+const NON_EXECUTABLE_SCRIPT_TYPES = new Set(['application/json', 'importmap', 'text/template']);
+
+// Single tokenizer pass over an HTML template: hashes all executable inline scripts
+// and collects on* handler strings for use as manifest #scripts and #handlers entries.
+// All inline scripts are hashed regardless of which validator will claim them at runtime —
+// claimed scripts end up as dead entries in #scripts (they're verified by the validator
+// before the hash check runs, so they never reach it).
+// Script hash format matches calculateHash() in the SW (SHA-256, SRI base64).
+function extractTemplateInlineData(templatePath) {
+    const html = fs.readFileSync(templatePath, 'utf8');
+    const scriptBuffers = [];
+    const handlers = [];
+
+    const tok = createUtf8Tokenizer({
+        onScript({ content, attrs }) {
+            if (attrs.src) return;
+            const type = (attrs.type || '').toLowerCase().trim();
+            if (NON_EXECUTABLE_SCRIPT_TYPES.has(type)) return;
+            scriptBuffers.push(Buffer.from(content, 'utf8'));
+        },
+        onElementOpen({ attrs }) {
+            for (const [attrName, attrValue] of Object.entries(attrs)) {
+                if (attrName.startsWith('on')) {
+                    handlers.push(`${attrName}:${attrValue}`);
+                }
+            }
+        },
+    });
+    tok.push(html);
+    tok.finish();
+
+    return {
+        scripts: scriptBuffers.map((buf) => calculateFileHash(buf)),
+        handlers,
+    };
+}
+
+// Build #handlers and #scripts manifest entries for all test cases in a manifest.
+function computeTestCaseEntries(templateDir, testCases) {
+    if (!testCases || !Object.keys(testCases).length) return {};
+    const entries = {};
+    for (const [fileKey, cfg] of Object.entries(testCases)) {
+        const templatePath = path.join(templateDir, cfg.template);
+        const { scripts, handlers } = extractTemplateInlineData(templatePath);
+        entries[fileKey + '#scripts'] = scripts;
+        entries[fileKey + '#handlers'] = handlers;
+        log(`  ${fileKey}#scripts: ${scripts.join(', ')}`);
+        log(`  ${fileKey}#handlers: ${handlers.length} handler(s)`);
+    }
+    return entries;
+}
 
 let log = console.log;
 
@@ -157,8 +210,16 @@ function buildManifestsData(target, sharedFiles, { targetName, version }) {
             log(`  ${manifestKey}: ${hashes.join(', ')}`);
         }
 
+        const testCaseEntries = computeTestCaseEntries(target.templateDir, manifest.testCases);
+
         const data = {
-            files: { ...sharedFiles, ...additionalFileHashes, ...EXTERNAL_ASSETS },
+            files: {
+                ...sharedFiles,
+                ...additionalFileHashes,
+                ...EXTERNAL_ASSETS,
+                ...(manifest.extraEntries || {}),
+                ...testCaseEntries,
+            },
             mode: manifest.mode,
             pathRules: manifest.pathRules || [],
             contentRules: manifest.contentRules || null,
