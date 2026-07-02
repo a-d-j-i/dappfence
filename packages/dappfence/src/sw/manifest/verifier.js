@@ -56,7 +56,23 @@ export const createVerifier = ({ swContext, appStore, config }, manifestLoader) 
         : null;
     const clientIdXManifest = new Map();
 
-    const pruneStaleClients = () => {
+    const onManifestResult = async (clientId, manifestInfo, result) => {
+        if (result.status !== VERIFICATION_STATUS.MATCH) {
+            logger.log(`❌ ${result.status.description}: ${result.fileKey}`);
+            return;
+        }
+        const icon = result.fileKey.startsWith('/') ? '📄' : '🌐';
+        logger.log(`✅ ${icon} ${result.status.description}: ${result.fileKey}`);
+        await verificationResultsStore.add(manifestInfo.appVersion, {
+            ...result,
+            status: result.status.description,
+            timestamp: new Date().toISOString(),
+        });
+        if (!clientId) {
+            return;
+        }
+        clientIdXManifest.set(clientId, manifestInfo);
+        // Prune stale clients
         swContext
             .matchAllClients()
             .then((activeClients) => {
@@ -70,12 +86,6 @@ export const createVerifier = ({ swContext, appStore, config }, manifestLoader) 
             .catch((err) => {
                 logger.error('Error pruning stale clients:', err);
             });
-    };
-
-    const pinClient = (clientId, manifestInfo) => {
-        if (!clientId) return;
-        clientIdXManifest.set(clientId, manifestInfo);
-        pruneStaleClients();
     };
 
     const shouldSkipVerification = (req, response) => {
@@ -116,24 +126,21 @@ export const createVerifier = ({ swContext, appStore, config }, manifestLoader) 
         return false;
     };
 
-    const applyAction = async (action, rawBuffer, fileKey, manifestInfo) => {
-        const { appVersion, manifest } = manifestInfo;
-        logger.log(
-            `[applyAction] fileKey=${fileKey} action.type=${action.type}${action.transform ? ` transform=${action.transform}` : ''}`
-        );
-        if (action.type === 'allow') {
+    const ACTION_HANDLERS = {
+        allow: async (_action, _rawBuffer, fileKey) => {
             logger.log(`⏭️  Skipping (allow): ${fileKey}`);
             return { status: VERIFICATION_STATUS.SKIPPED };
-        }
-        if (action.type === 'deny') {
+        },
+        deny: async (_action, _rawBuffer, fileKey) => {
             logger.log(`❌ Denied by rule: ${fileKey}`);
             return { status: VERIFICATION_STATUS.DENIED_BY_RULE };
-        }
-        if (action.type === 'rewrite') {
+        },
+        rewrite: async (_action, _rawBuffer, fileKey) => {
             logger.log(`↩️  Rewriting by rule: ${fileKey}`);
             return { status: VERIFICATION_STATUS.REWRITE };
-        }
-        if (action.type === 'transform') {
+        },
+        transform: async (action, rawBuffer, fileKey, manifestInfo) => {
+            const { appVersion, manifest } = manifestInfo;
             const transformed = applyTransform(rawBuffer, action.transform);
             if (transformed === null) {
                 return null;
@@ -147,9 +154,9 @@ export const createVerifier = ({ swContext, appStore, config }, manifestLoader) 
                 return { status: VERIFICATION_STATUS.MATCH, expectedHashes, actualHash: fileHash };
             }
             return null;
-        }
-
-        if (action.type === 'verify') {
+        },
+        verify: async (_action, rawBuffer, fileKey, manifestInfo) => {
+            const { appVersion, manifest } = manifestInfo;
             const fileHash = await calculateHash(rawBuffer);
             const expectedHashes = manifest.files[fileKey] ?? [];
             logger.log(
@@ -162,32 +169,52 @@ export const createVerifier = ({ swContext, appStore, config }, manifestLoader) 
                 ? VERIFICATION_STATUS.MATCH
                 : VERIFICATION_STATUS.MISMATCH;
             return { status, expectedHashes, actualHash: fileHash };
-        }
-        return null;
+        },
     };
 
-    const runPipeline = async (req, response, manifestInfo, rawBuffer) => {
+    const evaluateManifestRules = async (req, response, manifestInfo, rawBuffer) => {
         const { manifest } = manifestInfo;
         const fileKey = resolveManifestKey(req, locationHref, manifest, response);
         const actions = collectContentRuleActions(fileKey, req.destination, manifest?.contentRules);
         const actionsToWalk = actions.length ? actions : [{ type: 'verify' }];
         let lastResult = { status: VERIFICATION_STATUS.NOT_FOUND_IN_MANIFEST };
         for (const action of actionsToWalk) {
-            const r = await applyAction(action, rawBuffer, fileKey, manifestInfo);
-            if (r !== null) {
-                if (r.status.isTerminal) {
-                    return { ...r, fileKey };
-                }
-                lastResult = r;
+            logger.log(
+                `[evaluateManifestRules] fileKey=${fileKey} action.type=${action.type}${action.transform ? ` transform=${action.transform}` : ''}`
+            );
+            const handler = ACTION_HANDLERS[action.type];
+            if (!handler) {
+                logger.warn(`Unknown action type: ${action.type}`);
+                continue;
             }
+            const r = await handler(action, rawBuffer, fileKey, manifestInfo);
+            if (r === null) {
+                continue;
+            }
+            if (r.status.isTerminal) {
+                logger.log(`❌ result: ${r.status.description}: ${fileKey}`);
+                return { ...r, fileKey };
+            }
+            lastResult = r;
         }
-        logger.log(`❌ ${lastResult.status.description}: ${fileKey}`);
+        logger.log(`❌ lastResult: ${lastResult.status.description}: ${fileKey}`);
         return { ...lastResult, fileKey };
     };
 
     // For unpinned clients, escalate from the latest manifest → historic manifests → network fetch
     // on MISMATCH / NOT_FOUND only. All other results (MATCH, DENIED_BY_RULE, etc.) are final.
-    const verifyWithEscalation = async (req, response, rawBuffer, clientId, latestManifest) => {
+    const verifyWithManifestSearch = async (req, response, rawBuffer, clientId, latestManifest) => {
+        const isNavigation = req.mode === 'navigate';
+        if (clientId && !isNavigation) {
+            const pinned = clientIdXManifest.get(clientId);
+            if (pinned) {
+                logger.log(`[verifyResponse] clientId=${clientId} (pinned)`);
+                const result = await evaluateManifestRules(req, response, pinned, rawBuffer);
+                await onManifestResult(clientId, pinned, result);
+                return result;
+            }
+        }
+
         const triedVersions = new Set();
         const tryManifest = async (manifestInfo) => {
             if (
@@ -198,19 +225,8 @@ export const createVerifier = ({ swContext, appStore, config }, manifestLoader) 
                 return null;
             }
             triedVersions.add(manifestInfo.appVersion);
-            const result = await runPipeline(req, response, manifestInfo, rawBuffer);
-            if (result.status === VERIFICATION_STATUS.MATCH) {
-                await verificationResultsStore.add(manifestInfo.appVersion, {
-                    ...result,
-                    status: result.status.description,
-                    timestamp: new Date().toISOString(),
-                });
-                const icon = result.fileKey.startsWith('/') ? '📄' : '🌐';
-                logger.log(`✅ ${icon} ${result.status.description}: ${result.fileKey}`);
-                pinClient(clientId, manifestInfo);
-            } else {
-                logger.log(`❌ ${result.status.description}: ${result.fileKey}`);
-            }
+            const result = await evaluateManifestRules(req, response, manifestInfo, rawBuffer);
+            await onManifestResult(clientId, manifestInfo, result);
             return result;
         };
 
@@ -267,9 +283,8 @@ export const createVerifier = ({ swContext, appStore, config }, manifestLoader) 
             return result({ status: shouldSkip });
         }
 
-        const isNavigation = req.mode === 'navigate';
         logger.log(
-            `[verifyResponse] req.method=${req.method} clientId=${clientId} isNavigation=${isNavigation}`
+            `[verifyResponse] req.method=${req.method} clientId=${clientId} isNavigation=${req.mode === 'navigate'}`
         );
 
         let rawBuffer;
@@ -279,17 +294,8 @@ export const createVerifier = ({ swContext, appStore, config }, manifestLoader) 
             logger.warn(`Failed to read response body: ${req.url}`, err);
             return result({ status: VERIFICATION_STATUS.ERROR });
         }
-
-        if (clientId && !isNavigation) {
-            const pinned = clientIdXManifest.get(clientId);
-            if (pinned) {
-                logger.log(`[verifyResponse] clientId=${clientId} (pinned)`);
-                return result(await runPipeline(req, response, pinned, rawBuffer));
-            }
-        }
-
         return result(
-            await verifyWithEscalation(req, response, rawBuffer, clientId, latestManifest)
+            await verifyWithManifestSearch(req, response, rawBuffer, clientId, latestManifest)
         );
     };
 
