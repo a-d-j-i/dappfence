@@ -2,6 +2,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { TRANSFORM } from '@dappfence/core/constants';
 import {
     buildScriptAttrs,
     buildScriptTag,
@@ -123,7 +124,7 @@ describe('buildContentRules', () => {
         const rules = buildContentRules({ isNetlify: true });
         expect(rules).toHaveLength(3);
         expect(rules[0].action.type).toBe('transform');
-        expect(rules[0].action.transform).toBe('netlify-cdp');
+        expect(rules[0].action.transform).toBe(TRANSFORM.NETLIFY_CDP);
         expect(rules[0].condition.resourceTypes).toContain('document');
     });
 });

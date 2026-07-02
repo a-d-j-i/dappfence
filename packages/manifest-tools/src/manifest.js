@@ -5,6 +5,7 @@
 const { promises: fs } = require('fs');
 const path = require('path');
 const { calculateFileHash, signManifest } = require('./build');
+const { TRANSFORM } = require('@dappfence/core/constants');
 
 const CDP_SCRIPT_PATH = '/.netlify/scripts/cdp';
 
@@ -18,7 +19,7 @@ function buildNetlifyContentRules() {
     return [
         {
             condition: { resourceTypes: ['document'] },
-            action: { type: 'transform', transform: 'netlify-cdp' },
+            action: { type: 'transform', transform: TRANSFORM.NETLIFY_CDP },
         },
         {
             condition: { urlFilter: CDP_SCRIPT_PATH },

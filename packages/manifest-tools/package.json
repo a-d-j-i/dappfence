@@ -38,6 +38,7 @@
         "signing"
     ],
     "dependencies": {
+        "@dappfence/core": "*",
         "@noble/hashes": "2.0.1",
         "@noble/secp256k1": "3.0.0"
     }

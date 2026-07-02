@@ -3,6 +3,7 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import os from 'os';
 import { createRequire } from 'module';
+import { TRANSFORM } from '@dappfence/core/constants';
 
 const _require = createRequire(import.meta.url);
 const { buildScriptAttrs, buildScriptTag, injectScriptTag, generateManifest } =
@@ -158,7 +159,7 @@ describe('generateManifest', () => {
         const contentRules = [
             {
                 condition: { resourceTypes: ['document'] },
-                action: { type: 'transform', transform: 'netlify-cdp' },
+                action: { type: 'transform', transform: TRANSFORM.NETLIFY_CDP },
             },
         ];
         await generateManifest({

@@ -1,6 +1,6 @@
 const path = require('path');
 const { getPublicKey, hexToBytes } = require('@dappfence/manifest-tools/crypto');
-const { MODE } = require('@dappfence/core/constants');
+const { MODE, TRANSFORM } = require('@dappfence/core/constants');
 
 const EXTERNAL_ASSETS = {
     'http://code.jquery.com/jquery-3.7.1.min.js': [
@@ -32,7 +32,7 @@ const defaultManifest = {
     contentRules: [
         {
             condition: { resourceTypes: ['document'] },
-            action: { type: 'transform', transform: 'netlify-cdp' },
+            action: { type: 'transform', transform: TRANSFORM.NETLIFY_CDP },
         },
         {
             condition: { urlFilter: '/.netlify/scripts/cdp' },
