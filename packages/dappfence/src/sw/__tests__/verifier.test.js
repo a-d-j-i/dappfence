@@ -6,13 +6,13 @@ import { VERIFICATION_STATUS } from '../../core/constants.js';
 
 const FILE_HASH = 'sha256-abc123';
 const MANIFEST_V1 = {
-    files: { '/index.html': FILE_HASH },
+    files: { '/index.html': [FILE_HASH] },
     pathRules: [{ type: 'directory-index' }],
     contentRules: [],
     mode: 'protected',
 };
 const MANIFEST_V2 = {
-    files: { '/index.html': 'sha256-newHash' },
+    files: { '/index.html': ['sha256-newHash'] },
     pathRules: [{ type: 'directory-index' }],
     contentRules: [],
     mode: 'protected',
@@ -367,7 +367,7 @@ describe('pipeline action semantics', () => {
         const denyManifest = {
             appVersion: 'v-deny',
             manifest: {
-                files: { '/index.html': FILE_HASH },
+                files: { '/index.html': [FILE_HASH] },
                 contentRules: [{ action: { type: 'deny' } }],
                 pathRules: [{ type: 'directory-index' }],
                 mode: 'protected',
@@ -403,7 +403,7 @@ describe('pipeline action semantics', () => {
         const transformManifest = {
             appVersion: 'v-transform',
             manifest: {
-                files: { '/index.html': FILE_HASH },
+                files: { '/index.html': [FILE_HASH] },
                 contentRules: [
                     { action: { type: 'transform', transform: 'netlify-cdp' } },
                     { action: { type: 'verify' } },

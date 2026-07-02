@@ -59,11 +59,17 @@ describe('createManifestStore', () => {
 
         it('addLatest stores a manifest retrievable by appVersion and via getLatest', async () => {
             const manifestData = { files: { '/app.js': 'abc123', '/style.css': 'def456' } };
+            const normalized = {
+                files: { '/app.js': ['abc123'], '/style.css': ['def456'] },
+                pathRules: [],
+                contentRules: [],
+                mode: 'reporting',
+            };
             const { appVersion } = await storage.trustedManifestStore.addLatest(manifestData);
 
-            expect(await storage.trustedManifestStore.get(appVersion)).toEqual(manifestData);
+            expect(await storage.trustedManifestStore.get(appVersion)).toEqual(normalized);
             expect(await storage.trustedManifestStore.getLatest()).toEqual(
-                expect.objectContaining({ appVersion, manifest: manifestData })
+                expect.objectContaining({ appVersion, manifest: normalized })
             );
         });
 
@@ -74,10 +80,16 @@ describe('createManifestStore', () => {
                 metadata: { extensions: ['.js', '.wasm'] },
                 customField: { future: true },
             };
+            const normalized = {
+                ...manifestData,
+                files: { '/app.js': ['abc'] },
+                pathRules: [],
+                contentRules: [],
+            };
             const { appVersion } = await storage.trustedManifestStore.addLatest(manifestData);
 
-            expect(await storage.trustedManifestStore.get(appVersion)).toEqual(manifestData);
-            expect((await storage.trustedManifestStore.getLatest()).manifest).toEqual(manifestData);
+            expect(await storage.trustedManifestStore.get(appVersion)).toEqual(normalized);
+            expect((await storage.trustedManifestStore.getLatest()).manifest).toEqual(normalized);
         });
 
         it('getLatest returns the most recently added manifest', async () => {
@@ -88,7 +100,12 @@ describe('createManifestStore', () => {
 
             const latest = await storage.trustedManifestStore.getLatest();
             expect(latest.appVersion).toBe(second.appVersion);
-            expect(latest.manifest).toEqual({ files: { '/b.js': 'y' } });
+            expect(latest.manifest).toEqual({
+                files: { '/b.js': ['y'] },
+                pathRules: [],
+                contentRules: [],
+                mode: 'reporting',
+            });
         });
 
         it('prunes entries older than 24h on addLatest', async () => {
