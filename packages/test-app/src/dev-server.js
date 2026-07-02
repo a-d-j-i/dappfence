@@ -7,6 +7,7 @@ const crypto = require('crypto');
 const { spawn } = require('child_process');
 const { connect } = require('node:net');
 
+const { TRANSFORM } = require('@dappfence/core/constants');
 const ASSET_ROOT = path.resolve(__dirname, '..', 'assets');
 const DAPPFENCE_DIST = require.resolve('@dappfence/core');
 
@@ -18,7 +19,7 @@ const DAPPFENCE_DIST = require.resolve('@dappfence/core');
  * on disk — without a blanket extension-guessing fallback.
  */
 const VIRTUAL_FILE_GROUPS = {
-    'netlify-cdp': {
+    [TRANSFORM.NETLIFY_CDP]: {
         // Netlify injects /.netlify/scripts/cdp with no file extension;
         // cdp.js is the primary known-good variant stored in the manifest.
         '/.netlify/scripts/cdp': '.netlify/scripts/cdp.js',

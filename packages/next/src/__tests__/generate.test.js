@@ -3,6 +3,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { createRequire } from 'node:module';
+import { TRANSFORM } from '@dappfence/core/constants';
 import { readDynamicRoutes } from '../routes.js';
 import { hashPrerenderedPages } from '../ssr.js';
 import { withDappfence, getDappfenceScriptAttrs, ATTRS_ENV_KEY } from '../index.js';
@@ -163,7 +164,7 @@ describe('generateManifest', () => {
         const contentRules = [
             {
                 condition: { resourceTypes: ['document'] },
-                action: { type: 'transform', transform: 'netlify-cdp' },
+                action: { type: 'transform', transform: TRANSFORM.NETLIFY_CDP },
             },
         ];
         await generateManifest({
@@ -194,7 +195,7 @@ describe('buildContentRules', () => {
     it('returns netlify-cdp transform rule when isNetlify is true', () => {
         const rules = buildContentRules({ isNetlify: true });
         expect(rules).toHaveLength(3);
-        expect(rules[0].action.transform).toBe('netlify-cdp');
+        expect(rules[0].action.transform).toBe(TRANSFORM.NETLIFY_CDP);
         expect(rules[0].condition.resourceTypes).toContain('document');
     });
 });
