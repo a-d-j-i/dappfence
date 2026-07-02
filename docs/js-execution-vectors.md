@@ -1071,8 +1071,9 @@ and anything else embedded in markup.
 
 ### Pending SSR coverage
 
-No classes remain unaddressed. The tokenizer extraction phase covers all four vectors in a single
-post-fetch pass.
+The four extraction mechanisms (`#scripts`, `#handlers`, `#importmap`, template passthrough) cover
+the primary vectors. Known tokenizer parsing gaps that can affect SSR verification are documented in
+[§18](#18-tokenizer-parsing-model-and-known-html-parsing-differentials).
 
 **Current outside-DappFence controls (not a substitute):**
 
@@ -1126,7 +1127,188 @@ elements inside `<template>` are extracted identically to those outside it and c
 
 ---
 
-## 18. Tag managers and the DappFence model
+## 18. Tokenizer parsing model and known HTML parsing differentials
+
+### Security guarantee scope
+
+DappFence's verification provides **script execution integrity**, not **document integrity**. The
+guarantee is: no JavaScript executes in the page that was not present in the verified build output.
+Modified text content, injected non-executable HTML elements (forms, images, links), and structural
+DOM changes are outside the threat model.
+
+This is deliberate. SSR pages embed dynamic content throughout the document — counters, timestamps,
+user-specific values in text nodes, and element attributes. Verifying document integrity would
+require listing every dynamic region at build time and hashing the static skeleton around them. For
+the general SSR case this demands deep framework-level annotation of every dynamic render point,
+which is incompatible with DappFence's minimal-integration design goal. **Skeleton hashing was
+considered and rejected on this basis.** The script-focused approach avoids this because scripts are
+the execution vector: non-script dynamic content (text in divs) cannot directly execute code, so not
+hashing it does not weaken the execution security property.
+
+### The parse differential invariants
+
+The tokenizer's correctness requirement is not spec compliance. It is that script extraction is
+always a **superset of what the browser will execute**. If the tokenizer misidentifies a script
+boundary, the error must be on the inclusive side — extracting more bytes than the browser executes,
+not fewer.
+
+| Failure direction                                  | Effect                                                    | Safety                                                                 |
+| -------------------------------------------------- | --------------------------------------------------------- | ---------------------------------------------------------------------- |
+| Tokenizer extracts **more** than browser executes  | Validator or hash check sees unexpected bytes → violation | Safe — surfaced as a false positive, resolved via manifest or refactor |
+| Tokenizer extracts **fewer** than browser executes | Injected code is never seen by any check → bypass         | **Dangerous**                                                          |
+
+Every gap below is classified by which direction it falls.
+
+### Known tokenizer gaps
+
+#### Gap 1 — Script Data Double Escaped (dangerous — bypass confirmed)
+
+**Trigger:** `<!--<script>` inside `<script>` content.
+
+```html
+<script>self.__next_f.push([0,"<!--<script>"])</script>/
+window.__bypass_executed = true
+</script>
+```
+
+The HTML5 spec defines a "Script Data Double Escaped" state. When the tokenizer sees `<!--` followed
+by `<script` inside script content it enters this state, in which the first `</script>` does **not**
+end the script — it only returns to "Script Data Escaped" state. A second `</script>` is needed to
+close the element.
+
+The DappFence tokenizer does not implement the Escaped or Double Escaped states. It closes the
+script at the first `</script>`. The code between the two `</script>` tags is never presented to any
+validator. Independently verified in Chrome via `scripts/verify-double-escape.js`.
+
+**Mitigation options (in order of preference):**
+
+1. **Implement the spec states** — add Script Data Escaped and Script Data Double Escaped to the
+   state machine. The tokenizer then presents the full byte range to the validator, which rejects
+   the unexpected content (e.g., RSC validator requires valid JSON; extra bytes fail JSON parsing).
+   This is the correct long-term fix.
+
+2. **Hazard scanner — block on detection** — reject any response where `<!--` appears inside
+   extracted script content, without attempting to parse the double-escaped region. No attempt is
+   made to determine whether a `</script>` is real or escaped. This is simpler to implement and
+   sufficient as an interim measure; the false positive rate is zero for well-formed framework
+   output (RSC payloads do not legitimately contain `<!--<script>`).
+
+Both mitigations can coexist: implement the states for correctness and retain the scanner check as a
+belt-and-suspenders guard against future regressions. See also the e2e test
+`sw-dynamic-html.spec.ts` (case-6a bypass) which documents the current behaviour and will pass when
+either mitigation is in place.
+
+#### Gap 2 — Script Data Escaped (incomplete implementation)
+
+**Trigger:** `<!--` inside `<script>` content without a following `<script>` tag.
+
+```html
+<script>
+    /* <!-- some old comment -->
+    code()
+</script>
+```
+
+`<!--` puts the browser into Script Data Escaped state. In this state `</script>` still ends the
+script (unlike Gap 1), so the tokenizer and browser agree on the boundary. However, `-->` returns
+the browser to normal Script Data state, which could affect boundary detection in edge compositions.
+
+**Status:** Lower severity than Gap 1; no confirmed bypass. Addressed when implementing the full
+Escaped/Double Escaped state machine.
+
+#### Gap 3 — `<` in unquoted attribute values (potentially dangerous)
+
+**Trigger:** `<` character appearing in an unquoted attribute value.
+
+```html
+<div attr=foo<script>alert(1)</script>>
+```
+
+The HTML5 spec says `<` in an unquoted attribute value is a parse error but the character is
+appended to the value. The DappFence tokenizer matches this. However, some browsers exit attribute
+mode at `<` and parse the following characters as a new element. In those environments the tokenizer
+and browser disagree: the tokenizer reads `<script>alert(1)</script>` as an attribute value string;
+the browser executes it as a script element.
+
+**Status:** Theoretical in modern Chrome/Firefox. Practical risk depends on the browser population
+of the target application.
+
+**Hazard scanner:** block any response where `<` is encountered while in an unquoted attribute value
+tokenizer state.
+
+#### Gap 4 — `<iframe srcdoc>` (dangerous)
+
+**Trigger:** `srcdoc` attribute containing encoded HTML with script elements.
+
+```html
+<iframe srcdoc="&lt;script&gt;evil()&lt;/script&gt;"></iframe>
+```
+
+The browser decodes the `srcdoc` attribute value and renders it as a complete HTML document,
+executing any scripts inside. No network request is made. The DappFence tokenizer reads `srcdoc` as
+an attribute string; neither the encoded nor the decoded content is passed through the script
+extraction pipeline.
+
+**Status:** Covered by hazard scanner. The tokenizer fires `onHazard({type:'srcdoc'})` whenever
+`openingTagDone` sees a `srcdoc` attribute on any element, and the SW verifier registers `onHazard`
+to reject the response. Legitimate use of `srcdoc` in framework output is rare; if required, the
+developer must add a manifest exception after review.
+
+**Remaining open option:** Recursive tokenization — decode the `srcdoc` value and run it through the
+same extraction pipeline. More permissive than the current block-on-srcdoc policy but adds
+significant complexity and is not scheduled.
+
+#### Gap 5 — Raw text elements: false positive direction (safe)
+
+**Elements:** `<textarea>`, `<title>`, `<style>`, `<xmp>`, `<noembed>`, `<noscript>`, `<listing>`,
+`<plaintext>`
+
+These elements' content is raw text in the HTML5 spec — `<script>` inside them is not parsed as a
+script element and is not executed.
+
+**Status:** Implemented. The tokenizer enters `S_RAW_DATA` mode after the opening tag of any raw
+text element and exits only when the matching close tag is found. Script events and inner element
+events are suppressed while in raw text mode, preventing false positives from `<script>` text inside
+`<textarea>`, `<style>`, and similar elements.
+
+#### Gap 6 — `<noscript>` scripting-mode dependency (accepted limitation)
+
+When JavaScript is disabled, `<noscript>` content is parsed as HTML and scripts inside it execute.
+When JavaScript is enabled (the normal case), the content is raw text and nothing executes. The
+tokenizer cannot determine the browser's scripting state.
+
+**Status:** Accepted limitation. The tokenizer treats `<noscript>` content as raw text, matching the
+scripting-enabled case. Applications targeting users with JavaScript disabled have a documented gap
+in the execution security guarantee.
+
+### Hazard scanner
+
+The hazard scanner is a secondary pass that rejects responses containing patterns known to create
+parse differentials. When it fires the response is blocked without attempting script extraction.
+
+| Pattern                                                     | Gap addressed                  |
+| ----------------------------------------------------------- | ------------------------------ |
+| `<!--` inside extracted script content                      | Gap 1 — Double Escaped trigger |
+| `<` in unquoted attribute value state                       | Gap 3                          |
+| Any element with `srcdoc` attribute                         | Gap 4                          |
+| `data:` or `javascript:` in `src` of `<iframe>` / `<frame>` | §10b residual                  |
+
+The scanner is designed for incremental extension: when a new browser parsing differential is
+discovered, a new pattern is added — no tokenizer rewrite required. The scanner's role is to
+maintain the security assurance as the browser landscape evolves, complementing rather than
+replacing correct state machine implementation.
+
+### Integration layer
+
+The build integrations (`@dappfence/astro`, `@dappfence/next`) analyse framework output at build
+time and warn when patterns would trigger the hazard scanner, before they cause runtime violations.
+Framework-specific validators (e.g., `nextjs-rsc`) encode what the framework is known to produce,
+allowing dynamic scripts to be accepted without pre-computed hashes. If a framework update starts
+emitting a hazard pattern, the build tool surfaces it at development time.
+
+---
+
+## 19. Tag managers and the DappFence model
 
 Google Tag Manager and similar products (Tealium, Adobe Launch, Segment CDN) are fundamentally
 incompatible with DappFence's security model.
@@ -1185,50 +1367,51 @@ compatible if the vendor's CDN supports CORS and the hash is stable between upda
 
 ## Summary matrix
 
-| #     | Vector                              | Fetch fires? | Static coverage                | SSR coverage                   | Notes                                                                                     |
-| ----- | ----------------------------------- | ------------ | ------------------------------ | ------------------------------ | ----------------------------------------------------------------------------------------- |
-| 1a    | `<script src>` (same-origin)        | Yes          | SW intercept                   | SW intercept                   | Primary case                                                                              |
-| 1a    | `<script src>` cross-origin + CORS  | Yes          | SW intercept                   | SW intercept                   | Body accessible; verify against full-URL key                                              |
-| 1a    | `<script src>` cross-origin no-cors | Yes          | SW CORS retry → verify or stub | SW CORS retry → verify or stub | SW re-issues as CORS; body accessible if CDN supports CORS; stubs + warns otherwise       |
-| 1b    | Inline `<script>`                   | No           | HTML doc                       | #scripts verify                | Requires static inline scripts                                                            |
-| 1c    | `<script type=module src>`          | Yes          | SW intercept                   | SW intercept                   | Includes transitive imports                                                               |
-| 1d    | Inline module                       | Partial      | HTML doc + SW intercept        | #scripts + SW intercept        | Extractor keeps type=module                                                               |
-| 2     | `on*` event handlers                | No           | HTML doc                       | #handlers tokenizer ✓          | All elements incl. SVG/MathML/template; refactor to listeners if not in manifest          |
-| 3a    | `javascript:` in markup             | No           | HTML doc                       | #handlers tokenizer ✓          | href/action/formaction/xlink:href/iframe-src; case-insensitive prefix check               |
-| 3b    | `location.href = 'javascript:'`     | No           | Source-controlled              | Source-controlled              | Runtime JS from verified script; `location` not patchable                                 |
-| 4     | `<object>` / `<embed>`              | Yes          | SW intercept                   | SW intercept                   | Plugin internals opaque                                                                   |
-| 5     | SVG via `<object>`/`<iframe>`       | Yes          | SW intercept                   | SW intercept                   |                                                                                           |
-| 5     | Inline SVG `<script>`               | No           | HTML doc                       | #scripts tokenizer ✓           | Tokenizer catches `<script>` anywhere in byte stream incl. inside SVG                     |
-| 5     | SVG `xlink:href="javascript:"`      | No           | HTML doc                       | #handlers tokenizer ✓          | Checked alongside href/action/formaction in same pass                                     |
-| 5     | SVG `on*` event handlers            | No           | HTML doc                       | #handlers tokenizer ✓          | All opening tags scanned; no element-type exclusion                                       |
-| 6     | XSLT                                | Yes          | SW intercept                   | SW intercept                   | Output scripts are inline                                                                 |
-| 7a    | `eval()`                            | No           | Source-controlled              | Source-controlled              | External data into eval is an External data case; requires static analysis                |
-| 7b    | `new Function()`                    | No           | Source-controlled              | Source-controlled              | Same as eval                                                                              |
-| 7c    | `setTimeout(string)`                | No           | Source-controlled              | Source-controlled              | Same as eval                                                                              |
-| 7d    | `document.write(<script src>)`      | Yes          | SW intercept                   | SW intercept                   |                                                                                           |
-| 7d    | `document.write(inline script)`     | No           | Source-controlled              | Source-controlled              | String is part of the verified script                                                     |
-| 8a    | Worker (URL)                        | Yes          | SW intercept                   | SW intercept                   |                                                                                           |
-| 8b    | Worker (Blob URL)                   | No           | Source-controlled              | Source-controlled              | Blob content generated by verified script; same model as eval                             |
-| 8c    | Shared Worker                       | Yes          | SW intercept                   | SW intercept                   |                                                                                           |
-| 8d    | App Service Worker                  | N/A          | SW monkey-patch                | SW monkey-patch                | Existing DappFence feature                                                                |
-| 8e    | `importScripts()`                   | Yes          | SW intercept + monkey-patch    | SW intercept + monkey-patch    |                                                                                           |
-| 8f    | Worklets                            | Yes          | SW intercept                   | SW intercept                   | Blob URL variant is Source-controlled                                                     |
-| 9a    | Dynamic `import()`                  | Yes          | SW intercept                   | SW intercept                   |                                                                                           |
-| 9b    | Import maps                         | Partial      | HTML doc + SW intercept        | #importmap tokenizer ✓         | Remap-to-known-URL bypass closed by #importmap; remapped URLs still SW-intercepted        |
-| 10a   | `data:` script src                  | No           | Browser-blocked                | Browser-blocked                | Engine-level block in all modern browsers; tokenizer detects in SSR HTML as unknown entry |
-| 10b   | `data:` iframe                      | No           | Browser-mitigated              | Browser-mitigated              | Null-origin blocks direct DOM access; residual: parent navigation + postMessage chaining  |
-| 10c   | Blob URL iframe/script              | No           | Source-controlled              | Source-controlled              | Blob created by verified script; same-origin access makes external data caveat critical   |
-| 11a-b | CSS expression / HTC                | Yes          | SW intercept                   | SW intercept                   | IE only, dead                                                                             |
-| 11c   | CSS Houdini worklets                | Yes          | SW intercept                   | SW intercept                   | Blob URL variant is Source-controlled                                                     |
-| 12a   | `createElement` + src               | Yes          | SW intercept                   | SW intercept                   |                                                                                           |
-| 12b   | `createElement` + textContent       | No           | Source-controlled              | Source-controlled              | Text is part of the verified script                                                       |
-| 12c   | `innerHTML` injection               | No           | N/A                            | N/A                            | Browsers don't execute                                                                    |
-| 13    | WebAssembly (fetch)                 | Yes          | SW intercept                   | SW intercept                   |                                                                                           |
-| 13    | WebAssembly (buffer)                | No           | Source-controlled              | Source-controlled              | Buffer produced by verified script                                                        |
-| 14    | PDF JavaScript                      | Yes          | SW intercept                   | SW intercept                   | Binary contents opaque                                                                    |
-| 15a-c | VBScript / IE / HTML Imports        | Partial      | N/A (legacy, dead)             | N/A (legacy, dead)             | Dead vectors; removed from all modern browsers                                            |
-| 16a   | JSONP                               | Yes          | SW CORS retry fails → stub     | SW CORS retry fails → stub     | Dynamic content, not pre-hashable; no allow rule path must be replaced                    |
-| 16b   | `postMessage` + `eval`              | No           | External data                  | External data                  | Handler script verified; payload from external origin is not                              |
-| 16d   | meta-refresh `javascript:`          | No           | HTML doc                       | Browser-blocked                | Blocked in modern browsers                                                                |
-| 16e   | preload + append                    | Yes          | SW intercept                   | SW intercept                   | Verified on preload                                                                       |
-| 16f   | `<template>` cloneable scripts      | No           | HTML doc                       | #scripts tokenizer ✓           | Template not skipped; scripts inside extracted same as any other inline script            |
+| #     | Vector                              | Fetch fires? | Static coverage                | SSR coverage                                                                               | Notes                                                                                     |
+| ----- | ----------------------------------- | ------------ | ------------------------------ | ------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------- |
+| 1a    | `<script src>` (same-origin)        | Yes          | SW intercept                   | SW intercept                                                                               | Primary case                                                                              |
+| 1a    | `<script src>` cross-origin + CORS  | Yes          | SW intercept                   | SW intercept                                                                               | Body accessible; verify against full-URL key                                              |
+| 1a    | `<script src>` cross-origin no-cors | Yes          | SW CORS retry → verify or stub | SW CORS retry → verify or stub                                                             | SW re-issues as CORS; body accessible if CDN supports CORS; stubs + warns otherwise       |
+| 1b    | Inline `<script>`                   | No           | HTML doc                       | #scripts verify                                                                            | Requires static inline scripts                                                            |
+| 1c    | `<script type=module src>`          | Yes          | SW intercept                   | SW intercept                                                                               | Includes transitive imports                                                               |
+| 1d    | Inline module                       | Partial      | HTML doc + SW intercept        | #scripts + SW intercept                                                                    | Extractor keeps type=module                                                               |
+| 2     | `on*` event handlers                | No           | HTML doc                       | #handlers tokenizer ✓                                                                      | All elements incl. SVG/MathML/template; refactor to listeners if not in manifest          |
+| 3a    | `javascript:` in markup             | No           | HTML doc                       | #handlers tokenizer ✓                                                                      | href/action/formaction/xlink:href/iframe-src; case-insensitive prefix check               |
+| 3b    | `location.href = 'javascript:'`     | No           | Source-controlled              | Source-controlled                                                                          | Runtime JS from verified script; `location` not patchable                                 |
+| 4     | `<object>` / `<embed>`              | Yes          | SW intercept                   | SW intercept                                                                               | Plugin internals opaque                                                                   |
+| 5     | SVG via `<object>`/`<iframe>`       | Yes          | SW intercept                   | SW intercept                                                                               |                                                                                           |
+| 5     | Inline SVG `<script>`               | No           | HTML doc                       | #scripts tokenizer ✓                                                                       | Tokenizer catches `<script>` anywhere in byte stream incl. inside SVG                     |
+| 5     | SVG `xlink:href="javascript:"`      | No           | HTML doc                       | #handlers tokenizer ✓                                                                      | Checked alongside href/action/formaction in same pass                                     |
+| 5     | SVG `on*` event handlers            | No           | HTML doc                       | #handlers tokenizer ✓                                                                      | All opening tags scanned; no element-type exclusion                                       |
+| 6     | XSLT                                | Yes          | SW intercept                   | SW intercept                                                                               | Output scripts are inline                                                                 |
+| 7a    | `eval()`                            | No           | Source-controlled              | Source-controlled                                                                          | External data into eval is an External data case; requires static analysis                |
+| 7b    | `new Function()`                    | No           | Source-controlled              | Source-controlled                                                                          | Same as eval                                                                              |
+| 7c    | `setTimeout(string)`                | No           | Source-controlled              | Source-controlled                                                                          | Same as eval                                                                              |
+| 7d    | `document.write(<script src>)`      | Yes          | SW intercept                   | SW intercept                                                                               |                                                                                           |
+| 7d    | `document.write(inline script)`     | No           | Source-controlled              | Source-controlled                                                                          | String is part of the verified script                                                     |
+| 8a    | Worker (URL)                        | Yes          | SW intercept                   | SW intercept                                                                               |                                                                                           |
+| 8b    | Worker (Blob URL)                   | No           | Source-controlled              | Source-controlled                                                                          | Blob content generated by verified script; same model as eval                             |
+| 8c    | Shared Worker                       | Yes          | SW intercept                   | SW intercept                                                                               |                                                                                           |
+| 8d    | App Service Worker                  | N/A          | SW monkey-patch                | SW monkey-patch                                                                            | Existing DappFence feature                                                                |
+| 8e    | `importScripts()`                   | Yes          | SW intercept + monkey-patch    | SW intercept + monkey-patch                                                                |                                                                                           |
+| 8f    | Worklets                            | Yes          | SW intercept                   | SW intercept                                                                               | Blob URL variant is Source-controlled                                                     |
+| 9a    | Dynamic `import()`                  | Yes          | SW intercept                   | SW intercept                                                                               |                                                                                           |
+| 9b    | Import maps                         | Partial      | HTML doc + SW intercept        | #importmap tokenizer ✓                                                                     | Remap-to-known-URL bypass closed by #importmap; remapped URLs still SW-intercepted        |
+| 10a   | `data:` script src                  | No           | Browser-blocked                | Browser-blocked                                                                            | Engine-level block in all modern browsers; tokenizer detects in SSR HTML as unknown entry |
+| 10b   | `data:` iframe                      | No           | Browser-mitigated              | Browser-mitigated                                                                          | Null-origin blocks direct DOM access; residual: parent navigation + postMessage chaining  |
+| 18    | `<iframe srcdoc>` with scripts      | No           | HTML doc                       | Gap 4 — hazard scanner blocks any `srcdoc` attribute; recursive tokenization not scheduled | No network fetch; content parsed as full HTML document by browser                         |
+| 10c   | Blob URL iframe/script              | No           | Source-controlled              | Source-controlled                                                                          | Blob created by verified script; same-origin access makes external data caveat critical   |
+| 11a-b | CSS expression / HTC                | Yes          | SW intercept                   | SW intercept                                                                               | IE only, dead                                                                             |
+| 11c   | CSS Houdini worklets                | Yes          | SW intercept                   | SW intercept                                                                               | Blob URL variant is Source-controlled                                                     |
+| 12a   | `createElement` + src               | Yes          | SW intercept                   | SW intercept                                                                               |                                                                                           |
+| 12b   | `createElement` + textContent       | No           | Source-controlled              | Source-controlled                                                                          | Text is part of the verified script                                                       |
+| 12c   | `innerHTML` injection               | No           | N/A                            | N/A                                                                                        | Browsers don't execute                                                                    |
+| 13    | WebAssembly (fetch)                 | Yes          | SW intercept                   | SW intercept                                                                               |                                                                                           |
+| 13    | WebAssembly (buffer)                | No           | Source-controlled              | Source-controlled                                                                          | Buffer produced by verified script                                                        |
+| 14    | PDF JavaScript                      | Yes          | SW intercept                   | SW intercept                                                                               | Binary contents opaque                                                                    |
+| 15a-c | VBScript / IE / HTML Imports        | Partial      | N/A (legacy, dead)             | N/A (legacy, dead)                                                                         | Dead vectors; removed from all modern browsers                                            |
+| 16a   | JSONP                               | Yes          | SW CORS retry fails → stub     | SW CORS retry fails → stub                                                                 | Dynamic content, not pre-hashable; no allow rule path must be replaced                    |
+| 16b   | `postMessage` + `eval`              | No           | External data                  | External data                                                                              | Handler script verified; payload from external origin is not                              |
+| 16d   | meta-refresh `javascript:`          | No           | HTML doc                       | Browser-blocked                                                                            | Blocked in modern browsers                                                                |
+| 16e   | preload + append                    | Yes          | SW intercept                   | SW intercept                                                                               | Verified on preload                                                                       |
+| 16f   | `<template>` cloneable scripts      | No           | HTML doc                       | #scripts tokenizer ✓                                                                       | Template not skipped; scripts inside extracted same as any other inline script            |

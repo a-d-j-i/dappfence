@@ -1,6 +1,6 @@
 const path = require('path');
 const { getPublicKey, hexToBytes } = require('@dappfence/manifest-tools/crypto');
-const { MODE, TRANSFORM } = require('@dappfence/core/constants');
+const { MODE, VALIDATOR, TRANSFORM } = require('@dappfence/core/constants');
 
 const EXTERNAL_ASSETS = {
     'http://code.jquery.com/jquery-3.7.1.min.js': [
@@ -42,9 +42,26 @@ const defaultManifest = {
             condition: { urlFilter: '/.netlify/scripts/cdp' },
             action: { type: 'rewrite' },
         },
+        {
+            condition: { resourceTypes: ['document'], urlFilter: '/nextjs/case-' },
+            action: { type: 'verify-scripts', validator: VALIDATOR.NEXTJS_RSC },
+        },
+        {
+            condition: { resourceTypes: ['document'], urlFilter: '/astro/case-' },
+            action: { type: 'verify-scripts', validator: 'astro-island' },
+        },
     ],
     additionalFiles: {
         '/.netlify/scripts/cdp': ['.netlify/scripts/cdp.js', '.netlify/scripts/cdp-alt.js'],
+    },
+    // Add an entry per dynamic test case: build.js tokenizes the template to
+    // extract #scripts hashes (executable inline scripts) and #handlers
+    // (on* attribute values); validator names the runtime verify-scripts rule.
+    testCases: {
+        '/nextjs/case-6a': {
+            template: 'simple-app.html',
+            validator: VALIDATOR.NEXTJS_RSC,
+        },
     },
 };
 

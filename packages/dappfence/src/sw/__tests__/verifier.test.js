@@ -392,9 +392,10 @@ describe('pipeline action semantics', () => {
     });
 
     it('transform action falls through (null) on mismatch, allowing subsequent actions to run', async () => {
-        // The netlify-cdp transform finds no pattern to strip in the mock buffer,
-        // so the transformed hash does not match FILE_HASH → handleTransform returns
-        // null → pipeline continues to the verify action → MATCH.
+        // The netlify-cdp transform will find no pattern to strip in the mock
+        // buffer, so applyTransform returns unchanged text whose hash does not
+        // match FILE_HASH → applyAction returns null → pipeline continues to
+        // the verify action → calculateHash returns FILE_HASH → MATCH.
         calculateHash
             .mockResolvedValueOnce('sha256-stripped-no-match') // hash after transform
             .mockResolvedValueOnce(FILE_HASH); // hash for verify fallback
@@ -403,6 +404,7 @@ describe('pipeline action semantics', () => {
             appVersion: 'v-transform',
             manifest: {
                 files: { '/index.html': [FILE_HASH] },
+                encodings: ['utf-8'],
                 contentRules: [
                     { action: { type: 'transform', transform: 'netlify-cdp' } },
                     { action: { type: 'verify' } },

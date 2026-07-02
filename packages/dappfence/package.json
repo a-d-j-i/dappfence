@@ -24,11 +24,13 @@
             "default": "./dist/dappfence.js"
         },
         "./dev": "./dist/dappfence.dev.js",
-        "./constants": "./src/core/constants.js"
+        "./constants": "./src/core/constants.js",
+        "./html-tokenizer": "./src/core/html-tokenizer.js"
     },
     "files": [
         "dist",
-        "src/core/constants.js"
+        "src/core/constants.js",
+        "src/core/html-tokenizer.js"
     ],
     "engines": {
         "node": ">=16.0.0"

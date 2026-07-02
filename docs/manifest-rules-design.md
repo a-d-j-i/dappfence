@@ -142,23 +142,45 @@ flowchart TD
         "/about/index.html#importmap": ["sha256-importmap-1"],
         "/.netlify/scripts/cdp": ["sha256-v1", "sha256-v2"]
     },
-    "pathRules": [{ "type": "directory-index" }],
+    "encodings": ["utf-8"],
+    "pathRules": [
+        {
+            "type": "directory-index"
+        }
+    ],
     "contentRules": [
         {
-            "condition": { "resourceTypes": ["document"] },
-            "action": { "type": "transform", "transform": "netlify-cdp" }
+            "condition": {
+                "resourceTypes": ["document"]
+            },
+            "action": {
+                "type": "transform",
+                "transform": "netlify-cdp"
+            }
         },
         {
-            "condition": { "urlFilter": "/.netlify/scripts/cdp" },
-            "action": { "type": "verify" }
+            "condition": {
+                "urlFilter": "/.netlify/scripts/cdp"
+            },
+            "action": {
+                "type": "verify"
+            }
         },
         {
-            "condition": { "urlFilter": "/.netlify/scripts/cdp" },
-            "action": { "type": "rewrite" }
+            "condition": {
+                "urlFilter": "/.netlify/scripts/cdp"
+            },
+            "action": {
+                "type": "rewrite"
+            }
         },
         {
-            "condition": { "urlFilter": "/_server-islands/" },
-            "action": { "type": "allow" }
+            "condition": {
+                "urlFilter": "/_server-islands/"
+            },
+            "action": {
+                "type": "allow"
+            }
         }
     ],
     "mode": "protected",
@@ -178,6 +200,41 @@ before SW dispatch, so `#` can never appear in a real request key — making it 
 namespace for these entries. Each value is an array of content hashes verified as a set-membership
 check (not positional). See [Inline script verification](#inline-script-verification) and
 [Handler and importmap verification](#handler-and-importmap-verification).
+
+### `encodings` — HTML charset allowlist
+
+```json
+"encodings": ["utf-8"]
+```
+
+Controls which character set labels are accepted when decoding HTML responses for inline script and
+handler verification. The SW detects the effective charset using the following priority order:
+
+1. BOM (byte-order mark) in the response body
+2. `charset` parameter in the `Content-Type` response header
+3. `<meta charset="...">` or `<meta http-equiv="content-type" content="...charset=...">` in the
+   first 1024 bytes of the body
+4. Falls back to `utf-8` if none of the above are present
+
+If the detected charset is not listed in `encodings`, the SW rejects the response with a `MISMATCH`
+result — the same outcome as a hash failure. The document is not decoded and no inline script or
+handler verification runs.
+
+**Default:** `["utf-8"]` — applied automatically when `encodings` is absent from the manifest.
+
+**Security rationale:** accepting arbitrary charsets allows an attacker to inject content that
+passes hash verification under one encoding but executes differently under another (e.g., UTF-7,
+ISO-2022-JP). The allowlist limits the attack surface to charsets the developer explicitly trusts
+for their application. Most applications only need `utf-8`. Sites that must serve legacy encodings
+(e.g., `windows-1252`) should list them explicitly:
+
+```json
+"encodings": ["utf-8", "windows-1252"]
+```
+
+The labels must be valid
+[`TextDecoder` encoding labels](https://developer.mozilla.org/en-US/docs/Web/API/Encoding_API/Encodings)
+(case-insensitive; the SW normalises them to lowercase before comparison).
 
 ---
 
@@ -199,9 +256,9 @@ request URL
 
 ```json
 "pathRules": [
-  { "condition": { "urlFilter": "/docs/" }, "type": "directory-index" },
-  { "match": "/landing", "resolveAs": "/campaigns/landing/index.html" },
-  { "type": "html-extension" }
+{"condition": {"urlFilter": "/docs/"}, "type": "directory-index"},
+{"match": "/landing", "resolveAs": "/campaigns/landing/index.html"},
+{"type": "html-extension"}
 ]
 ```
 
@@ -222,7 +279,7 @@ exceptions that do not follow the site-wide pattern.
 For most sites a single rule is enough:
 
 ```json
-"pathRules": [{ "type": "directory-index" }]
+"pathRules": [{"type": "directory-index"}]
 ```
 
 ### Who emits pathRules
@@ -247,22 +304,22 @@ Exact lookup in `files` only.
 
 ```json
 "contentRules": [
-  {
-    "condition": { "resourceTypes": ["document"] },
-    "action":    { "type": "transform", "transform": "netlify-cdp" }
-  },
-  {
-    "condition": { "urlFilter": "/.netlify/scripts/cdp" },
-    "action":    { "type": "verify" }
-  },
-  {
-    "condition": { "urlFilter": "/.netlify/scripts/cdp" },
-    "action":    { "type": "rewrite" }
-  },
-  {
-    "condition": { "urlFilter": "/_server-islands/" },
-    "action":    { "type": "allow" }
-  }
+{
+"condition": {"resourceTypes": ["document"]},
+"action":    {"type": "transform", "transform": "netlify-cdp"}
+},
+{
+"condition": {"urlFilter": "/.netlify/scripts/cdp"},
+"action":    {"type": "verify"}
+},
+{
+"condition": {"urlFilter": "/.netlify/scripts/cdp"},
+"action":    {"type": "rewrite"}
+},
+{
+"condition": {"urlFilter": "/_server-islands/"},
+"action":    {"type": "allow"}
+}
 ]
 ```
 
@@ -372,8 +429,12 @@ upgraded request and the embed will break.
 {
     "contentRules": [
         {
-            "condition": { "resourceTypes": ["embed", "object"] },
-            "action": { "type": "allow" }
+            "condition": {
+                "resourceTypes": ["embed", "object"]
+            },
+            "action": {
+                "type": "allow"
+            }
         }
     ]
 }
@@ -396,7 +457,9 @@ Scope the rule to a `urlFilter` prefix if you only want to allow specific origin
         "urlFilter": "https://docs.example.com/",
         "resourceTypes": ["embed", "object"]
     },
-    "action": { "type": "allow" }
+    "action": {
+        "type": "allow"
+    }
 }
 ```
 
@@ -440,7 +503,10 @@ Maps any URL that is not already in `manifest.files` to a known fallback key, so
 the response body rather than unconditionally blocking the request.
 
 ```json
-{ "type": "not-found", "fallback": "/404" }
+{
+    "type": "not-found",
+    "fallback": "/404"
+}
 ```
 
 -   Only activates when the resolved pathname has no entry in `files` (known paths are never
@@ -455,8 +521,14 @@ the response body rather than unconditionally blocking the request.
     order; the first matching rule wins. This enables section-specific 404 pages:
 
 ```json
-{ "condition": { "urlFilter": "/admin/" }, "type": "not-found", "fallback": "/admin/404.html" },
-{ "type": "not-found", "fallback": "/404.html" }
+{
+  "condition": {
+    "urlFilter": "/admin/"
+  },
+  "type": "not-found",
+  "fallback": "/admin/404.html"
+},
+{"type": "not-found", "fallback": "/404.html"}
 ```
 
 -   Multiple known-good 404 bodies (e.g. A/B tested page) are handled by making the fallback `files`
@@ -544,11 +616,15 @@ key `pageKey + "#scripts"`. The full contentRules action pipeline applies: `veri
 
 ```json
 "contentRules": [
-  { "condition": { "resourceTypes": ["inline-script"] },
-    "action": { "type": "verify" } },
+{
+"condition": {"resourceTypes": ["inline-script"]},
+"action": {"type": "verify"}
+},
 
-  { "condition": { "resourceTypes": ["inline-script"], "urlFilter": "/dashboard" },
-    "action": { "type": "transform", "transform": "strip-nonce" } }
+{
+"condition": {"resourceTypes": ["inline-script"], "urlFilter": "/dashboard"},
+"action": {"type": "transform", "transform": "strip-nonce"}
+}
 ]
 ```
 
@@ -581,16 +657,20 @@ body verification. Inline scripts are still verified via the `#scripts` entry:
 
 ```json
 "contentRules": [
-  { "condition": { "resourceTypes": ["document"], "urlFilter": "/dashboard" },
-    "action": { "type": "allow" } },
-  { "condition": { "resourceTypes": ["inline-script"] },
-    "action": { "type": "verify" } }
+{
+"condition": {"resourceTypes": ["document"], "urlFilter": "/dashboard"},
+"action": {"type": "allow"}
+},
+{
+"condition": {"resourceTypes": ["inline-script"]},
+"action": {"type": "verify"}
+}
 ]
 ```
 
 ```json
 "files": {
-  "/dashboard#scripts": ["sha256-init", "sha256-hydrate"]
+"/dashboard#scripts": ["sha256-init", "sha256-hydrate"]
 }
 ```
 
@@ -599,8 +679,8 @@ must pass:
 
 ```json
 "files": {
-  "/about/index.html":          "sha256-page",
-  "/about/index.html#scripts":  ["sha256-init"]
+"/about/index.html": "sha256-page",
+"/about/index.html#scripts": ["sha256-init"]
 }
 ```
 
@@ -638,7 +718,7 @@ triggers a violation.
 
 ```json
 "files": {
-  "/dashboard#handlers": ["sha256-onload-handler"]
+"/dashboard#handlers": ["sha256-onload-handler"]
 }
 ```
 
@@ -653,7 +733,7 @@ triggering a violation.
 
 ```json
 "files": {
-  "/dashboard#importmap": ["sha256-importmap-content"]
+"/dashboard#importmap": ["sha256-importmap-content"]
 }
 ```
 
@@ -715,7 +795,10 @@ This matches how `files` keys are authored — external resources use their full
 also means `urlFilter` in `contentRules` naturally scopes to a specific CDN domain by prefix:
 
 ```json
-{ "urlFilter": "https://code.jquery.com/", "resourceTypes": ["script"] }
+{
+    "urlFilter": "https://code.jquery.com/",
+    "resourceTypes": ["script"]
+}
 ```
 
 `pathRules` only applies to same-origin paths — the build system never emits clean-URL aliases for
@@ -879,7 +962,9 @@ hash, and either passes or blocks it before the browser processes it:
 
 ```json
 {
-    "condition": { "resourceTypes": ["script", "document", "stylesheet"] },
+    "condition": {
+        "resourceTypes": ["script", "document", "stylesheet"]
+    },
     "action": {
         "type": "verifyIntegrity",
         "onMismatch": "block",

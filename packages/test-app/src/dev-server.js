@@ -261,6 +261,29 @@ function startServer({
             );
             return data;
         },
+        // Serve a base file (args.file) at any path, with optional injection.
+        // args.file   — path relative to the app dist root (e.g. 'index.html')
+        // args.inject — [content, target] or just content, same shape as inject formula
+        remap: (_data, testParams, _filePath, _pattern, args) => {
+            const { file, inject: injectArgs } = args || {};
+            const basePath = path.join(PROJECT_ROOT, testParams.app, file || 'index.html');
+            if (!fs.existsSync(basePath) || !fs.statSync(basePath).isFile()) {
+                console.log(
+                    `[${getTimestamp()}]  \x1b[31m[REMAP] base file not found ${basePath}\x1b[0m`
+                );
+                return _data;
+            }
+            let html = fs.readFileSync(basePath, 'utf8');
+            if (injectArgs) {
+                const [content, target] = Array.isArray(injectArgs) ? injectArgs : [injectArgs];
+                if (target && html.includes(target)) {
+                    html = html.replace(target, content + target);
+                } else {
+                    html = html + content;
+                }
+            }
+            return html;
+        },
     };
 
     function getExtraResponseHeaders(testParams) {
@@ -545,9 +568,13 @@ function startServer({
                 synthIntercept.pattern,
                 synthIntercept.args
             );
+            const mimeTypeHint =
+                synthIntercept.formula === 'remap'
+                    ? synthIntercept.args?.file
+                    : synthIntercept.args;
             const mimeType =
                 synthIntercept.contentType ||
-                getMimeType(synthIntercept.args || testParams.requestPath) ||
+                getMimeType(mimeTypeHint || testParams.requestPath) ||
                 'application/octet-stream';
             const extraHeaders = getExtraResponseHeaders(testParams);
             saveTestResponse(testParams, 'synthetic', '', extraHeaders, synthIntercept);

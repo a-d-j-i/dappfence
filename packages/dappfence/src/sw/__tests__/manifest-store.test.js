@@ -61,9 +61,7 @@ describe('createManifestStore', () => {
             const manifestData = { files: { '/app.js': 'abc123', '/style.css': 'def456' } };
             const normalized = {
                 files: { '/app.js': ['abc123'], '/style.css': ['def456'] },
-                pathRules: [],
-                contentRules: [],
-                mode: 'reporting',
+                encodings: ['utf-8'],
             };
             const { appVersion } = await storage.trustedManifestStore.addLatest(manifestData);
 
@@ -83,8 +81,7 @@ describe('createManifestStore', () => {
             const normalized = {
                 ...manifestData,
                 files: { '/app.js': ['abc'] },
-                pathRules: [],
-                contentRules: [],
+                encodings: ['utf-8'],
             };
             const { appVersion } = await storage.trustedManifestStore.addLatest(manifestData);
 
@@ -100,12 +97,7 @@ describe('createManifestStore', () => {
 
             const latest = await storage.trustedManifestStore.getLatest();
             expect(latest.appVersion).toBe(second.appVersion);
-            expect(latest.manifest).toEqual({
-                files: { '/b.js': ['y'] },
-                pathRules: [],
-                contentRules: [],
-                mode: 'reporting',
-            });
+            expect(latest.manifest).toEqual({ files: { '/b.js': ['y'] }, encodings: ['utf-8'] });
         });
 
         it('prunes entries older than 24h on addLatest', async () => {

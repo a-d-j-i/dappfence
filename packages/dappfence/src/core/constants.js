@@ -65,6 +65,7 @@ export const VERIFICATION_STATUS = Object.freeze({
     NOT_FOUND_IN_MANIFEST: verdict('NOT_FOUND_IN_MANIFEST', true, true),
     DENIED_BY_RULE: verdict('DENIED_BY_RULE', true, true),
     UNSUPPORTED_SIGNATURE: verdict('UNSUPPORTED_SIGNATURE', true, true),
+    ENCODING_MISMATCH: verdict('ENCODING_MISMATCH', true, true),
     ERROR: verdict('ERROR', true, true),
     CONFIG_ERROR: verdict('CONFIG_ERROR', true, true),
 });
@@ -120,6 +121,10 @@ export const isExecutableDestination = (destination) =>
 
 // These string values appear verbatim in signed manifests (contentRules actions).
 // Changing a value is a breaking change — existing signed manifests would reject.
+export const VALIDATOR = Object.freeze({
+    NEXTJS_RSC: 'nextjs-rsc',
+});
+
 export const TRANSFORM = Object.freeze({
     NETLIFY_CDP: 'netlify-cdp',
 });

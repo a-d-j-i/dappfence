@@ -35,6 +35,7 @@ export const normalizeManifestData = (manifestData) => {
         return [];
     };
 
+    const encodings = (manifestData?.encodings ?? ['utf-8']).map((e) => e.toLowerCase());
     const normalizedFiles = {};
     if (typeof manifestData === 'object') {
         // Enhanced format: { "files": { "/path/file.js": "sha256-..." }, "metadata": {...} }
@@ -42,15 +43,16 @@ export const normalizeManifestData = (manifestData) => {
             for (const [filePath, entry] of Object.entries(manifestData.files)) {
                 normalizedFiles[filePath] = toArray(entry);
             }
-        } else {
-            // Legacy flat format: { "/path/file.js": "sha256-..." | { hash: "sha256-..." } }
-            for (const [filePath, entry] of Object.entries(manifestData)) {
-                normalizedFiles[filePath] = toArray(entry);
-            }
+            return { ...manifestData, files: normalizedFiles, encodings };
+        }
+        // Legacy flat format: { "/path/file.js": "sha256-..." | { hash: "sha256-..." } }
+        for (const [filePath, entry] of Object.entries(manifestData)) {
+            normalizedFiles[filePath] = toArray(entry);
         }
     }
     return {
         ...manifestData,
+        encodings,
         files: normalizedFiles,
         pathRules: Array.isArray(manifestData?.pathRules) ? manifestData.pathRules : [],
         contentRules: Array.isArray(manifestData?.contentRules) ? manifestData.contentRules : [],
