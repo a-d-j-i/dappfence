@@ -48,9 +48,9 @@ describe('buildCspHeader', () => {
         );
     });
 
-    it('adds sha256- hashes and strict-dynamic when the pageKey has inline hashes', () => {
+    it('adds hashes and strict-dynamic when the pageKey has inline hashes', () => {
         const manifest = {
-            csp: { pages: { '/': ['abc123', 'def456'] } },
+            csp: { pages: { '/': ['sha256-abc123', 'sha256-def456'] } },
         };
         const header = buildCspHeader(manifest, '/');
         expect(header).toContain("'sha256-abc123'");
@@ -60,7 +60,7 @@ describe('buildCspHeader', () => {
 
     it('does not add strict-dynamic when the pageKey has no inline hashes', () => {
         const manifest = {
-            csp: { pages: { '/other': ['abc123'] } },
+            csp: { pages: { '/other': ['sha256-abc123'] } },
         };
         const header = buildCspHeader(manifest, '/');
         expect(header).not.toContain('sha256-');
@@ -71,7 +71,7 @@ describe('buildCspHeader', () => {
         const manifest = {
             csp: {
                 scriptOrigins: ['https://cdn.example.com'],
-                pages: { '/app': ['hashval'] },
+                pages: { '/app': ['sha256-hashval'] },
             },
         };
         const header = buildCspHeader(manifest, '/app');
@@ -84,8 +84,8 @@ describe('buildCspHeader', () => {
         const manifest = {
             csp: {
                 pages: {
-                    '/page-a': ['hash-a'],
-                    '/page-b': ['hash-b'],
+                    '/page-a': ['sha256-hash-a'],
+                    '/page-b': ['sha256-hash-b'],
                 },
             },
         };
@@ -100,7 +100,7 @@ describe('buildCspHeader', () => {
     it('always includes the report-uri directive', () => {
         expect(buildCspHeader({}, '/')).toContain(REPORT_URI);
         expect(buildCspHeader(null, '/')).toContain(REPORT_URI);
-        expect(buildCspHeader({ csp: { pages: { '/': ['h'] } } }, '/')).toContain(REPORT_URI);
+        expect(buildCspHeader({ csp: { pages: { '/': ['sha256-h'] } } }, '/')).toContain(REPORT_URI);
     });
 
     it('appends token as query param on report-uri when provided', () => {

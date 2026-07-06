@@ -527,7 +527,7 @@ describe('csp action handler', () => {
     it('CSP header includes inline hash when pages entry matches the page key', async () => {
         const { verify } = makeVerifier({
             latestManifest: cspManifest({
-                pages: { '/': ['abc123'] },
+                pages: { '/': ['sha256-abc123'] },
             }),
         });
         const result = await verify(makeNav('/'), makeOkResponse());

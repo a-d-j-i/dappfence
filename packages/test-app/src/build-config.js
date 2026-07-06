@@ -53,11 +53,9 @@ const defaultManifest = {
     additionalFiles: {
         '/.netlify/scripts/cdp': ['.netlify/scripts/cdp.js', '.netlify/scripts/cdp-alt.js'],
     },
-    // sha256 of 'window.__cspAllowedScriptRan = true;'
-    // /csp-test-allowed hashes: will be replaced by extractInlineScriptHashes output (Step 2)
     csp: {
         pages: {
-            '/csp-test-allowed': ['dn3lpVwy3xTrVW9IFWo1OhSyOw1z11oIQpnUeJ0FHzY='],
+            '/csp-test-allowed': { extractFrom: 'index.html' },
             '/csp-test-denied': [],
         },
     },

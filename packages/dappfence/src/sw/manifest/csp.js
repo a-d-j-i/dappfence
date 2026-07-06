@@ -25,7 +25,7 @@ export function buildCspHeader(manifest, pageKey, apiToken) {
     const scriptSrcParts = ["'self'", ...scriptOrigins];
     if (inlineHashes.length) {
         for (const h of inlineHashes) {
-            scriptSrcParts.push(`'sha256-${h}'`);
+            scriptSrcParts.push(`'${h}'`);
         }
         scriptSrcParts.push("'strict-dynamic'");
     }
