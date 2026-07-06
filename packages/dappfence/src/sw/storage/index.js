@@ -18,6 +18,7 @@ import {
     createActiveBlocksStore,
     createSecurityEventsStore,
     createApiTokenStore,
+    createCspViolationsStore,
 } from './security-stores.js';
 
 const logger = createLogger();
@@ -127,6 +128,7 @@ export function createAppStore(db, { userAgent, origin } = {}) {
         activeBlocksStore,
         securityEventsStore,
         apiTokenStore: createApiTokenStore(db),
+        cspViolationsStore: createCspViolationsStore(db),
         recordSecurityViolation,
     };
 }

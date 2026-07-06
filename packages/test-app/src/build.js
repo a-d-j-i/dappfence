@@ -27,6 +27,10 @@ function render(inputPath, outFile, signatureData, args) {
         BUILD_DATE: new Date().toISOString(),
         MANIFEST_FILE: args.manifestFile,
         TARGET_VERSION: 'VERSION: ' + args.version,
+        DOUBLE_ESCAPE_SCRIPT:
+            '<script>self.__next_f.push([0,"<!--<script>"])</script>/\n' +
+            '        window.__bypass_executed = true;\n' +
+            '        </script>',
         ...(args.templateFlags || {}),
     };
     let data = fs.readFileSync(inputPath, 'utf8');
@@ -162,6 +166,7 @@ function buildManifestsData(target, sharedFiles, { targetName, version }) {
             mode: manifest.mode,
             pathRules: manifest.pathRules || [],
             contentRules: manifest.contentRules || null,
+            ...(manifest.csp ? { csp: manifest.csp } : {}),
             metadata: { buildTime: new Date().toISOString(), version, target: targetName },
         };
 

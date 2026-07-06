@@ -92,6 +92,56 @@ describe('normalizeManifestData', () => {
         expect(result.customField).toEqual({ future: true });
         expect(result.files['/app.js']).toEqual(['abc']);
     });
+
+    describe('csp normalization', () => {
+        it('omits csp field when manifest has no csp section', () => {
+            const result = normalizeManifestData({ files: {} });
+            expect(result.csp).toBeUndefined();
+        });
+
+        it('normalizes a well-formed csp section as-is', () => {
+            const input = {
+                files: {},
+                csp: {
+                    scriptOrigins: ['https://cdn.example.com'],
+                    connectOrigins: ['https://api.example.com'],
+                    pages: { '/': ['abc123'] },
+                },
+            };
+            const result = normalizeManifestData(input);
+            expect(result.csp).toEqual(input.csp);
+        });
+
+        it('defaults scriptOrigins to [] when missing', () => {
+            const result = normalizeManifestData({ files: {}, csp: { pages: { '/': [] } } });
+            expect(result.csp.scriptOrigins).toEqual([]);
+        });
+
+        it('defaults connectOrigins to [] when missing', () => {
+            const result = normalizeManifestData({ files: {}, csp: {} });
+            expect(result.csp.connectOrigins).toEqual([]);
+        });
+
+        it('defaults pages to {} when missing', () => {
+            const result = normalizeManifestData({ files: {}, csp: {} });
+            expect(result.csp.pages).toEqual({});
+        });
+
+        it('defaults pages to {} when it is an array', () => {
+            const result = normalizeManifestData({ files: {}, csp: { pages: ['bad'] } });
+            expect(result.csp.pages).toEqual({});
+        });
+
+        it('defaults scriptOrigins to [] when it is not an array', () => {
+            const result = normalizeManifestData({ files: {}, csp: { scriptOrigins: 'bad' } });
+            expect(result.csp.scriptOrigins).toEqual([]);
+        });
+
+        it('ignores a csp value that is not an object', () => {
+            const result = normalizeManifestData({ files: {}, csp: 'bad' });
+            expect(result.csp).toBeUndefined();
+        });
+    });
 });
 
 // ── toPathname ────────────────────────────────────────────────────────────────

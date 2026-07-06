@@ -18,6 +18,7 @@ import { ASSET_TYPE, isExecutableDestination, VERIFICATION_STATUS } from '../../
 import { collectContentRuleActions, isRequestAllowed, resolveManifestKey } from './rules.js';
 import { isFeatureEnabled } from '../../core/utils.js';
 import { toPathname } from './verification.js';
+import { buildCspHeader } from './csp.js';
 import { createLogger } from '../../core/logger.js';
 import { calculateHash } from '../../core/crypto.js';
 import { makeResponseWrapper } from './html/response-wrapper.js';
@@ -138,6 +139,19 @@ export const createVerifier = ({ swContext, appStore, config }, manifestLoader) 
             return { status: VERIFICATION_STATUS.REWRITE };
         },
         transform: handleTransform,
+        csp: async (fileKey, _response, manifestInfo) => {
+            const token = await appStore.apiTokenStore.getApiToken();
+            return {
+                status: VERIFICATION_STATUS.CSP_PROTECTED,
+                headers: {
+                    'Content-Security-Policy': buildCspHeader(
+                        manifestInfo.manifest,
+                        fileKey,
+                        token
+                    ),
+                },
+            };
+        },
         verify: async (fileKey, response, manifestInfo) => {
             const bytes = await response.getBodyBytes();
             if (bytes.status) {

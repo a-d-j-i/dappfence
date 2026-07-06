@@ -19,6 +19,7 @@ export const API = {
     STATUS: API_PREFIX + 'status',
     SECURITY_WARNING: API_PREFIX + 'security-warning',
     SITE_UNBLOCK: API_PREFIX + 'site-unblock',
+    CSP_VIOLATION: API_PREFIX + 'csp-violation',
 };
 
 // --- postMessage type strings (SW ↔ client) ---
@@ -60,6 +61,7 @@ export const VERIFICATION_STATUS = Object.freeze({
     MATCH: verdict('MATCH', false),
     SKIPPED: verdict('SKIPPED', false),
     REWRITE: verdict('REWRITE', false),
+    CSP_PROTECTED: verdict('CSP_PROTECTED', false),
     MISMATCH: verdict('MISMATCH', true),
     NOT_FOUND_IN_MANIFEST: verdict('NOT_FOUND_IN_MANIFEST', true),
     DENIED_BY_RULE: verdict('DENIED_BY_RULE', true),
