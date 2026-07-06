@@ -49,12 +49,28 @@ export const normalizeManifestData = (manifestData) => {
             }
         }
     }
+    const rawCsp = manifestData?.csp;
+    const csp =
+        rawCsp && typeof rawCsp === 'object'
+            ? {
+                  scriptOrigins: Array.isArray(rawCsp.scriptOrigins) ? rawCsp.scriptOrigins : [],
+                  connectOrigins: Array.isArray(rawCsp.connectOrigins) ? rawCsp.connectOrigins : [],
+                  pages:
+                      rawCsp.pages &&
+                      typeof rawCsp.pages === 'object' &&
+                      !Array.isArray(rawCsp.pages)
+                          ? rawCsp.pages
+                          : {},
+              }
+            : undefined;
+
     return {
         ...manifestData,
         files: normalizedFiles,
         pathRules: Array.isArray(manifestData?.pathRules) ? manifestData.pathRules : [],
         contentRules: Array.isArray(manifestData?.contentRules) ? manifestData.contentRules : [],
         mode: manifestData?.mode ?? MODE.REPORTING,
+        csp,
     };
 };
 

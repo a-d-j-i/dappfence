@@ -774,6 +774,31 @@
             </div>
         </main>
 
+        <!-- CSP test scripts: hashes must be in the manifest under /simple-app#scripts -->
+        <script>
+            window.__csp_inline_1 = 'script-1-ran';
+        </script>
+        <script>
+            setTimeout(function () {
+                window.__csp_timer = 'timer-ran';
+            }, 50);
+        </script>
+
+        <!-- RSC emulator: simulates Next.js server-component push pattern -->
+        <script>
+            self.__next_f = [];
+            self.__next_f.push = function (chunk) {
+                window.__rsc_chunks = window.__rsc_chunks || [];
+                window.__rsc_chunks.push(chunk);
+                Array.prototype.push.call(self.__next_f, chunk);
+            };
+        </script>
+        <script>
+            self.__next_f.push([0, { value: 42 }]);
+        </script>
+        <!-- HTML parser double-escape trick, injected via template var so prettier doesn't choke on the inner </script> -->
+        {{DOUBLE_ESCAPE_SCRIPT}}
+
         <script>
             async function _devPost(body) {
                 const res = await fetch('/api/test-config', {

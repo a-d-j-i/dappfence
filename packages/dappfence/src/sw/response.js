@@ -126,7 +126,55 @@ export function createRewriteResponse(response) {
     const contentType =
         response.headers.get('content-type')?.split(';')[0].trim() || 'application/octet-stream';
     return new Response('/* replaced by dappfence */', {
-        headers: { 'content-type': contentType },
+        headers: { 'content-type': contentType, 'Cache-Control': 'no-store' },
+    });
+}
+
+/**
+ * Returns a new Response with additional headers merged in.
+ * Used by the fetch handler to inject policy headers (e.g. CSP) onto a
+ * pass-through response without coupling the injection logic to any specific
+ * header name.
+ *
+ * @param {Response} response
+ * @param {Record<string, string>} headers
+ */
+// Headers whose spec semantics are additive: multiple values are all enforced
+// simultaneously, and the browser takes the intersection (the strictest result).
+// Appending never weakens an existing server-provided value.
+const ADDITIVE_HEADERS = new Set([
+    'content-security-policy',
+    'content-security-policy-report-only',
+    'permissions-policy',
+    'reporting-endpoints',
+    'report-to',
+]);
+
+/**
+ * Returns a new Response with additional headers merged in.
+ *
+ * Headers in `ADDITIVE_HEADERS` (CSP, Permissions-Policy, etc.) are appended
+ * so that multiple values are all enforced simultaneously — adding DappFence's
+ * policy never weakens an existing server-provided value. All other headers use
+ * a set (last write wins).
+ *
+ * @param {Response} response
+ * @param {Record<string, string>} headers
+ * @returns {Response}
+ */
+export function injectResponseHeaders(response, headers) {
+    const merged = new Headers(response.headers);
+    for (const [key, value] of Object.entries(headers)) {
+        if (ADDITIVE_HEADERS.has(key.toLowerCase())) {
+            merged.append(key, value);
+        } else {
+            merged.set(key, value);
+        }
+    }
+    return new Response(response.body, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: merged,
     });
 }
 

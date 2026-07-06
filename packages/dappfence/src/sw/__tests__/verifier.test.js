@@ -38,6 +38,7 @@ function makeSwContext({ clients = [{ id: 'client-1' }] } = {}) {
 function makeAppStore() {
     return {
         verificationResultsStore: { add: vi.fn(() => Promise.resolve()) },
+        apiTokenStore: { getApiToken: vi.fn(() => Promise.resolve('test-token')) },
     };
 }
 
@@ -475,6 +476,72 @@ describe('pipeline action semantics', () => {
         const { verify } = makeVerifier({ latestManifest: transformManifest });
         const result = await verify(makeNav('/'), makeOkResponse());
         expect(result.status).toBe(VERIFICATION_STATUS.MATCH);
+    });
+});
+
+// ── csp action handler ────────────────────────────────────────────────────────
+
+describe('csp action handler', () => {
+    const cspManifest = (cspSection = {}) => ({
+        appVersion: 'v-csp',
+        manifest: {
+            files: {},
+            contentRules: [{ resourceTypes: ['document'], action: { type: 'csp' } }],
+            pathRules: [{ type: 'directory-index' }],
+            csp: cspSection,
+            mode: 'protected',
+        },
+    });
+
+    it('returns CSP_PROTECTED status for a navigation matched by a csp contentRule', async () => {
+        const { verify } = makeVerifier({ latestManifest: cspManifest() });
+        const result = await verify(makeNav('/'), makeOkResponse());
+        expect(result.status).toBe(VERIFICATION_STATUS.CSP_PROTECTED);
+    });
+
+    it('CSP_PROTECTED is non-violating', () => {
+        expect(VERIFICATION_STATUS.CSP_PROTECTED.isViolation).toBe(false);
+    });
+
+    it('CSP_PROTECTED is terminal', () => {
+        expect(VERIFICATION_STATUS.CSP_PROTECTED.isTerminal).toBe(true);
+    });
+
+    it('result carries a Content-Security-Policy header', async () => {
+        const { verify } = makeVerifier({ latestManifest: cspManifest() });
+        const result = await verify(makeNav('/'), makeOkResponse());
+        expect(result.headers).toBeDefined();
+        expect(result.headers['Content-Security-Policy']).toBeDefined();
+    });
+
+    it('CSP header reflects manifest csp.scriptOrigins', async () => {
+        const { verify } = makeVerifier({
+            latestManifest: cspManifest({
+                scriptOrigins: ['https://cdn.example.com'],
+            }),
+        });
+        const result = await verify(makeNav('/'), makeOkResponse());
+        expect(result.headers['Content-Security-Policy']).toContain('https://cdn.example.com');
+    });
+
+    it('CSP header includes inline hash when pages entry matches the page key', async () => {
+        const { verify } = makeVerifier({
+            latestManifest: cspManifest({
+                pages: { '/': ['abc123'] },
+            }),
+        });
+        const result = await verify(makeNav('/'), makeOkResponse());
+        expect(result.headers['Content-Security-Policy']).toContain("'sha256-abc123'");
+        expect(result.headers['Content-Security-Policy']).toContain("'strict-dynamic'");
+    });
+
+    it('does not escalate to historic manifests — csp action is terminal', async () => {
+        const { verify, getManifestHistory, fetchAndStoreManifest } = makeVerifier({
+            latestManifest: cspManifest(),
+        });
+        await verify(makeNav('/'), makeOkResponse());
+        expect(getManifestHistory).not.toHaveBeenCalled();
+        expect(fetchAndStoreManifest).not.toHaveBeenCalled();
     });
 });
 
