@@ -1,9 +1,9 @@
 import { expect, test } from '../sw-fixtures';
 
-// Content of the script whose hash is in the test manifest's csp.pages['/csp-test-allowed'].
-// SHA-256 of this string = dn3lpVwy3xTrVW9IFWo1OhSyOw1z11oIQpnUeJ0FHzY=
-// const CSP_ALLOWED_SCRIPT_CONTENT = 'window.__cspAllowedScriptRan = true;';
-const CSP_ALLOWED_HASH = 'sha256-dn3lpVwy3xTrVW9IFWo1OhSyOw1z11oIQpnUeJ0FHzY=';
+// SHA-256 of the first inline template script body in simple-app.html:
+//   "\n            window.__csp_inline_1 = 'script-1-ran';\n        "
+// Stable as long as the template script content and indentation don't change.
+const CSP_INLINE_1_HASH = 'sha256-vRDxHJVof5XdgQz3jMqMeB0wpoGfCWXTSV60g2VfXx4=';
 
 test.describe('CSP injection', () => {
     test.beforeEach(async ({ page, swHelper }) => {
@@ -48,7 +48,7 @@ test.describe('CSP injection', () => {
         expect(csp).not.toContain('strict-dynamic');
     });
 
-    test('CSP header for path with csp.pages entry includes the hash and strict-dynamic', async ({
+    test('CSP header for path with csp.pages entry includes hashes and strict-dynamic', async ({
         page,
         swHelper,
     }) => {
@@ -61,7 +61,7 @@ test.describe('CSP injection', () => {
         expect(response.fromServiceWorker()).toBeTruthy();
         const csp = response.headers()['content-security-policy'];
         expect(csp).toBeDefined();
-        expect(csp).toContain(`'${CSP_ALLOWED_HASH}'`);
+        expect(csp).toContain(`'${CSP_INLINE_1_HASH}'`);
         expect(csp).toContain("'strict-dynamic'");
     });
 
@@ -162,21 +162,64 @@ test.describe('CSP injection', () => {
         expect(status.stats.totalCspViolations).toBeGreaterThan(0);
     });
 
-    test('inline script with matching hash is allowed by CSP and executes', async ({
+    test('template inline scripts execute when their hashes are in the manifest', async ({
         page,
         swHelper,
     }) => {
-        const allowedScript = '<script>window.__cspAllowedScriptRan = true;</script>';
+        const injectedScript = '<script>window.__injectedRan = true;</script>';
         await swHelper.interceptAndModifyPageContent({
             pattern: '/csp-test-allowed',
             formula: 'remap',
-            args: { file: 'index.html', inject: [allowedScript, '</body>'] },
+            args: { file: 'index.html', inject: [injectedScript, '</body>'] },
         });
         await page.goto('/csp-test-allowed');
-        const ran = await page.evaluate(
-            () => (window as unknown as Record<string, unknown>).__cspAllowedScriptRan
+        // Wait for the 50ms setTimeout template script to fire
+        await page.waitForFunction(
+            () => (window as unknown as Record<string, unknown>).__csp_timer !== undefined,
+            { timeout: 2000 }
         );
-        expect(ran).toBe(true);
+        const result = await page.evaluate(() => {
+            const w = window as unknown as Record<string, unknown>;
+            return {
+                cspInline1: w.__csp_inline_1,
+                cspTimer: w.__csp_timer,
+                rscChunks: w.__rsc_chunks,
+                bypassExecuted: w.__bypass_executed,
+                injectedRan: w.__injectedRan,
+            };
+        });
+        expect(result.cspInline1).toBe('script-1-ran');
+        expect(result.cspTimer).toBe('timer-ran');
+        expect(result.rscChunks).toEqual([[0, { value: 42 }], [0, '<!--<script>']]);
+        expect(result.bypassExecuted).toBe(true);
+        expect(result.injectedRan).toBeUndefined();
+    });
+
+    // TODO(MutationObserver): update this test once the client-side Observer is implemented.
+    // The Observer will detect the blocked RSC push, validate its JSON structure, and call
+    // self.__next_f.push() safely — so rscChunks should then include [0, { value: 99 }].
+    test('injected RSC push script is blocked by CSP when its hash is not in the manifest', async ({
+        page,
+        swHelper,
+    }) => {
+        // Template scripts on /csp-test-allowed have hashes in the manifest — RSC emulator runs.
+        // The injected push has no hash — CSP blocks it, so value:99 never lands in rscChunks.
+        const injectedPush = '<script>self.__next_f.push([0, { value: 99 }]);</script>';
+        await swHelper.interceptAndModifyPageContent({
+            pattern: '/csp-test-allowed',
+            formula: 'remap',
+            args: { file: 'index.html', inject: [injectedPush, '</body>'] },
+        });
+        await page.goto('/csp-test-allowed');
+        await page.waitForFunction(
+            () => Array.isArray((window as unknown as Record<string, unknown>).__rsc_chunks),
+            { timeout: 2000 }
+        );
+        const chunks = await page.evaluate(
+            () => (window as unknown as Record<string, unknown>).__rsc_chunks
+        );
+        // Only the two template RSC pushes ran; the injected value:99 push was blocked.
+        expect(chunks).toEqual([[0, { value: 42 }], [0, '<!--<script>']]);
     });
 
     test('all inline scripts are blocked when the manifest has no hashes for the page', async ({
