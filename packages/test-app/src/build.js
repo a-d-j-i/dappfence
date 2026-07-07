@@ -7,7 +7,10 @@ const fs = require('fs');
 const readline = require('readline');
 const path = require('path');
 const { calculateFileHash, signManifest } = require('@dappfence/manifest-tools');
-const { extractInlineScriptHashes } = require('@dappfence/manifest-tools/inline-scripts');
+const {
+    extractInlineScriptHashes,
+    extractInlineAttrHashes,
+} = require('@dappfence/manifest-tools/inline-scripts');
 const {
     recoverPersonalSign,
     ethereumAddress,
@@ -172,11 +175,18 @@ async function buildManifestsData(target, sharedFiles, { targetName, version, ou
                 } else if (val?.extractFrom) {
                     const htmlFile = path.join(outDir, val.extractFrom);
                     const { hashes, warnings } = await extractInlineScriptHashes(htmlFile);
-                    for (const w of warnings) log(`  Warning (${pagePath}): ${w}`);
+                    const { attrs, warnings: attrWarnings } =
+                        await extractInlineAttrHashes(htmlFile);
+                    for (const w of [...warnings, ...attrWarnings])
+                        log(`  Warning (${pagePath}): ${w}`);
                     log(
-                        `  ${pagePath}: extracted ${hashes.length} inline script hash(es) from ${val.extractFrom}`
+                        `  ${pagePath}: extracted ${hashes.length} script hash(es) and ${attrs.length} on* attr hash(es) from ${val.extractFrom}`
                     );
-                    resolvedPages[pagePath] = hashes;
+                    for (const { name, value, hash } of attrs) {
+                        const preview = value.length > 50 ? value.slice(0, 50) + '...' : value;
+                        log(`    ${name}: "${preview}" → ${hash}`);
+                    }
+                    resolvedPages[pagePath] = { scripts: hashes, attrs: attrs.map((a) => a.hash) };
                 } else {
                     resolvedPages[pagePath] = [];
                 }
@@ -214,7 +224,11 @@ async function buildTarget(targetName, target, { personalSign = false }, version
     copySourceFiles(target, outDir, version);
     renderPages(target, outDir, signatureData, version);
     const sharedFiles = hashOutputFiles(outDir);
-    const manifests = await buildManifestsData(target, sharedFiles, { targetName, version, outDir });
+    const manifests = await buildManifestsData(target, sharedFiles, {
+        targetName,
+        version,
+        outDir,
+    });
     await writeSignedManifest(manifests, outDir, { personalSign, signatureData });
 }
 
