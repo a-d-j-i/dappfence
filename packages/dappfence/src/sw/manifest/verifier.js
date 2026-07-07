@@ -25,16 +25,17 @@ import { handleTransform } from './html/transforms.js';
 
 const logger = createLogger();
 
-// A manifest has decided when it produced a result other than a hash-lookup
-// failure. Hash failures (MISMATCH, NOT_FOUND_IN_MANIFEST) mean the manifest
-// may be stale — escalate to a newer or historic version. Any other outcome
-// — including DENIED_BY_RULE — is a policy decision that must not be
-// bypassed by trying a different manifest version.
+// Statuses that mean "this manifest version couldn't cover this file" or
+// "this manifest is broken" — escalate to a newer or historic version.
+// Any other outcome is a real policy decision that must not be bypassed.
 // null means tryManifest skipped the manifest entirely; keep escalating.
-const manifestDecidedAbout = (result) =>
-    result !== null &&
-    result.status !== VERIFICATION_STATUS.MISMATCH &&
-    result.status !== VERIFICATION_STATUS.NOT_FOUND_IN_MANIFEST;
+const ESCALATE_STATUSES = new Set([
+    VERIFICATION_STATUS.MISMATCH,
+    VERIFICATION_STATUS.NOT_FOUND_IN_MANIFEST,
+    VERIFICATION_STATUS.ERROR,
+    VERIFICATION_STATUS.UNSUPPORTED_SIGNATURE,
+]);
+const manifestDecidedAbout = (result) => result !== null && !ESCALATE_STATUSES.has(result.status);
 
 /**
  * @param {object} deps
@@ -53,23 +54,27 @@ export const createVerifier = ({ swContext, appStore, config }, manifestLoader) 
         : null;
     const clientIdXManifest = new Map();
 
-    const onManifestResult = async (clientId, manifestInfo, result) => {
+    const onManifestResult = (manifestInfo, result) => {
         if (result.status !== VERIFICATION_STATUS.MATCH) {
             logger.log(`❌ ${result.status.description}: ${result.fileKey}`);
             return;
         }
         const icon = result.fileKey.startsWith('/') ? '📄' : '🌐';
         logger.log(`✅ ${icon} ${result.status.description}: ${result.fileKey}`);
-        await verificationResultsStore.add(manifestInfo.appVersion, {
-            ...result,
-            status: result.status.description,
-            timestamp: new Date().toISOString(),
-        });
+        verificationResultsStore
+            .add(manifestInfo.appVersion, {
+                ...result,
+                status: result.status.description,
+                timestamp: new Date().toISOString(),
+            })
+            .catch((err) => logger.error('Error storing verification result:', err));
+    };
+
+    const pinClient = (clientId, manifestInfo) => {
         if (!clientId) {
             return;
         }
         clientIdXManifest.set(clientId, manifestInfo);
-        // Prune stale clients
         swContext
             .matchAllClients()
             .then((activeClients) => {
@@ -189,8 +194,8 @@ export const createVerifier = ({ swContext, appStore, config }, manifestLoader) 
         return { ...lastResult, fileKey };
     };
 
-    // For unpinned clients, escalate from the latest mangfifest → historic manifests → network fetch
-    // on MISMATCH / NOT_FOUND only. All other results (MATCH, DENIED_BY_RULE, etc.) are final.
+    // For unpinned clients, escalate from the latest manifest → historic manifests → network fetch
+    // on MISMATCH / NOT_FOUND / ERROR only. All other results (MATCH, DENIED_BY_RULE, etc.) are final.
     const verifyWithManifestSearch = async (req, response, clientId, latestManifest) => {
         const isNavigation = req.mode === 'navigate';
         if (clientId && !isNavigation) {
@@ -198,7 +203,7 @@ export const createVerifier = ({ swContext, appStore, config }, manifestLoader) 
             if (pinned) {
                 logger.log(`[verifyResponse] clientId=${clientId} (pinned)`);
                 const result = await evaluateManifestRules(req, response, pinned);
-                await onManifestResult(clientId, pinned, result);
+                onManifestResult(pinned, result);
                 return result;
             }
         }
@@ -214,12 +219,13 @@ export const createVerifier = ({ swContext, appStore, config }, manifestLoader) 
             }
             triedVersions.add(manifestInfo.appVersion);
             const result = await evaluateManifestRules(req, response, manifestInfo);
-            await onManifestResult(clientId, manifestInfo, result);
+            onManifestResult(manifestInfo, result);
             return result;
         };
 
         const latestResult = await tryManifest(latestManifest);
         if (manifestDecidedAbout(latestResult)) {
+            pinClient(clientId, latestManifest);
             return latestResult;
         }
 
@@ -229,6 +235,7 @@ export const createVerifier = ({ swContext, appStore, config }, manifestLoader) 
         for (const manifestInfo of await getManifestHistory()) {
             const result = await tryManifest(manifestInfo);
             if (manifestDecidedAbout(result)) {
+                pinClient(clientId, manifestInfo);
                 return result;
             }
             historicResults.push(result);
@@ -236,7 +243,11 @@ export const createVerifier = ({ swContext, appStore, config }, manifestLoader) 
 
         const fetched = await fetchAndStoreManifest();
         const fetchedResult = await tryManifest(fetched);
-        // Prefer freshly fetched result first, then latest, then history in order.
+        if (manifestDecidedAbout(fetchedResult)) {
+            pinClient(clientId, fetched);
+            return fetchedResult;
+        }
+        // Nothing decided — return best available non-null result.
         return [fetchedResult, latestResult, ...historicResults].find((r) => r !== null) ?? fetched;
     };
 
