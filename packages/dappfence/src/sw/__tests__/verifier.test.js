@@ -514,17 +514,15 @@ describe('csp action handler', () => {
         expect(result.headers['Content-Security-Policy']).toBeDefined();
     });
 
-    it('CSP header reflects manifest csp.scriptOrigins', async () => {
-        const { verify } = makeVerifier({
-            latestManifest: cspManifest({
-                scriptOrigins: ['https://cdn.example.com'],
-            }),
-        });
+    it('CSP header uses script-src-elem with * for external scripts', async () => {
+        const { verify } = makeVerifier({ latestManifest: cspManifest() });
         const result = await verify(makeNav('/'), makeOkResponse());
-        expect(result.headers['Content-Security-Policy']).toContain('https://cdn.example.com');
+        expect(result.headers['Content-Security-Policy']).toContain('script-src-elem');
+        expect(result.headers['Content-Security-Policy']).toContain('*');
+        expect(result.headers['Content-Security-Policy']).not.toContain('strict-dynamic');
     });
 
-    it('CSP header includes inline hash when pages entry matches the page key', async () => {
+    it('CSP header includes inline hash and * when pages entry matches the page key', async () => {
         const { verify } = makeVerifier({
             latestManifest: cspManifest({
                 pages: { '/': ['sha256-abc123'] },
@@ -532,7 +530,8 @@ describe('csp action handler', () => {
         });
         const result = await verify(makeNav('/'), makeOkResponse());
         expect(result.headers['Content-Security-Policy']).toContain("'sha256-abc123'");
-        expect(result.headers['Content-Security-Policy']).toContain("'strict-dynamic'");
+        expect(result.headers['Content-Security-Policy']).toContain('*');
+        expect(result.headers['Content-Security-Policy']).not.toContain('strict-dynamic');
     });
 
     it('does not escalate to historic manifests — csp action is terminal', async () => {

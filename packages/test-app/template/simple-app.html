@@ -720,6 +720,57 @@
                             margin: 0 0 var(--space-1);
                         "
                     >
+                        CSP
+                    </p>
+                    <div class="btn-row">
+                        <button class="btn btn--secondary" onclick="devCspTest('/csp-test-denied')">
+                            /csp-test-denied
+                        </button>
+                        <button
+                            class="btn btn--secondary"
+                            onclick="devCspTest('/csp-test-denied', true)"
+                        >
+                            /csp-test-denied + inject
+                        </button>
+                        <button
+                            class="btn btn--secondary"
+                            onclick="devCspTest('/csp-test-allowed')"
+                        >
+                            /csp-test-allowed
+                        </button>
+                        <button
+                            class="btn btn--secondary"
+                            onclick="devCspTest('/csp-test-allowed', true)"
+                        >
+                            /csp-test-allowed + inject
+                        </button>
+                    </div>
+                    <div
+                        id="csp-inject-indicator"
+                        class="alert alert--error"
+                        style="display: none; margin-top: var(--space-1)"
+                    >
+                        <div class="alert__body">
+                            <h4>Injected script executed</h4>
+                            <p>
+                                CSP did not block the unknown inline script — check your manifest
+                                and CSP header.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+
+                <div style="margin-bottom: var(--space-2)">
+                    <p
+                        style="
+                            font-size: 0.78rem;
+                            font-weight: 600;
+                            text-transform: uppercase;
+                            letter-spacing: 0.04em;
+                            color: var(--color-muted);
+                            margin: 0 0 var(--space-1);
+                        "
+                    >
                         Self-protection
                     </p>
                     <div class="btn-row">
@@ -877,6 +928,27 @@
                         'var(--color-danger)'
                     );
                 }
+            }
+
+            const CSP_INJECT_SCRIPT =
+                '<script>' +
+                'window.__cspTestInjected = true;' +
+                'const el = document.getElementById("csp-inject-indicator");' +
+                'if (el) { el.style.display = "block"; }' +
+                '<\/script>';
+
+            async function devCspTest(path, withInject) {
+                const args = withInject
+                    ? { file: 'index.html', inject: [CSP_INJECT_SCRIPT, '</' + 'body' + '>'] }
+                    : { file: 'index.html' };
+                const ok = await _devPost({
+                    intercept: { pattern: path, formula: 'remap', args },
+                });
+                if (!ok) {
+                    _devToast('Error: could not reach /api/test-config', 'var(--color-danger)');
+                    return;
+                }
+                location.href = path;
             }
 
             async function devClearIntercept() {

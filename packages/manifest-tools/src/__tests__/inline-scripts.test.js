@@ -5,7 +5,7 @@ import os from 'os';
 import { createRequire } from 'module';
 
 const _require = createRequire(import.meta.url);
-const { extractInlineScriptHashes } = _require('../inline-scripts');
+const { extractInlineScriptHashes, extractInlineAttrHashes } = _require('../inline-scripts');
 const { calculateStringHash } = _require('../build');
 
 let tmpFiles = [];
@@ -152,5 +152,103 @@ describe('extractInlineScriptHashes', () => {
         expect(hashes).toEqual([]);
         expect(warnings.length).toBe(1);
         expect(warnings[0]).toContain('Unterminated');
+    });
+});
+
+describe('extractInlineAttrHashes', () => {
+    it('returns empty arrays for HTML with no on* attributes', async () => {
+        const p = await writeHtml('<html><body><button class="btn">click</button></body></html>');
+        const { attrs, warnings } = await extractInlineAttrHashes(p);
+        expect(attrs).toEqual([]);
+        expect(warnings).toEqual([]);
+    });
+
+    it('extracts a single onclick attribute', async () => {
+        const value = "doSomething('arg')";
+        const p = await writeHtml(
+            `<html><body><button onclick="${value}">x</button></body></html>`
+        );
+        const { attrs } = await extractInlineAttrHashes(p);
+        expect(attrs).toHaveLength(1);
+        expect(attrs[0].name).toBe('onclick');
+        expect(attrs[0].value).toBe(value);
+        expect(attrs[0].hash).toBe(calculateStringHash(value));
+    });
+
+    it('extracts multiple different on* attributes', async () => {
+        const p = await writeHtml(
+            '<html><body>' +
+                '<button onclick="doA()">a</button>' +
+                '<input onchange="doB()" />' +
+                '</body></html>'
+        );
+        const { attrs } = await extractInlineAttrHashes(p);
+        expect(attrs).toHaveLength(2);
+        expect(attrs.map((a) => a.name)).toEqual(['onclick', 'onchange']);
+    });
+
+    it('deduplicates identical handler values across multiple elements', async () => {
+        const value = 'handler()';
+        const p = await writeHtml(
+            `<html><body>` +
+                `<button onclick="${value}">a</button>` +
+                `<button onclick="${value}">b</button>` +
+                `</body></html>`
+        );
+        const { attrs } = await extractInlineAttrHashes(p);
+        expect(attrs).toHaveLength(1);
+        expect(attrs[0].value).toBe(value);
+    });
+
+    it('does not extract on* patterns inside <script> blocks', async () => {
+        const p = await writeHtml(
+            '<html><body>' +
+                "<script>var onclick = 'foo'; el.onclick = function(){};</script>" +
+                '<button onclick="realHandler()">x</button>' +
+                '</body></html>'
+        );
+        const { attrs } = await extractInlineAttrHashes(p);
+        expect(attrs).toHaveLength(1);
+        expect(attrs[0].value).toBe('realHandler()');
+    });
+
+    it('does not extract on* patterns inside HTML comments', async () => {
+        const p = await writeHtml(
+            '<html><body>' +
+                '<!-- <button onclick="commentHandler()"> -->' +
+                '<button onclick="realHandler()">x</button>' +
+                '</body></html>'
+        );
+        const { attrs } = await extractInlineAttrHashes(p);
+        expect(attrs).toHaveLength(1);
+        expect(attrs[0].value).toBe('realHandler()');
+    });
+
+    it('handles single-quoted attribute values', async () => {
+        const value = 'doSomething()';
+        const p = await writeHtml(
+            `<html><body><button onclick='${value}'>x</button></body></html>`
+        );
+        const { attrs } = await extractInlineAttrHashes(p);
+        expect(attrs).toHaveLength(1);
+        expect(attrs[0].value).toBe(value);
+    });
+
+    it('reports the hash in sha256-<base64> format', async () => {
+        const p = await writeHtml('<html><body><button onclick="x()">y</button></body></html>');
+        const { attrs } = await extractInlineAttrHashes(p);
+        expect(attrs[0].hash).toMatch(/^sha256-[A-Za-z0-9+/]+=*$/);
+    });
+
+    it('throws on UTF-16 BOM', async () => {
+        const p = await writeRaw(Buffer.from([0xff, 0xfe, 0x3c, 0x00]));
+        await expect(extractInlineAttrHashes(p)).rejects.toThrow('UTF-16 BOM');
+    });
+
+    it('throws on non-UTF-8 meta charset', async () => {
+        const p = await writeHtml(
+            '<html><head><meta charset="iso-8859-1"></head><body><button onclick="x()">y</button></body></html>'
+        );
+        await expect(extractInlineAttrHashes(p)).rejects.toThrow('unsupported charset');
     });
 });
