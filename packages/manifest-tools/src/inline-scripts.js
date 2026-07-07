@@ -191,7 +191,7 @@ function parseOnAttrs(html, attrStart) {
  *
  * @param {string} htmlPath - absolute path to an HTML file
  * @returns {Promise<{ hashes: string[], warnings: string[] }>}
- *   hashes: bare base64 SHA-256 (no 'sha256-' prefix), one per inline <script> body
+ *   hashes: 'sha256-<base64>' strings, one per inline <script> body
  *   warnings: non-fatal issues found during parsing
  */
 async function extractInlineScriptHashes(htmlPath) {
