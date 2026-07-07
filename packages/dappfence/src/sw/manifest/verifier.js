@@ -139,18 +139,23 @@ export const createVerifier = ({ swContext, appStore, config }, manifestLoader) 
                 return bytes;
             }
             const { appVersion, manifest } = manifestInfo;
-            const fileHash = await calculateHash(bytes.value);
+            const actualHash = await calculateHash(bytes.value);
             const expectedHashes = manifest.files[fileKey] ?? [];
             logger.log(
-                `Using manifest ${appVersion} for ${fileKey} hash ${fileHash} expected: ${expectedHashes.join(', ')}`
+                `Using manifest ${appVersion} for ${fileKey} hash ${actualHash} expected: ${expectedHashes.join(', ')}`
             );
             if (expectedHashes.length === 0) {
                 return null;
             }
-            const status = expectedHashes.includes(fileHash)
-                ? VERIFICATION_STATUS.MATCH
-                : VERIFICATION_STATUS.MISMATCH;
-            return { status, expectedHashes, actualHash: fileHash };
+            if (expectedHashes.includes(actualHash)) {
+                return { status: VERIFICATION_STATUS.MATCH, expectedHashes, actualHash };
+            }
+            return {
+                status: VERIFICATION_STATUS.MISMATCH,
+                keepTryingActions: true,
+                expectedHashes,
+                actualHash,
+            };
         },
     };
 
@@ -173,11 +178,12 @@ export const createVerifier = ({ swContext, appStore, config }, manifestLoader) 
             if (r === null) {
                 continue;
             }
-            if (r.status.isTerminal) {
-                logger.log(`❌ result: ${r.status.description}: ${fileKey}`);
-                return { ...r, fileKey };
+            if (r.keepTryingActions) {
+                lastResult = r;
+                continue;
             }
-            lastResult = r;
+            logger.log(`❌ result: ${r.status.description}: ${fileKey}`);
+            return { ...r, fileKey };
         }
         logger.log(`❌ lastResult: ${lastResult.status.description}: ${fileKey}`);
         return { ...lastResult, fileKey };
