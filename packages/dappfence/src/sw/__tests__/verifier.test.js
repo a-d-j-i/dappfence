@@ -503,8 +503,10 @@ describe('csp action handler', () => {
         expect(VERIFICATION_STATUS.CSP_PROTECTED.isViolation).toBe(false);
     });
 
-    it('CSP_PROTECTED is terminal', () => {
-        expect(VERIFICATION_STATUS.CSP_PROTECTED.isTerminal).toBe(true);
+    it('CSP_PROTECTED is terminal — handler result does not set keepTryingActions', async () => {
+        const { verify } = makeVerifier({ latestManifest: cspManifest() });
+        const result = await verify(makeNav('/'), makeOkResponse());
+        expect(result.keepTryingActions).toBeFalsy();
     });
 
     it('result carries a Content-Security-Policy header', async () => {
