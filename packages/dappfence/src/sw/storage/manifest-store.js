@@ -49,6 +49,14 @@ export const normalizeManifestData = (manifestData) => {
             }
         }
     }
+    const normalizePageEntry = (entry) => {
+        if (Array.isArray(entry)) return { scripts: entry, attrs: [] };
+        return {
+            scripts: Array.isArray(entry?.scripts) ? entry.scripts : [],
+            attrs: Array.isArray(entry?.attrs) ? entry.attrs : [],
+        };
+    };
+
     const rawCsp = manifestData?.csp;
     const csp =
         rawCsp && typeof rawCsp === 'object'
@@ -59,7 +67,12 @@ export const normalizeManifestData = (manifestData) => {
                       rawCsp.pages &&
                       typeof rawCsp.pages === 'object' &&
                       !Array.isArray(rawCsp.pages)
-                          ? rawCsp.pages
+                          ? Object.fromEntries(
+                                Object.entries(rawCsp.pages).map(([k, v]) => [
+                                    k,
+                                    normalizePageEntry(v),
+                                ])
+                            )
                           : {},
               }
             : undefined;

@@ -3,7 +3,7 @@
  * Orchestrates security checks and app service worker integration
  */
 
-import { createBlockResponse, createRewriteResponse, injectResponseHeaders } from './response.js';
+import { createBlockResponse, createCspPageResponse, createRewriteResponse } from './response.js';
 import { createLogger } from '../core/logger.js';
 import { API_PREFIX, MODE, VERIFICATION_STATUS } from '../core/constants.js';
 
@@ -66,21 +66,21 @@ export function createSecurityFetchHandler({
 
     async function applyIntegrityPolicy(ctx, request, response, clientId) {
         logger.log('Verifying security-critical asset:', request.url);
-        const verificationResult = await ctx.verifyResponse(request, response, clientId);
+        const { result, wrappedResponse } = await ctx.verifyResponse(request, response, clientId);
+        if (result.status === VERIFICATION_STATUS.REWRITE) {
+            return createRewriteResponse(wrappedResponse.asResponse());
+        }
+        if (result.status === VERIFICATION_STATUS.CSP_PROTECTED) {
+            const token = await appStore.apiTokenStore.getApiToken();
+            return createCspPageResponse(result.csp, wrappedResponse, token);
+        }
         let mustBlock = false;
-        if (
-            verificationResult.status !== VERIFICATION_STATUS.MATCH &&
-            verificationResult.status !== VERIFICATION_STATUS.SKIPPED
-        ) {
+        if (result.status.isViolation) {
             mustBlock = await appStore.recordSecurityViolation({
-                ...verificationResult,
+                ...result,
                 url: request.url,
                 httpStatus: response.status,
             });
-        }
-
-        if (verificationResult.status === VERIFICATION_STATUS.REWRITE) {
-            return createRewriteResponse(response);
         }
         if (ctx.mode === MODE.PROTECTED && mustBlock) {
             // Navigation requests get the warning inline via createBlockResponse;
@@ -90,10 +90,7 @@ export function createSecurityFetchHandler({
             }
             return createBlockResponse(request, locationHref);
         }
-        if (verificationResult.headers) {
-            return injectResponseHeaders(response, verificationResult.headers);
-        }
-        return response;
+        return wrappedResponse.asResponse();
     }
 
     async function handleRequest(event, callChildHandlers) {

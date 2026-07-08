@@ -50,6 +50,10 @@ const STATUS_LOG = {
         `SECURITY ALERT: Security configuration error!`,
         `File: ${d.fileKey ?? 'N/A'}`,
     ],
+    PREAMBLE_VIOLATION: (d) => [
+        `SECURITY ALERT: Navigation response has invalid HTML preamble!`,
+        `File: ${d.fileKey ?? 'N/A'}`,
+    ],
 };
 
 export function createAppStore(db, { userAgent, origin } = {}) {

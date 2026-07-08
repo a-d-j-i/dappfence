@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import securityWarningHtml from '../../templates/security-warning.html?raw';
 import { createBlockResponse, createRedirectResponse, injectResponseHeaders } from '../response.js';
+import { makeResponseWrapper } from '../manifest/html/response-wrapper.js';
 
 // `isFeatureEnabled` reads the Vite-injected `__FEATURES__` define, which
 // isn't populated in the vitest runtime — stub it so `response.js`'s
@@ -140,5 +141,114 @@ describe('injectResponseHeaders', () => {
         const value = result.headers.get(headerName);
         expect(value).toContain('existing-value');
         expect(value).toContain('injected-value');
+    });
+});
+
+// --- response-wrapper inject-at-head ---
+
+function makeHtmlResponse(html, headers = {}) {
+    return new Response(html, {
+        status: 200,
+        headers: { 'Content-Type': 'text/html; charset=utf-8', ...headers },
+    });
+}
+
+async function readBody(response) {
+    return new TextDecoder().decode(await response.arrayBuffer());
+}
+
+async function injectAndRead(html, injectionBytes, extraHeaders = {}) {
+    const wrapper = makeResponseWrapper(makeHtmlResponse(html, extraHeaders));
+    const violation = await wrapper.scanPreamble();
+    if (violation) {
+        return violation;
+    }
+    wrapper.injectAtHead(injectionBytes);
+    return { response: wrapper.asResponse() };
+}
+
+describe('makeResponseWrapper — injectAtHead', () => {
+    const injection = new TextEncoder().encode('<script id="injected"></script>');
+
+    it('injects immediately after <head>', async () => {
+        const html = '<!DOCTYPE html><html><head><title>App</title></head><body></body>';
+        const { response } = await injectAndRead(html, injection);
+        const body = await readBody(response);
+        expect(body).toBe(
+            '<!DOCTYPE html><html><head><script id="injected"></script><title>App</title></head><body></body>'
+        );
+    });
+
+    it('injects after <head> with attributes', async () => {
+        const html = '<!DOCTYPE html><head prefix="og: ...">';
+        const { response } = await injectAndRead(html, injection);
+        const body = await readBody(response);
+        expect(body).toContain(
+            '<!DOCTYPE html><head prefix="og: ..."><script id="injected"></script>'
+        );
+    });
+
+    it('preserves response status and non-length headers', async () => {
+        const html = '<!DOCTYPE html><head></head>';
+        const wrapper = makeResponseWrapper(
+            new Response(html, {
+                status: 200,
+                headers: { 'Content-Type': 'text/html', 'X-Custom': 'keep-me' },
+            })
+        );
+        await wrapper.scanPreamble();
+        wrapper.injectAtHead(injection);
+        const response = wrapper.asResponse();
+        expect(response.status).toBe(200);
+        expect(response.headers.get('X-Custom')).toBe('keep-me');
+    });
+
+    it('adjusts Content-Length by the size of the injection', async () => {
+        const html = '<!DOCTYPE html><head></head>';
+        const { response } = await injectAndRead(html, injection, {
+            'Content-Length': String(html.length),
+        });
+        expect(response.headers.get('Content-Length')).toBe(String(html.length + injection.length));
+    });
+
+    it('leaves Content-Length absent when the original response had none', async () => {
+        const html = '<!DOCTYPE html><head></head>';
+        const { response } = await injectAndRead(html, injection);
+        expect(response.headers.get('Content-Length')).toBeNull();
+    });
+
+    it('works when the preamble spans multiple chunks', async () => {
+        const full = '<!DOCTYPE html><html lang="en"><head><title>T</title></head>';
+        const chunks = [];
+        for (let i = 0; i < full.length; i += 10) {
+            chunks.push(new TextEncoder().encode(full.slice(i, i + 10)));
+        }
+        const stream = new ReadableStream({
+            start(controller) {
+                for (const c of chunks) {
+                    controller.enqueue(c);
+                }
+                controller.close();
+            },
+        });
+        const wrapper = makeResponseWrapper(new Response(stream, { status: 200 }));
+        await wrapper.scanPreamble();
+        wrapper.injectAtHead(injection);
+        const body = await readBody(wrapper.asResponse());
+        expect(body).toContain('<head><script id="injected"></script><title>T</title>');
+    });
+
+    it('returns violation for a missing DOCTYPE', async () => {
+        const html = '<html><head></head></html>';
+        const result = await injectAndRead(html, injection);
+        expect(result.status).toBeDefined();
+        expect(result.response).toBeUndefined();
+    });
+
+    it('returns violation when the stream ends before <head>', async () => {
+        const html = '<!DOCTYPE html><html lang="en">';
+        const result = await injectAndRead(html, injection);
+        expect(result.status).toBeDefined();
+        expect(result.response).toBeUndefined();
     });
 });

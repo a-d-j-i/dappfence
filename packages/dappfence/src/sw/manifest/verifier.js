@@ -18,7 +18,6 @@ import { ASSET_TYPE, isExecutableDestination, VERIFICATION_STATUS } from '../../
 import { collectContentRuleActions, isRequestAllowed, resolveManifestKey } from './rules.js';
 import { isFeatureEnabled } from '../../core/utils.js';
 import { toPathname } from './verification.js';
-import { buildCspHeader } from './csp.js';
 import { createLogger } from '../../core/logger.js';
 import { calculateHash } from '../../core/crypto.js';
 import { makeResponseWrapper } from './html/response-wrapper.js';
@@ -125,6 +124,31 @@ export const createVerifier = ({ swContext, appStore, config }, manifestLoader) 
         return false;
     };
 
+    const handleVerify = async (fileKey, response, manifestInfo) => {
+        const bytes = await response.getBodyBytes();
+        if (bytes.status) {
+            return bytes;
+        }
+        const { appVersion, manifest } = manifestInfo;
+        const actualHash = await calculateHash(bytes.value);
+        const expectedHashes = manifest.files[fileKey] ?? [];
+        logger.log(
+            `Using manifest ${appVersion} for ${fileKey} hash ${actualHash} expected: ${expectedHashes.join(', ')}`
+        );
+        if (expectedHashes.length === 0) {
+            return null;
+        }
+        if (expectedHashes.includes(actualHash)) {
+            return { status: VERIFICATION_STATUS.MATCH, expectedHashes, actualHash };
+        }
+        return {
+            status: VERIFICATION_STATUS.MISMATCH,
+            keepTryingActions: true,
+            expectedHashes,
+            actualHash,
+        };
+    };
+
     const ACTION_HANDLERS = {
         allow: async (fileKey) => {
             logger.log(`⏭️  Skipping (allow): ${fileKey}`);
@@ -139,43 +163,24 @@ export const createVerifier = ({ swContext, appStore, config }, manifestLoader) 
             return { status: VERIFICATION_STATUS.REWRITE };
         },
         transform: handleTransform,
-        csp: async (fileKey, _response, manifestInfo) => {
-            const token = await appStore.apiTokenStore.getApiToken();
+        csp: async (fileKey, response, manifestInfo, action, req) => {
+            if (req.mode !== 'navigate') {
+                return handleVerify(fileKey, response, manifestInfo);
+            }
+            const violation = await response.scanPreamble();
+            if (violation && violation.status) {
+                return violation;
+            }
+            const csp = manifestInfo.manifest?.csp;
             return {
                 status: VERIFICATION_STATUS.CSP_PROTECTED,
-                headers: {
-                    'Content-Security-Policy': buildCspHeader(
-                        manifestInfo.manifest,
-                        fileKey,
-                        token
-                    ),
+                csp: {
+                    hashes: csp?.pages?.[fileKey] ?? { scripts: [], attrs: [] },
+                    connectOrigins: csp?.connectOrigins ?? [],
                 },
             };
         },
-        verify: async (fileKey, response, manifestInfo) => {
-            const bytes = await response.getBodyBytes();
-            if (bytes.status) {
-                return bytes;
-            }
-            const { appVersion, manifest } = manifestInfo;
-            const actualHash = await calculateHash(bytes.value);
-            const expectedHashes = manifest.files[fileKey] ?? [];
-            logger.log(
-                `Using manifest ${appVersion} for ${fileKey} hash ${actualHash} expected: ${expectedHashes.join(', ')}`
-            );
-            if (expectedHashes.length === 0) {
-                return null;
-            }
-            if (expectedHashes.includes(actualHash)) {
-                return { status: VERIFICATION_STATUS.MATCH, expectedHashes, actualHash };
-            }
-            return {
-                status: VERIFICATION_STATUS.MISMATCH,
-                keepTryingActions: true,
-                expectedHashes,
-                actualHash,
-            };
-        },
+        verify: handleVerify,
     };
 
     const evaluateManifestRules = async (req, response, manifestInfo) => {
@@ -193,7 +198,7 @@ export const createVerifier = ({ swContext, appStore, config }, manifestLoader) 
                 logger.warn(`Unknown action type: ${action.type}`);
                 continue;
             }
-            const r = await handler(fileKey, response, manifestInfo, action);
+            const r = await handler(fileKey, response, manifestInfo, action, req);
             if (r === null) {
                 continue;
             }
@@ -267,22 +272,20 @@ export const createVerifier = ({ swContext, appStore, config }, manifestLoader) 
 
     const verifyResponse = async (req, response, clientId, latestManifest) => {
         const fileKey = toPathname(req.url, locationHref);
-        // fileKey from fields overrides the default (resolveManifestKey may differ);
-        // assetType is last so it always wins.
-        const result = (fields) => ({
-            fileKey,
-            url: req.url,
-            ...fields,
-            assetType: ASSET_TYPE.ASSET,
+        const wrappedResponse = makeResponseWrapper(response);
+
+        const makeResult = (fields) => ({
+            result: { fileKey, url: req.url, ...fields, assetType: ASSET_TYPE.ASSET },
+            wrappedResponse,
         });
 
         if (!response) {
             logger.log(`⏭️  Error: null response`);
-            return result({ status: VERIFICATION_STATUS.ERROR });
+            return makeResult({ status: VERIFICATION_STATUS.ERROR });
         }
 
         if (fileKey === manifestFileKey) {
-            return await storeManifestFromResponse(response.clone());
+            return { result: await storeManifestFromResponse(response.clone()), wrappedResponse };
         }
 
         // Allow rule pre-check: if the manifest explicitly allows this request,
@@ -291,19 +294,18 @@ export const createVerifier = ({ swContext, appStore, config }, manifestLoader) 
         // cross-origin embeds/objects on CDNs that don't support CORS).
         if (isRequestAllowed(req, locationHref, latestManifest?.manifest)) {
             logger.log(`⏭️  Skipping (allow rule): ${req.url}`);
-            return result({ status: VERIFICATION_STATUS.SKIPPED });
+            return makeResult({ status: VERIFICATION_STATUS.SKIPPED });
         }
-        const wrappedResponse = makeResponseWrapper(response);
         const shouldSkip = shouldSkipVerification(req, wrappedResponse);
         if (shouldSkip) {
             logger.log(`⏭️  ${shouldSkip.description}: ${fileKey}`);
-            return result({ status: shouldSkip });
+            return makeResult({ status: shouldSkip });
         }
 
         logger.log(
             `[verifyResponse] req.method=${req.method} clientId=${clientId} isNavigation=${req.mode === 'navigate'}`
         );
-        return result(
+        return makeResult(
             await verifyWithManifestSearch(req, wrappedResponse, clientId, latestManifest)
         );
     };
