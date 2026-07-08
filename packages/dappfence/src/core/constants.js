@@ -68,6 +68,7 @@ export const VERIFICATION_STATUS = Object.freeze({
     UNSUPPORTED_SIGNATURE: verdict('UNSUPPORTED_SIGNATURE', true),
     ERROR: verdict('ERROR', true),
     CONFIG_ERROR: verdict('CONFIG_ERROR', true),
+    PREAMBLE_VIOLATION: verdict('PREAMBLE_VIOLATION', true),
 });
 
 export const ASSET_TYPE = {

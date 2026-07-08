@@ -60,13 +60,46 @@ function makeSubResource(path = '/app.js') {
     };
 }
 
+function makeBodyStream(data) {
+    return new ReadableStream({
+        start(controller) {
+            controller.enqueue(data);
+            controller.close();
+        },
+    });
+}
+
 function makeOkResponse() {
+    const data = new Uint8Array(8);
     const r = {
         ok: true,
         type: 'basic',
+        get body() {
+            return makeBodyStream(data);
+        },
+        headers: new Headers(),
+        status: 200,
+        statusText: 'OK',
         arrayBuffer: vi.fn(() => Promise.resolve(new ArrayBuffer(8))),
     };
     r.clone = vi.fn(() => makeOkResponse());
+    return r;
+}
+
+function makeHtmlResponse() {
+    const html = '<!DOCTYPE html><html><head><meta charset="utf-8"></head><body></body></html>';
+    const data = new TextEncoder().encode(html);
+    const r = {
+        ok: true,
+        type: 'basic',
+        get body() {
+            return makeBodyStream(data);
+        },
+        headers: new Headers({ 'content-type': 'text/html' }),
+        status: 200,
+        statusText: 'OK',
+    };
+    r.clone = vi.fn(() => makeHtmlResponse());
     return r;
 }
 
@@ -90,8 +123,10 @@ function makeVerifier({
 
     const { verifyResponse } = createVerifier({ swContext, appStore, config }, manifestLoader);
 
-    const verify = (req, response, clientId = 'client-1') =>
-        verifyResponse(req, response, clientId, latestManifest);
+    const verify = async (req, response, clientId = 'client-1') => {
+        const { result } = await verifyResponse(req, response, clientId, latestManifest);
+        return result;
+    };
 
     return {
         verifyResponse,
@@ -235,7 +270,7 @@ describe('step 2 — latestManifest', () => {
         // Second request (sub-resource, non-navigation) should use the pin without escalating.
         fetchAndStoreManifest.mockClear();
         const response2 = makeOkResponse();
-        const result = await verifyResponse(
+        const { result } = await verifyResponse(
             makeSubResource('/index.html'),
             response2,
             'client-1',
@@ -266,7 +301,7 @@ describe('step 1 — pinned client', () => {
         getManifestHistory.mockClear();
 
         // Sub-resource should use the pin directly.
-        const result = await verifyResponse(
+        const { result } = await verifyResponse(
             makeSubResource('/index.html'),
             makeOkResponse(),
             'client-1',
@@ -286,7 +321,7 @@ describe('step 1 — pinned client', () => {
         // applyAction returns null on verify failure so the pipeline falls through
         // to NOT_FOUND_IN_MANIFEST — still a violation, just not escalated.
         calculateHash.mockResolvedValueOnce('sha256-tampered');
-        const result = await verifyResponse(
+        const { result } = await verifyResponse(
             makeSubResource('/index.html'),
             makeOkResponse(),
             'client-1',
@@ -302,7 +337,7 @@ describe('step 1 — pinned client', () => {
         fetchAndStoreManifest.mockClear();
 
         // Navigation bypasses pin and re-evaluates (step 2 passes here).
-        const result = await verifyResponse(makeNav('/'), makeOkResponse(), 'client-1', INFO_V1);
+        const { result } = await verifyResponse(makeNav('/'), makeOkResponse(), 'client-1', INFO_V1);
         expect(result.status).toBe(VERIFICATION_STATUS.MATCH);
     });
 });
@@ -344,7 +379,7 @@ describe('step 3 — historic manifests', () => {
         await verifyResponse(makeNav('/'), makeOkResponse(), 'client-1', wrongManifest);
         fetchAndStoreManifest.mockClear();
 
-        const result = await verifyResponse(
+        const { result } = await verifyResponse(
             makeSubResource('/index.html'),
             makeOkResponse(),
             'client-1',
@@ -386,7 +421,7 @@ describe('step 4 — fetchAndStoreManifest (terminal)', () => {
                 fileKey: '/integrity-manifest.json',
             })
         );
-        const { verifyResponse: verify } = createVerifier(
+        const { verifyResponse } = createVerifier(
             {
                 swContext: makeSwContext(),
                 appStore: makeAppStore(),
@@ -394,7 +429,7 @@ describe('step 4 — fetchAndStoreManifest (terminal)', () => {
             },
             { fetchAndStoreManifest, getManifestHistory: vi.fn(() => Promise.resolve([])) }
         );
-        const result = await verify(makeNav('/'), makeOkResponse(), 'client-1', {
+        const { result } = await verifyResponse(makeNav('/'), makeOkResponse(), 'client-1', {
             appVersion: 'v-stale',
             manifest: MANIFEST_V2,
         });
@@ -411,7 +446,7 @@ describe('step 4 — fetchAndStoreManifest (terminal)', () => {
         await verifyResponse(makeNav('/'), makeOkResponse(), 'client-1', staleInfo);
         fetch1.mockClear();
 
-        const result = await verifyResponse(
+        const { result } = await verifyResponse(
             makeSubResource('/index.html'),
             makeOkResponse(),
             'client-1',
@@ -479,15 +514,9 @@ describe('pipeline action semantics', () => {
     });
 });
 
-// ── csp action + layered CSP headers ─────────────────────────────────────────
-//
-// `csp` action is a per-route opt-out of hash-verify for SSR/dynamic routes:
-// the handler returns CSP_PROTECTED (distinct from SKIPPED, which means
-// "hands off entirely"). CSP headers are layered on document responses by
-// layerCsp when the manifest defines a `csp` section AND the decision is
-// not SKIPPED. See verifier.js § layerCsp.
+// ── csp action handler ────────────────────────────────────────────────────────
 
-describe('csp action + layered CSP headers', () => {
+describe('csp action handler', () => {
     const cspManifest = (cspSection = {}) => ({
         appVersion: 'v-csp',
         manifest: {
@@ -499,9 +528,9 @@ describe('csp action + layered CSP headers', () => {
         },
     });
 
-    it('csp action returns CSP_PROTECTED (route opts out of hash-verify but keeps CSP)', async () => {
+    it('returns CSP_PROTECTED status for a navigation matched by a csp contentRule', async () => {
         const { verify } = makeVerifier({ latestManifest: cspManifest() });
-        const result = await verify(makeNav('/'), makeOkResponse());
+        const result = await verify(makeNav('/'), makeHtmlResponse());
         expect(result.status).toBe(VERIFICATION_STATUS.CSP_PROTECTED);
     });
 
@@ -509,55 +538,41 @@ describe('csp action + layered CSP headers', () => {
         expect(VERIFICATION_STATUS.CSP_PROTECTED.isViolation).toBe(false);
     });
 
-    it('csp action is terminal — result does not set keepTryingActions', async () => {
+    it('CSP_PROTECTED is terminal — handler result does not set keepTryingActions', async () => {
         const { verify } = makeVerifier({ latestManifest: cspManifest() });
-        const result = await verify(makeNav('/'), makeOkResponse());
+        const result = await verify(makeNav('/'), makeHtmlResponse());
         expect(result.keepTryingActions).toBeFalsy();
     });
 
-    it('document result carries a Content-Security-Policy header (Headers instance)', async () => {
+    it('result carries a csp data object', async () => {
         const { verify } = makeVerifier({ latestManifest: cspManifest() });
-        const result = await verify(makeNav('/'), makeOkResponse());
-        expect(result.headers).toBeInstanceOf(Headers);
-        expect(result.headers.get('Content-Security-Policy')).toBeTruthy();
+        const result = await verify(makeNav('/'), makeHtmlResponse());
+        expect(result.csp).toBeDefined();
+        expect(result.csp.hashes).toBeDefined();
+        expect(result.csp.connectOrigins).toBeDefined();
     });
 
-    it('layered CSP surfaces a per-response nonce', async () => {
+    it('csp.hashes defaults to empty arrays when manifest has no pages entry', async () => {
         const { verify } = makeVerifier({ latestManifest: cspManifest() });
-        const result = await verify(makeNav('/'), makeOkResponse());
-        expect(result.nonce).toEqual(expect.any(String));
-        expect(result.nonce.length).toBeGreaterThan(0);
-        expect(result.headers.get('Content-Security-Policy')).toContain(`'nonce-${result.nonce}'`);
+        const result = await verify(makeNav('/'), makeHtmlResponse());
+        expect(result.csp.hashes).toEqual({ scripts: [], attrs: [] });
     });
 
-    it('CSP header uses script-src-elem with nonce + * for external scripts', async () => {
-        const { verify } = makeVerifier({ latestManifest: cspManifest() });
-        const result = await verify(makeNav('/'), makeOkResponse());
-        const csp = result.headers.get('Content-Security-Policy');
-        expect(csp).toContain('script-src-elem');
-        expect(csp).toContain(`'nonce-${result.nonce}'`);
-        expect(csp).toContain('*');
-        expect(csp).not.toContain('strict-dynamic');
-    });
-
-    it('CSP header includes inline hash and * when pages entry matches the page key', async () => {
+    it('csp.hashes includes inline scripts when pages entry matches the page key', async () => {
         const { verify } = makeVerifier({
             latestManifest: cspManifest({
-                pages: { '/': ['sha256-abc123'] },
+                pages: { '/': { scripts: ['sha256-abc123'], attrs: [] } },
             }),
         });
-        const result = await verify(makeNav('/'), makeOkResponse());
-        const csp = result.headers.get('Content-Security-Policy');
-        expect(csp).toContain("'sha256-abc123'");
-        expect(csp).toContain('*');
-        expect(csp).not.toContain('strict-dynamic');
+        const result = await verify(makeNav('/'), makeHtmlResponse());
+        expect(result.csp.hashes.scripts).toContain('sha256-abc123');
     });
 
     it('does not escalate to historic manifests — csp action is terminal', async () => {
         const { verify, getManifestHistory, fetchAndStoreManifest } = makeVerifier({
             latestManifest: cspManifest(),
         });
-        await verify(makeNav('/'), makeOkResponse());
+        await verify(makeNav('/'), makeHtmlResponse());
         expect(getManifestHistory).not.toHaveBeenCalled();
         expect(fetchAndStoreManifest).not.toHaveBeenCalled();
     });
