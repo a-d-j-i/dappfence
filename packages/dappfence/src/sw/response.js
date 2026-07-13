@@ -281,17 +281,28 @@ export function buildCspHeader({ scripts, attrs }, connectOrigins, apiToken) {
 }
 
 /**
- * Injects the CSP hashes script tag into the HTML head and returns a response
- * with the Content-Security-Policy header set.
+ * Injects the CSP hashes script tag and the dappfence bootstrap script tag into
+ * the HTML head, and returns a response with the Content-Security-Policy header set.
+ *
+ * The dappfence script tag is injected unconditionally so that a compromised server
+ * that strips the tag from the original HTML cannot disable client-side protection.
  *
  * @param {{ hashes, connectOrigins }} csp - CSP data from the verification result
  * @param {object} wrappedResponse - Response wrapper with `.injectAtHead` and `.asResponse`
  * @param {string|null} apiToken
+ * @param {string} swHref - The SW's own script URL, injected as-is into the page
  * @returns {Response}
  */
-export function createCspPageResponse({ hashes, connectOrigins }, wrappedResponse, apiToken) {
+export function createCspPageResponse(
+    { hashes, connectOrigins },
+    wrappedResponse,
+    apiToken,
+    swHref
+) {
+    const encoder = new TextEncoder();
     const hashesTag = `<script type="application/json" id="__df_csp_hashes">${JSON.stringify(hashes)}</script>`;
-    wrappedResponse.injectAtHead(new TextEncoder().encode(hashesTag));
+    wrappedResponse.injectAtHead(encoder.encode(hashesTag));
+    wrappedResponse.injectAtHead(encoder.encode(`<script src="${swHref}"></script>`));
     return injectResponseHeaders(wrappedResponse.asResponse(), {
         'Content-Security-Policy': buildCspHeader(hashes, connectOrigins, apiToken),
     });

@@ -266,13 +266,19 @@ export async function initializeClient() {
         return;
     }
 
+    // If the SW injected __df_csp_hashes, it is already active and controlling this page.
+    // Skip initialization
+    if (document.getElementById('__df_csp_hashes')) {
+        // const workerUrl = navigator.serviceWorker.controller?.scriptURL;
+
+        logger.log('CSP-protected page detected, skipping full init');
+        return;
+    }
+
     // Store the original register function BEFORE monkey patching
     originalRegister = navigator.serviceWorker.register.bind(navigator.serviceWorker);
 
-    // Monkey patch SW register early
     await installClientHooks(config);
-
-    // Set up a security message listener for intercepting violations early, even before SW claims control
     setupSecurityMessageListener();
     setupCspViolationListener();
 

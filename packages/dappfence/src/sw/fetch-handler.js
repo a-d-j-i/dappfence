@@ -72,7 +72,7 @@ export function createSecurityFetchHandler({
         }
         if (result.status === VERIFICATION_STATUS.CSP_PROTECTED) {
             const token = await appStore.apiTokenStore.getApiToken();
-            return createCspPageResponse(result.csp, wrappedResponse, token);
+            return createCspPageResponse(result.csp, wrappedResponse, token, locationHref);
         }
         let mustBlock = false;
         if (result.status.isViolation) {

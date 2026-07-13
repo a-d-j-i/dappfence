@@ -1,7 +1,7 @@
 import { expect, test } from '../sw-fixtures';
 
 // SHA-256 of the first inline template script body in simple-app.html:
-//   "\n            window.__csp_inline_1 = 'script-1-ran';\n        "
+//   "\n window.__csp_inline_1 = 'script-1-ran';\n        "
 // Stable as long as the template script content and indentation don't change.
 const CSP_INLINE_1_HASH = 'sha256-vRDxHJVof5XdgQz3jMqMeB0wpoGfCWXTSV60g2VfXx4=';
 
@@ -47,20 +47,6 @@ test.describe('CSP injection', () => {
         expect(csp).toBeDefined();
         expect(csp).not.toContain('sha256-');
         expect(csp).not.toContain('strict-dynamic');
-    });
-
-    test('CSP header for path with csp.pages entry includes hashes', async ({ page, swHelper }) => {
-        await swHelper.interceptAndModifyPageContent({
-            pattern: '/csp-test-allowed',
-            formula: 'remap',
-            args: { file: 'index.html' },
-        });
-        const response = await page.goto('/csp-test-allowed');
-        expect(response.fromServiceWorker()).toBeTruthy();
-        const csp = response.headers()['content-security-policy'];
-        expect(csp).toBeDefined();
-        expect(csp).toContain(`'${CSP_INLINE_1_HASH}'`);
-        expect(csp).toContain('*');
     });
 
     test('page loads without CSP violations and all directives have the expected semantics', async ({
@@ -138,11 +124,40 @@ test.describe('CSP injection', () => {
         // closing clickjacking and UI-redressing attack vectors.
         expect(csp).toContain("frame-ancestors 'none'");
 
+        // script-src-attr 'unsafe-hashes': emitted only when the manifest has on* attribute hashes.
+        // The template has onclick= handlers; extractInlineAttrHashes extracts them at build time.
+        // 'unsafe-hashes' is required by the spec for hashes to apply to event handler attributes.
+        expect(csp).toContain("script-src-attr 'unsafe-hashes'");
+
         // report-uri: CSP violations are posted to the SW API endpoint. The SW logs them
         // in IndexedDB and exposes them via /sw-api/status. The token query param
         // authenticates the report so the endpoint rejects unauthenticated posts.
         expect(csp).toContain('report-uri');
         expect(csp).toContain('/sw-api/csp-violation');
+
+        // __df_csp_hashes: createCspPageResponse injects a JSON script tag into <head> so
+        // the client-side violation handler can read the allowed hashes without a separate fetch.
+        // Confirm the tag is present, lives inside <head>, and contains the expected shape.
+        const cspHashes = await page.evaluate(() => {
+            const el = document.getElementById('__df_csp_hashes');
+            if (!el) {
+                return null;
+            }
+            return {
+                inHead: el.closest('head') !== null,
+                type: el.getAttribute('type'),
+                data: JSON.parse(el.textContent),
+            };
+        });
+        expect(cspHashes).not.toBeNull();
+        expect(cspHashes.inHead).toBeTruthy();
+        expect(cspHashes.type).toBe('application/json');
+        // scripts must include the known inline script hash so the client-side handler
+        // has the same allowed set the SW used when building the CSP header.
+        expect(cspHashes.data.scripts).toContain(CSP_INLINE_1_HASH);
+        // attrs must be non-empty: the template has onclick= handlers that were extracted
+        // at build time and stored in the manifest alongside the script hashes.
+        expect(cspHashes.data.attrs.length).toBeGreaterThan(0);
 
         // Styles applied: check a CSS custom property from the inline <style> block.
         // If style-src had blocked the inline styles this property would be empty.
@@ -347,6 +362,28 @@ test.describe('CSP injection', () => {
         expect(result.cspTimer).toBeUndefined();
         expect(result.rscChunks).toBeUndefined();
         expect(result.cspAllowedScriptRan).toBeUndefined();
+    });
+
+    test('CSP header is not injected on non-navigation fetch requests', async ({
+        page,
+        swHelper,
+    }) => {
+        await swHelper.interceptAndModifyPageContent({
+            pattern: '/csp-test-allowed',
+            formula: 'remap',
+            args: { file: 'index.html' },
+        });
+        // Navigate first so the SW is controlling the page.
+        await page.goto('/csp-test-allowed');
+
+        // A fetch() from the page goes through the SW with request.mode='cors', not 'navigate'.
+        // The CSP action in verifier.js is gated on req.mode === 'navigate', so subresource
+        // requests fall back to regular hash verification and must not receive a CSP header.
+        const csp = await page.evaluate(async () => {
+            const res = await fetch('/csp-test-allowed');
+            return res.headers.get('content-security-policy');
+        });
+        expect(csp).toBeNull();
     });
 
     test('all template inline scripts run when the page has no CSP header', async ({ page }) => {

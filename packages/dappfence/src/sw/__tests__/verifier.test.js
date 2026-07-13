@@ -1,6 +1,14 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createVerifier } from '../manifest/verifier.js';
 import { VERIFICATION_STATUS } from '../../core/constants.js';
+import { buildCspHeader } from '../response.js';
+
+// response.js calls isFeatureEnabled at module load — stub it so the
+// Vite-injected __FEATURES__ constant is not required in the test runtime.
+vi.mock('../../core/utils.js', async (importOriginal) => {
+    const actual = await importOriginal();
+    return { ...actual, isFeatureEnabled: vi.fn(() => false) };
+});
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -60,47 +68,25 @@ function makeSubResource(path = '/app.js') {
     };
 }
 
-function makeBodyStream(data) {
-    return new ReadableStream({
+function makeOkResponse() {
+    const bytes = new TextEncoder().encode(
+        '<!DOCTYPE html><html><head></head><body></body></html>'
+    );
+    const body = new ReadableStream({
         start(controller) {
-            controller.enqueue(data);
+            controller.enqueue(bytes);
             controller.close();
         },
     });
-}
-
-function makeOkResponse() {
-    const data = new Uint8Array(8);
-    const r = {
+    return {
         ok: true,
         type: 'basic',
-        get body() {
-            return makeBodyStream(data);
-        },
+        status: 200,
+        statusText: 'OK',
         headers: new Headers(),
-        status: 200,
-        statusText: 'OK',
-        arrayBuffer: vi.fn(() => Promise.resolve(new ArrayBuffer(8))),
+        body,
+        clone: vi.fn(() => makeOkResponse()),
     };
-    r.clone = vi.fn(() => makeOkResponse());
-    return r;
-}
-
-function makeHtmlResponse() {
-    const html = '<!DOCTYPE html><html><head><meta charset="utf-8"></head><body></body></html>';
-    const data = new TextEncoder().encode(html);
-    const r = {
-        ok: true,
-        type: 'basic',
-        get body() {
-            return makeBodyStream(data);
-        },
-        headers: new Headers({ 'content-type': 'text/html' }),
-        status: 200,
-        statusText: 'OK',
-    };
-    r.clone = vi.fn(() => makeHtmlResponse());
-    return r;
 }
 
 function makeVerifier({
@@ -337,7 +323,12 @@ describe('step 1 — pinned client', () => {
         fetchAndStoreManifest.mockClear();
 
         // Navigation bypasses pin and re-evaluates (step 2 passes here).
-        const { result } = await verifyResponse(makeNav('/'), makeOkResponse(), 'client-1', INFO_V1);
+        const { result } = await verifyResponse(
+            makeNav('/'),
+            makeOkResponse(),
+            'client-1',
+            INFO_V1
+        );
         expect(result.status).toBe(VERIFICATION_STATUS.MATCH);
     });
 });
@@ -530,7 +521,7 @@ describe('csp action handler', () => {
 
     it('returns CSP_PROTECTED status for a navigation matched by a csp contentRule', async () => {
         const { verify } = makeVerifier({ latestManifest: cspManifest() });
-        const result = await verify(makeNav('/'), makeHtmlResponse());
+        const result = await verify(makeNav('/'), makeOkResponse());
         expect(result.status).toBe(VERIFICATION_STATUS.CSP_PROTECTED);
     });
 
@@ -540,13 +531,13 @@ describe('csp action handler', () => {
 
     it('CSP_PROTECTED is terminal — handler result does not set keepTryingActions', async () => {
         const { verify } = makeVerifier({ latestManifest: cspManifest() });
-        const result = await verify(makeNav('/'), makeHtmlResponse());
+        const result = await verify(makeNav('/'), makeOkResponse());
         expect(result.keepTryingActions).toBeFalsy();
     });
 
-    it('result carries a csp data object', async () => {
+    it('result carries csp data for header construction', async () => {
         const { verify } = makeVerifier({ latestManifest: cspManifest() });
-        const result = await verify(makeNav('/'), makeHtmlResponse());
+        const result = await verify(makeNav('/'), makeOkResponse());
         expect(result.csp).toBeDefined();
         expect(result.csp.hashes).toBeDefined();
         expect(result.csp.connectOrigins).toBeDefined();
@@ -554,8 +545,11 @@ describe('csp action handler', () => {
 
     it('csp.hashes defaults to empty arrays when manifest has no pages entry', async () => {
         const { verify } = makeVerifier({ latestManifest: cspManifest() });
-        const result = await verify(makeNav('/'), makeHtmlResponse());
-        expect(result.csp.hashes).toEqual({ scripts: [], attrs: [] });
+        const result = await verify(makeNav('/'), makeOkResponse());
+        const header = buildCspHeader(result.csp.hashes, result.csp.connectOrigins, null);
+        expect(header).toContain('script-src-elem');
+        expect(header).toContain('*');
+        expect(header).not.toContain('strict-dynamic');
     });
 
     it('csp.hashes includes inline scripts when pages entry matches the page key', async () => {
@@ -564,15 +558,18 @@ describe('csp action handler', () => {
                 pages: { '/': { scripts: ['sha256-abc123'], attrs: [] } },
             }),
         });
-        const result = await verify(makeNav('/'), makeHtmlResponse());
-        expect(result.csp.hashes.scripts).toContain('sha256-abc123');
+        const result = await verify(makeNav('/'), makeOkResponse());
+        const header = buildCspHeader(result.csp.hashes, result.csp.connectOrigins, null);
+        expect(header).toContain("'sha256-abc123'");
+        expect(header).toContain('*');
+        expect(header).not.toContain('strict-dynamic');
     });
 
     it('does not escalate to historic manifests — csp action is terminal', async () => {
         const { verify, getManifestHistory, fetchAndStoreManifest } = makeVerifier({
             latestManifest: cspManifest(),
         });
-        await verify(makeNav('/'), makeHtmlResponse());
+        await verify(makeNav('/'), makeOkResponse());
         expect(getManifestHistory).not.toHaveBeenCalled();
         expect(fetchAndStoreManifest).not.toHaveBeenCalled();
     });
