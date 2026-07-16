@@ -13,8 +13,62 @@ const {
     buildNetlifyContentRules,
     resolveNetlifyCdpHashes,
 } = _require('@dappfence/manifest-tools/manifest');
+const { extractInlineHashesFromHtml } = _require('@dappfence/manifest-tools/inline-scripts');
 
 export { buildScriptAttrs, buildScriptTag, injectScriptTag };
+
+/**
+ * Generate a probe URL from a route pattern by substituting every parameter
+ * segment with a sentinel value. The probe is fetched at build time to extract
+ * stable inline script hashes without requiring concrete IDs.
+ *
+ * @param {string} pattern - e.g. '/partials/dynamic/[id]'
+ * @returns {string} - e.g. '/partials/dynamic/__probe__'
+ */
+export function routePatternToProbeUrl(pattern) {
+    return pattern
+        .replace(/\[\.\.\.([^\]]+)\]/g, '__probe__')
+        .replace(/\[([^\]]+)\]/g, '__probe__');
+}
+
+/**
+ * Derive the prefix key used to store probe CSP hashes in the manifest.
+ * Strips everything from the first parameter segment onward, keeping the
+ * leading path up to and including the last '/' before that segment.
+ *
+ * @param {string} pattern - e.g. '/partials/dynamic/[id]'
+ * @returns {string} - e.g. '/partials/dynamic/'
+ */
+export function routePatternToPrefixKey(pattern) {
+    const firstBracket = pattern.indexOf('[');
+    if (firstBracket === -1) return pattern;
+    const prefix = pattern.slice(0, pattern.lastIndexOf('/', firstBracket) + 1);
+    return prefix || '/';
+}
+
+/**
+ * Extract probedRoute patterns — SSR routes with URL parameters.
+ * These cannot be fetched for a body hash (IDs are not enumerable), but can
+ * be probed with a sentinel value to extract stable inline script CSP hashes.
+ * Includes routes that also have getStaticPaths (enumerableRoute); the probe provides
+ * a prefix-based fallback for any IDs not covered by the enumeration.
+ *
+ * @param {object[]} routes - Astro resolved routes
+ * @returns {string[]} route patterns
+ */
+export function extractProbedPatterns(routes) {
+    if (!routes?.length) return [];
+    return routes
+        .filter(
+            (r) =>
+                !r.isPrerendered &&
+                r.type !== 'redirect' &&
+                r.params?.length > 0 &&
+                !r.pattern?.startsWith('/_')
+        )
+        .map((r) => r.pattern)
+        .filter(Boolean);
+}
 
 /**
  * Extract server-rendered route patterns from the Astro routes array.
@@ -29,11 +83,11 @@ export function extractDynamicRoutes(routes) {
 }
 
 /**
- * Extract Tier 1 SSR routes — SSR with no URL parameters.
+ * Extract fixedRoute SSR routes — SSR with no URL parameters.
  * These have a fixed URL and a deterministic response body, so they can be
  * fetched and hashed at build time without any param enumeration.
  */
-export function extractTier1Routes(routes) {
+export function extractFixedRoutes(routes) {
     if (!routes?.length) return [];
     return routes
         .filter(
@@ -68,7 +122,7 @@ async function findRouteChunk(serverDir, componentPath) {
 }
 
 /**
- * Extract Tier 2 SSR routes — parameterized SSR routes that export getStaticPaths().
+ * Extract enumerableRoute SSR routes — parameterized SSR routes that export getStaticPaths().
  * Imports each route's compiled chunk, calls getStaticPaths(), and uses route.generate()
  * to build the concrete web paths to hash.
  *
@@ -77,7 +131,7 @@ async function findRouteChunk(serverDir, componentPath) {
  * @param {object}   logger    - Astro integration logger
  * @returns {Promise<string[]>}
  */
-export async function extractTier2Routes(routes, serverDir, logger) {
+export async function extractEnumerableRoutes(routes, serverDir, logger) {
     if (!routes?.length) return [];
 
     const candidates = routes.filter(
@@ -95,7 +149,7 @@ export async function extractTier2Routes(routes, serverDir, logger) {
         const chunkPath = await findRouteChunk(serverDir, route.entrypoint);
         if (!chunkPath) {
             logger.warn(
-                `DappFence: no compiled chunk found for ${route.entrypoint}; skipping Tier-2 hashing`
+                `DappFence: no compiled chunk found for ${route.entrypoint}; skipping enumerableRoute hashing`
             );
             continue;
         }
@@ -138,12 +192,12 @@ export async function extractTier2Routes(routes, serverDir, logger) {
     return results;
 }
 
-function sriHash(buf) {
+export function sriHash(buf) {
     return `sha256-${createHash('sha256').update(buf).digest('base64')}`;
 }
 
 /**
- * Start the built Astro SSR server on a random port, fetch each Tier 1 route,
+ * Start the built Astro SSR server on a random port, fetch each fixedRoute,
  * and return a { webPath → sriHash } map. The server is closed after all routes
  * are fetched.
  *
@@ -152,8 +206,8 @@ function sriHash(buf) {
  * @param {object}   logger       - Astro integration logger
  * @returns {Promise<Record<string,string>>}
  */
-export async function hashSSRRoutes(entryMjsPath, routes, logger) {
-    if (!routes.length) return {};
+export async function hashSSRRoutes(entryMjsPath, routes, logger, probedPatterns = []) {
+    if (!routes.length && !probedPatterns.length) return { bodyHashes: {}, cspPages: {} };
 
     process.env.ASTRO_NODE_AUTOSTART = 'disabled';
     let handler;
@@ -162,14 +216,14 @@ export async function hashSSRRoutes(entryMjsPath, routes, logger) {
         handler = mod.handler;
     } catch (err) {
         logger.warn(`DappFence: could not import SSR entry — ${err.message}; skipping SSR hashing`);
-        return {};
+        return { bodyHashes: {}, cspPages: {} };
     } finally {
         delete process.env.ASTRO_NODE_AUTOSTART;
     }
 
     if (typeof handler !== 'function') {
         logger.warn('DappFence: SSR entry did not export a handler function; skipping SSR hashing');
-        return {};
+        return { bodyHashes: {}, cspPages: {} };
     }
 
     const server = createServer(handler);
@@ -178,7 +232,8 @@ export async function hashSSRRoutes(entryMjsPath, routes, logger) {
         server.once('error', reject);
     });
 
-    const hashes = {};
+    const bodyHashes = {};
+    const cspPages = {};
     try {
         for (const webPath of routes) {
             try {
@@ -191,22 +246,90 @@ export async function hashSSRRoutes(entryMjsPath, routes, logger) {
                     continue;
                 }
                 const finalPath = new URL(res.url).pathname;
-                hashes[finalPath] = sriHash(buf);
+                bodyHashes[finalPath] = sriHash(buf);
                 const statusNote = res.ok ? '' : ` (HTTP ${res.status})`;
                 logger.info(
                     `DappFence: hashed SSR route ${webPath}${finalPath !== webPath ? ` → ${finalPath}` : ''}${statusNote}`
                 );
+                const contentType = res.headers.get('content-type') ?? '';
+                if (contentType.includes('text/html')) {
+                    try {
+                        const { scripts, attrs, warnings } = extractInlineHashesFromHtml(
+                            buf.toString('utf8')
+                        );
+                        for (const w of warnings) {
+                            logger.warn(`DappFence: ${finalPath}: ${w}`);
+                        }
+                        if (scripts.length || attrs.length) {
+                            cspPages[finalPath] = { scripts, attrs };
+                        }
+                    } catch (err) {
+                        logger.warn(
+                            `DappFence: CSP hash extraction failed for ${finalPath}: ${err.message}`
+                        );
+                    }
+                }
             } catch (err) {
                 logger.warn(
                     `DappFence: failed to hash SSR route ${webPath} — ${err.message}; skipping`
                 );
             }
         }
+
+        // probedRoute: probe each unique prefix once with a sentinel URL.
+        // Only CSP hashes are extracted — body hash is discarded (content is dynamic).
+        const probedPrefixes = new Set();
+        for (const pattern of probedPatterns) {
+            const prefixKey = routePatternToPrefixKey(pattern);
+            if (probedPrefixes.has(prefixKey)) {
+                continue;
+            }
+            probedPrefixes.add(prefixKey);
+
+            const probeUrl = routePatternToProbeUrl(pattern);
+            try {
+                const res = await fetch(`http://127.0.0.1:${port}${probeUrl}`);
+                const buf = Buffer.from(await res.arrayBuffer());
+                if (buf.length === 0) {
+                    logger.warn(`DappFence: probe ${pattern} returned empty body; skipping`);
+                    continue;
+                }
+                const contentType = res.headers.get('content-type') ?? '';
+                if (!contentType.includes('text/html')) {
+                    logger.warn(
+                        `DappFence: probe ${pattern} returned non-HTML (${contentType}); skipping`
+                    );
+                    continue;
+                }
+                try {
+                    const { scripts, attrs, warnings } = extractInlineHashesFromHtml(
+                        buf.toString('utf8')
+                    );
+                    for (const w of warnings) {
+                        logger.warn(`DappFence: ${pattern} (probe): ${w}`);
+                    }
+                    if (scripts.length || attrs.length) {
+                        cspPages[prefixKey] = { scripts, attrs };
+                        logger.info(
+                            `DappFence: probed ${pattern} → CSP prefix ${prefixKey} (${scripts.length} script, ${attrs.length} attr hash(es))`
+                        );
+                    } else {
+                        logger.info(`DappFence: probed ${pattern} — no inline scripts found`);
+                    }
+                } catch (err) {
+                    logger.warn(
+                        `DappFence: CSP hash extraction failed for probe ${pattern}: ${err.message}`
+                    );
+                }
+            } catch (err) {
+                logger.warn(`DappFence: probe failed for ${pattern} — ${err.message}; skipping`);
+            }
+        }
     } finally {
         await new Promise((resolve) => server.close(resolve));
     }
 
-    return hashes;
+    return { bodyHashes, cspPages };
 }
 
 export function buildPageSet(pages) {
@@ -250,13 +373,13 @@ export async function generateManifest({
     routes,
     buildFormat,
     extraHashes,
+    cspPages,
     base = '',
     netlify = false,
     logger,
     ...rest
 }) {
     const prefixRoute = base ? (r) => base + r : (r) => r;
-    const dynamicRoutes = extractDynamicRoutes(routes).map(prefixRoute);
     const pageSet = pages?.length ? buildPageSet(pages) : null;
     const isNetlify = Boolean(process.env.NETLIFY) || Boolean(netlify);
 
@@ -277,10 +400,21 @@ export async function generateManifest({
         ...(extraHashes || {}),
     };
 
+    // All dynamic (SSR) routes must appear in csp.pages so the SW knows to inject
+    // CSP headers for them. Routes with inline scripts already have entries from
+    // hashSSRRoutes; add empty entries for the rest. Parameterised routes use a
+    // prefix key (e.g. '/partials/[id]' → '/partials/') for startsWith matching.
+    const completeCspPages = { ...(cspPages ?? {}) };
+    for (const route of extractDynamicRoutes(routes)) {
+        const key = prefixRoute(routePatternToPrefixKey(route));
+        if (!(key in completeCspPages)) {
+            completeCspPages[key] = { scripts: [], attrs: [] };
+        }
+    }
+
     return _generateManifest({
         ...rest,
         logger,
-        dynamicRoutes,
         pathRules: buildPathRules(buildFormat, notFoundKey),
         contentRules: buildContentRules({ isNetlify }),
         // walk() generates keys as base + '/...' when pathPrefix is set; strip the
@@ -291,5 +425,6 @@ export async function generateManifest({
             : undefined,
         pathPrefix: base,
         ...(Object.keys(mergedExtraHashes).length > 0 && { extraHashes: mergedExtraHashes }),
+        ...(Object.keys(completeCspPages).length > 0 && { csp: { pages: completeCspPages } }),
     });
 }

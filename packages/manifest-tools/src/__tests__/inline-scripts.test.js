@@ -5,7 +5,8 @@ import os from 'os';
 import { createRequire } from 'module';
 
 const _require = createRequire(import.meta.url);
-const { extractInlineScriptHashes, extractInlineAttrHashes } = _require('../inline-scripts');
+const { extractInlineScriptHashes, extractInlineAttrHashes, extractInlineHashesFromHtml } =
+    _require('../inline-scripts');
 const { calculateStringHash } = _require('../build');
 
 let tmpFiles = [];
@@ -152,6 +153,55 @@ describe('extractInlineScriptHashes', () => {
         expect(hashes).toEqual([]);
         expect(warnings.length).toBe(1);
         expect(warnings[0]).toContain('Unterminated');
+    });
+
+    it('emits a nonce warning and still hashes the script body', async () => {
+        const content = 'doSomething();';
+        const p = await writeHtml(
+            `<html><body><script nonce="abc123">${content}</script></body></html>`
+        );
+        const { hashes, warnings } = await extractInlineScriptHashes(p);
+        expect(hashes).toEqual([calculateStringHash(content)]);
+        expect(warnings.length).toBe(1);
+        expect(warnings[0]).toContain('nonce');
+    });
+
+    it('emits a nonce warning for single-quoted nonce attribute', async () => {
+        const p = await writeHtml(`<html><body><script nonce='xyz'>x();</script></body></html>`);
+        const { warnings } = await extractInlineScriptHashes(p);
+        expect(warnings.length).toBe(1);
+        expect(warnings[0]).toContain('nonce');
+    });
+
+    it('does not warn for scripts without a nonce', async () => {
+        const p = await writeHtml('<html><body><script>safe();</script></body></html>');
+        const { warnings } = await extractInlineScriptHashes(p);
+        expect(warnings).toEqual([]);
+    });
+});
+
+describe('extractInlineHashesFromHtml', () => {
+    it('returns scripts and attrs from an HTML string', () => {
+        const html =
+            '<html><body><script>doX();</script><button onclick="alert(1)">x</button></body></html>';
+        const { scripts, attrs, warnings } = extractInlineHashesFromHtml(html);
+        expect(scripts).toEqual([calculateStringHash('doX();')]);
+        expect(attrs).toEqual([calculateStringHash('alert(1)')]);
+        expect(warnings).toEqual([]);
+    });
+
+    it('emits a nonce warning via the string API', () => {
+        const html = '<html><body><script nonce="n1">run();</script></body></html>';
+        const { scripts, warnings } = extractInlineHashesFromHtml(html);
+        expect(scripts).toHaveLength(1);
+        expect(warnings.some((w) => w.includes('nonce'))).toBe(true);
+    });
+
+    it('returns empty arrays for HTML with no scripts or on* attrs', () => {
+        const { scripts, attrs, warnings } = extractInlineHashesFromHtml('<p>hi</p>');
+        expect(scripts).toEqual([]);
+        expect(attrs).toEqual([]);
+        expect(warnings).toEqual([]);
     });
 });
 

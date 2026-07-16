@@ -48,13 +48,14 @@ function findTagClose(html, from) {
 }
 
 // Parse `<script` attributes starting at `attrStart` (the index right after `<script`).
-// Returns { hasSrc, contentStart } where contentStart is the first char after '>'.
+// Returns { hasSrc, hasNonce, contentStart } where contentStart is the first char after '>'.
 function parseScriptTag(html, attrStart) {
     let i = attrStart;
     let hasSrc = false;
+    let hasNonce = false;
     while (i < html.length) {
         while (i < html.length && /\s/.test(html[i])) i++;
-        if (html[i] === '>') return { hasSrc, contentStart: i + 1 };
+        if (html[i] === '>') return { hasSrc, hasNonce, contentStart: i + 1 };
         if (html[i] === '/') {
             i++;
             continue;
@@ -70,16 +71,21 @@ function parseScriptTag(html, attrStart) {
             if (html[i] === '"' || html[i] === "'") {
                 const q = html[i++];
                 const end = html.indexOf(q, i);
-                if (end === -1) return { hasSrc, contentStart: html.length };
+                if (end === -1) return { hasSrc, hasNonce, contentStart: html.length };
                 if (attrName === 'src') hasSrc = true;
+                if (attrName === 'nonce') hasNonce = true;
                 i = end + 1;
             } else {
                 while (i < html.length && !/[\s>]/.test(html[i])) i++;
                 if (attrName === 'src') hasSrc = true;
+                if (attrName === 'nonce') hasNonce = true;
             }
+        } else {
+            // Boolean attribute (no value) — nonce requires a value, so only src matters here.
+            if (attrName === 'src') hasSrc = true;
         }
     }
-    return { hasSrc, contentStart: html.length };
+    return { hasSrc, hasNonce, contentStart: html.length };
 }
 
 // HTML5 script data state machine to find the closing `</script>`.
@@ -184,6 +190,44 @@ function parseOnAttrs(html, attrStart) {
     return { pairs, end: i };
 }
 
+// Core logic: extract inline script body hashes from an HTML string.
+function _hashScripts(html) {
+    const hashes = [];
+    const warnings = [];
+    let pos = 0;
+
+    while (pos < html.length) {
+        const tagStart = indexOfOpenScript(html, pos);
+        if (tagStart === -1) break;
+
+        const { hasSrc, hasNonce, contentStart } = parseScriptTag(html, tagStart + 7);
+        if (hasSrc) {
+            pos = contentStart;
+            continue;
+        }
+
+        const contentEnd = findScriptContentEnd(html, contentStart);
+        if (contentEnd === -1) {
+            warnings.push(`Unterminated <script> at offset ${tagStart}`);
+            break;
+        }
+
+        if (hasNonce) {
+            warnings.push(
+                `Inline script at offset ${tagStart} has a nonce attribute. ` +
+                    'The script body hash is computed from the static content and is valid, but the server ' +
+                    'is using nonce-based CSP. If the script body embeds the nonce value or any other ' +
+                    'per-request data, this hash will not be stable across renders.'
+            );
+        }
+
+        hashes.push(calculateStringHash(html.slice(contentStart, contentEnd)));
+        pos = findTagClose(html, contentEnd + 8) + 1;
+    }
+
+    return { hashes, warnings };
+}
+
 /**
  * Extract SHA-256 hashes of all inline <script> bodies in an HTML file.
  * Uses the HTML5 script data state machine to correctly handle `<!--<script>` double-escape
@@ -208,31 +252,67 @@ async function extractInlineScriptHashes(htmlPath) {
         throw new Error(`${htmlPath}: unsupported charset ${metaMatch[1]}`);
     }
 
-    const hashes = [];
+    return _hashScripts(html);
+}
+
+// Core logic: extract on* attribute hashes from an HTML string.
+function _hashAttrs(html) {
+    const attrs = [];
+    const seen = new Set();
     const warnings = [];
-    let pos = 0;
+    let i = 0;
 
-    while (pos < html.length) {
-        const tagStart = indexOfOpenScript(html, pos);
-        if (tagStart === -1) break;
-
-        const { hasSrc, contentStart } = parseScriptTag(html, tagStart + 7);
-        if (hasSrc) {
-            pos = contentStart;
+    while (i < html.length) {
+        if (html.slice(i, i + 4) === '<!--') {
+            const end = html.indexOf('-->', i + 4);
+            i = end === -1 ? html.length : end + 3;
             continue;
         }
 
-        const contentEnd = findScriptContentEnd(html, contentStart);
-        if (contentEnd === -1) {
-            warnings.push(`Unterminated <script> at offset ${tagStart}`);
-            break;
+        if (html[i] !== '<') {
+            i++;
+            continue;
         }
 
-        hashes.push(calculateStringHash(html.slice(contentStart, contentEnd)));
-        pos = findTagClose(html, contentEnd + 8) + 1;
+        if (
+            html.slice(i, i + 7).toLowerCase() === '<script' &&
+            (html[i + 7] === undefined || /[\s>/]/.test(html[i + 7]))
+        ) {
+            const { contentStart } = parseScriptTag(html, i + 7);
+            const contentEnd = findScriptContentEnd(html, contentStart);
+            if (contentEnd === -1) {
+                warnings.push(`Unterminated <script> at offset ${i}`);
+                break;
+            }
+            i = findTagClose(html, contentEnd + 8) + 1;
+            continue;
+        }
+
+        if (html.slice(i, i + 6).toLowerCase() === '<style' && /[\s>/]/.test(html[i + 6] ?? '>')) {
+            const closeStyle = html.toLowerCase().indexOf('</style', i + 6);
+            if (closeStyle === -1) break;
+            i = findTagClose(html, closeStyle) + 1;
+            continue;
+        }
+
+        if (html[i + 1] && /[a-zA-Z]/.test(html[i + 1])) {
+            let j = i + 1;
+            while (j < html.length && !/[\s>/]/.test(html[j])) j++;
+            const { pairs, end } = parseOnAttrs(html, j);
+            i = end;
+            for (const { name, value } of pairs) {
+                if (!seen.has(value)) {
+                    seen.add(value);
+                    attrs.push({ name, value, hash: calculateStringHash(value) });
+                }
+            }
+            continue;
+        }
+
+        i++;
     }
 
-    return { hashes, warnings };
+    return { attrs, warnings };
 }
 
 /**
@@ -261,66 +341,32 @@ async function extractInlineAttrHashes(htmlPath) {
         throw new Error(`${htmlPath}: unsupported charset ${metaMatch[1]}`);
     }
 
-    const attrs = [];
-    const seen = new Set();
-    const warnings = [];
-    let i = 0;
-
-    while (i < html.length) {
-        // Skip HTML comments
-        if (html.slice(i, i + 4) === '<!--') {
-            const end = html.indexOf('-->', i + 4);
-            i = end === -1 ? html.length : end + 3;
-            continue;
-        }
-
-        if (html[i] !== '<') {
-            i++;
-            continue;
-        }
-
-        // Skip <script> blocks using the same state machine as extractInlineScriptHashes
-        if (
-            html.slice(i, i + 7).toLowerCase() === '<script' &&
-            (html[i + 7] === undefined || /[\s>/]/.test(html[i + 7]))
-        ) {
-            const { contentStart } = parseScriptTag(html, i + 7);
-            const contentEnd = findScriptContentEnd(html, contentStart);
-            if (contentEnd === -1) {
-                warnings.push(`Unterminated <script> at offset ${i}`);
-                break;
-            }
-            i = findTagClose(html, contentEnd + 8) + 1;
-            continue;
-        }
-
-        // Skip <style> blocks
-        if (html.slice(i, i + 6).toLowerCase() === '<style' && /[\s>/]/.test(html[i + 6] ?? '>')) {
-            const closeStyle = html.toLowerCase().indexOf('</style', i + 6);
-            if (closeStyle === -1) break;
-            i = findTagClose(html, closeStyle) + 1;
-            continue;
-        }
-
-        // Regular opening tag: scan for on* attributes
-        if (html[i + 1] && /[a-zA-Z]/.test(html[i + 1])) {
-            let j = i + 1;
-            while (j < html.length && !/[\s>/]/.test(html[j])) j++;
-            const { pairs, end } = parseOnAttrs(html, j);
-            i = end;
-            for (const { name, value } of pairs) {
-                if (!seen.has(value)) {
-                    seen.add(value);
-                    attrs.push({ name, value, hash: calculateStringHash(value) });
-                }
-            }
-            continue;
-        }
-
-        i++;
-    }
-
-    return { attrs, warnings };
+    return _hashAttrs(html);
 }
 
-module.exports = { extractInlineScriptHashes, extractInlineAttrHashes };
+/**
+ * Extract inline script body hashes and on* attribute hashes from an HTML string.
+ * Intended for in-memory use (e.g. SSR routes fetched at build time) where file I/O
+ * is not available. Does not perform BOM or charset checks.
+ *
+ * @param {string} html
+ * @returns {{ scripts: string[], attrs: string[], warnings: string[] }}
+ *   scripts: 'sha256-<base64>' strings for each inline <script> body
+ *   attrs:   'sha256-<base64>' strings for each unique on* attribute value
+ *   warnings: non-fatal parse issues
+ */
+function extractInlineHashesFromHtml(html) {
+    const { hashes: scripts, warnings: w1 } = _hashScripts(html);
+    const { attrs, warnings: w2 } = _hashAttrs(html);
+    return {
+        scripts,
+        attrs: attrs.map((a) => a.hash),
+        warnings: [...w1, ...w2],
+    };
+}
+
+module.exports = {
+    extractInlineScriptHashes,
+    extractInlineAttrHashes,
+    extractInlineHashesFromHtml,
+};

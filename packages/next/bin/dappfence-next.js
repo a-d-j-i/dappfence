@@ -29,13 +29,21 @@ import { promises as fs } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { readDynamicRoutes } from '../src/routes.js';
-import { hashPrerenderedPages, hashPublicFiles } from '../src/ssr.js';
+import {
+    hashPrerenderedPages,
+    hashPublicFiles,
+    hashSSRRoutes,
+    routePatternToPrefixKey,
+} from '../src/ssr.js';
 
 const _require = createRequire(import.meta.url);
 const { generateManifest, buildNetlifyContentRules, resolveNetlifyCdpHashes } = _require(
     '@dappfence/manifest-tools/manifest'
 );
-const DAPPFENCE_JS_PATH = _require.resolve('@dappfence/core');
+const resolveDappfenceJsPath = (scriptSrc) =>
+    scriptSrc.endsWith('.dev.js')
+        ? _require.resolve('@dappfence/core/dev')
+        : _require.resolve('@dappfence/core');
 
 const STATIC_EXPORT_PATH_RULES = [{ type: 'directory-index' }, { type: 'html-extension' }];
 
@@ -62,17 +70,53 @@ async function runSSR(opts, projectRoot) {
         process.exit(1);
     }
 
-    const [dynamicRoutes, pageHashes, publicHashes, cdpHashes] = await Promise.all([
-        readDynamicRoutes(projectRoot),
+    const {
+        allRoutes: dynamicRoutes,
+        fixedRoutes,
+        probedPatterns,
+        isrRoutes,
+    } = await readDynamicRoutes(projectRoot);
+
+    const [pageResult, publicHashes, cdpHashes, ssrResult] = await Promise.all([
         hashPrerenderedPages(projectRoot, basePath, logger),
         hashPublicFiles(projectRoot, opts.manifestPath, basePath, logger),
         isNetlify ? resolveNetlifyCdpHashes(logger) : Promise.resolve(null),
+        hashSSRRoutes(projectRoot, fixedRoutes, probedPatterns, logger),
     ]);
+
+    // ISR routes are prerendered at build time but regenerated periodically.
+    // The body hash captured from the on-disk HTML becomes stale after the first
+    // revalidation cycle and would produce false-positive tamper alerts once
+    // navigation body verification is implemented. Drop the body hashes now.
+    const isrPathSet = new Set(isrRoutes.map((r) => (basePath ? basePath + r : r)));
+    if (isrPathSet.size > 0) {
+        for (const route of isrRoutes) {
+            logger.warn(
+                `DappFence: ISR route ${route} (revalidate > 0) — body hash excluded from manifest; ` +
+                    `enable dynamicRSC mode if this page embeds per-request data in RSC push scripts`
+            );
+        }
+    }
+
     const extraHashes = {
         ...(cdpHashes && { '/.netlify/scripts/cdp': cdpHashes }),
-        ...pageHashes,
+        ...ssrResult.bodyHashes,
+        ...Object.fromEntries(
+            Object.entries(pageResult.bodyHashes).filter(([k]) => !isrPathSet.has(k))
+        ),
         ...publicHashes,
     };
+    // All dynamic routes must appear in csp.pages so the SW knows to inject CSP
+    // headers for them. Parameterised routes use a prefix key for startsWith matching.
+    const completeCspPages = { ...pageResult.cspPages, ...ssrResult.cspPages };
+    for (const route of dynamicRoutes) {
+        const key = basePath
+            ? basePath + routePatternToPrefixKey(route)
+            : routePatternToPrefixKey(route);
+        if (!(key in completeCspPages)) {
+            completeCspPages[key] = { scripts: [], attrs: [] };
+        }
+    }
 
     const ssrPathRules = [{ type: 'directory-index' }];
     const notFoundKey = extraHashes[basePath + '/404']
@@ -91,12 +135,12 @@ async function runSSR(opts, projectRoot) {
         exclude: opts.exclude,
         secretKey,
         mode: opts.mode,
-        dynamicRoutes: dynamicRoutes.map((r) => (basePath ? basePath + r : r)),
         pathRules: ssrPathRules,
         contentRules: isNetlify ? buildNetlifyContentRules() : [],
         scriptAttrs: null,
         logger,
         ...(Object.keys(extraHashes).length > 0 && { extraHashes }),
+        ...(Object.keys(completeCspPages).length > 0 && { csp: { pages: completeCspPages } }),
     });
 
     logger.info(`DappFence: manifest written → public/${opts.manifestPath}`);
@@ -117,15 +161,20 @@ async function runStaticExport(opts, projectRoot) {
     const destRel = opts.scriptSrc.replace(/^\//, '');
     const destAbs = path.join(outDir, destRel);
     await fs.mkdir(path.dirname(destAbs), { recursive: true });
-    await fs.copyFile(DAPPFENCE_JS_PATH, destAbs);
+    await fs.copyFile(resolveDappfenceJsPath(opts.scriptSrc), destAbs);
     console.log(`DappFence: copied dappfence.js → ${destRel}`);
 
     const secretKey = process.env.DAPPFENCE_SECRET_KEY || null;
     const isNetlify = Boolean(process.env.NETLIFY) || Boolean(opts.netlify);
-    const [dynamicRoutes, cdpHashes] = await Promise.all([
+    const [{ allRoutes: dynamicRoutes }, cdpHashes] = await Promise.all([
         readDynamicRoutes(projectRoot),
         isNetlify ? resolveNetlifyCdpHashes(logger) : Promise.resolve(null),
     ]);
+
+    const completeCspPages = {};
+    for (const route of dynamicRoutes) {
+        completeCspPages[routePatternToPrefixKey(route)] = { scripts: [], attrs: [] };
+    }
 
     await generateManifest({
         outDir,
@@ -133,12 +182,12 @@ async function runStaticExport(opts, projectRoot) {
         exclude: opts.exclude,
         secretKey,
         mode: opts.mode,
-        dynamicRoutes,
         pathRules: STATIC_EXPORT_PATH_RULES,
         contentRules: isNetlify ? buildNetlifyContentRules() : [],
         scriptAttrs: opts,
         logger,
         ...(cdpHashes && { extraHashes: { '/.netlify/scripts/cdp': cdpHashes } }),
+        ...(Object.keys(completeCspPages).length > 0 && { csp: { pages: completeCspPages } }),
     });
 }
 

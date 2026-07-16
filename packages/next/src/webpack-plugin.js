@@ -65,7 +65,10 @@ export class DappfenceWebpackPlugin {
     }
 
     async _copyDappfenceJs(projectRoot) {
-        const dappfenceJsPath = _require.resolve('@dappfence/core');
+        const isDevBuild = this.opts.scriptSrc.endsWith('.dev.js');
+        const dappfenceJsPath = isDevBuild
+            ? _require.resolve('@dappfence/core/dev')
+            : _require.resolve('@dappfence/core');
         const publicDir = path.join(projectRoot, 'public');
         await fs.mkdir(publicDir, { recursive: true });
         const destRel = this.opts.scriptSrc.replace(/^\//, '');
