@@ -252,16 +252,7 @@ export const createVerifier = ({ swContext, appStore, config }, manifestLoader) 
     };
 
     const verifyResponse = async (req, response, clientId, latestManifest) => {
-        if (!response) {
-            logger.log(`⏭️  Error: null response`);
-            return result({ status: VERIFICATION_STATUS.ERROR });
-        }
-
         const fileKey = toPathname(req.url, locationHref);
-        if (fileKey === manifestFileKey) {
-            return storeManifestFromResponse(response);
-        }
-
         // fileKey from fields overrides the default (resolveManifestKey may differ);
         // assetType is last so it always wins.
         const result = (fields) => ({
@@ -270,6 +261,15 @@ export const createVerifier = ({ swContext, appStore, config }, manifestLoader) 
             ...fields,
             assetType: ASSET_TYPE.ASSET,
         });
+
+        if (!response) {
+            logger.log(`⏭️  Error: null response`);
+            return result({ status: VERIFICATION_STATUS.ERROR });
+        }
+
+        if (fileKey === manifestFileKey) {
+            return await storeManifestFromResponse(response.clone());
+        }
 
         // Allow rule pre-check: if the manifest explicitly allows this request,
         // skip verification before shouldSkipVerification runs — so the opaque

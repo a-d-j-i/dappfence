@@ -148,9 +148,70 @@ describe('gate checks', () => {
         const req = makeSubResource('/integrity-manifest.json');
         const response = makeOkResponse();
         const result = await verify(req, response);
-        expect(storeManifestFromResponse).toHaveBeenCalledWith(response);
+        expect(response.clone).toHaveBeenCalled();
+        const clonedResponse = response.clone.mock.results[0].value;
+        expect(storeManifestFromResponse).toHaveBeenCalledWith(clonedResponse);
         expect(fetchAndStoreManifest).not.toHaveBeenCalled();
         expect(result.status).toBe(VERIFICATION_STATUS.MATCH);
+    });
+});
+
+// ── manifest response clone ───────────────────────────────────────────────────
+
+describe('manifest self-verification — response clone', () => {
+    it('passes a clone to storeManifestFromResponse so the original body stays unconsumed', async () => {
+        // storeManifestFromResponse calls .json(), consuming whatever response it receives.
+        // Without .clone(), the original response body would be used up here, and
+        // the fetch handler's event.respondWith(response) would throw "body already used".
+        let originalConsumed = false;
+        let cloneConsumed = false;
+
+        const clonedResponse = {
+            ok: true,
+            type: 'basic',
+            json: vi.fn(async () => {
+                cloneConsumed = true;
+                return {};
+            }),
+        };
+        const response = {
+            ok: true,
+            type: 'basic',
+            clone: vi.fn(() => clonedResponse),
+            json: vi.fn(async () => {
+                originalConsumed = true;
+                return {};
+            }),
+            arrayBuffer: vi.fn(() => Promise.resolve(new ArrayBuffer(8))),
+        };
+
+        const storeManifestFromResponse = vi.fn(async (r) => {
+            await r.json();
+            return { status: VERIFICATION_STATUS.MATCH, appVersion: 'v1', manifest: MANIFEST_V1 };
+        });
+
+        const { verifyResponse } = createVerifier(
+            {
+                swContext: makeSwContext(),
+                appStore: makeAppStore(),
+                config: { manifestUrl: 'https://example.com/integrity-manifest.json' },
+            },
+            {
+                storeManifestFromResponse,
+                fetchAndStoreManifest: vi.fn(),
+                getManifestHistory: vi.fn(() => Promise.resolve([])),
+            }
+        );
+
+        await verifyResponse(
+            makeSubResource('/integrity-manifest.json'),
+            response,
+            'client-1',
+            null
+        );
+
+        expect(cloneConsumed).toBe(true);
+        expect(originalConsumed).toBe(false);
     });
 });
 
