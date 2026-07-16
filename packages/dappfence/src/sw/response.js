@@ -80,7 +80,7 @@ function createJavascriptRedirectResponse() {
         'Content-Type': 'application/javascript; charset=utf-8',
         'Cache-Control': 'no-cache, no-store, must-revalidate',
         'X-Frame-Options': 'DENY',
-        'Content-Security-Policy': "default-src 'self'; object-src 'none'; base-uri 'self';",
+        'Content-Security-Policy': "default-src 'self'; object-src 'none'; base-uri 'none';",
     });
 }
 
@@ -219,7 +219,7 @@ export function createSecurityPageResponse(apiToken, activeBlocks) {
             'Cache-Control': 'no-cache, no-store, must-revalidate',
             'X-Frame-Options': 'DENY',
             'Content-Security-Policy':
-                "default-src 'unsafe-inline' 'self'; object-src 'none'; base-uri 'self';",
+                "default-src 'unsafe-inline' 'self'; object-src 'none'; base-uri 'none';",
         },
     });
 }

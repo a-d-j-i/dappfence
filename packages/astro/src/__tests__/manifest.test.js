@@ -11,6 +11,9 @@ import {
     buildPathRules,
     buildContentRules,
     extractDynamicRoutes,
+    extractProbedPatterns,
+    routePatternToProbeUrl,
+    routePatternToPrefixKey,
     generateManifest,
 } from '../manifest.js';
 
@@ -198,6 +201,110 @@ describe('buildPageSet', () => {
     });
 });
 
+// ── routePatternToProbeUrl ────────────────────────────────────────────────────
+
+describe('routePatternToProbeUrl', () => {
+    it('replaces a single param segment', () => {
+        expect(routePatternToProbeUrl('/partials/dynamic/[id]')).toBe(
+            '/partials/dynamic/__probe__'
+        );
+    });
+
+    it('replaces multiple param segments', () => {
+        expect(routePatternToProbeUrl('/blog/[category]/[slug]')).toBe('/blog/__probe__/__probe__');
+    });
+
+    it('replaces rest params', () => {
+        expect(routePatternToProbeUrl('/api/[...path]')).toBe('/api/__probe__');
+    });
+
+    it('leaves param-free patterns unchanged', () => {
+        expect(routePatternToProbeUrl('/about')).toBe('/about');
+    });
+
+    it('handles root-level param', () => {
+        expect(routePatternToProbeUrl('/[id]')).toBe('/__probe__');
+    });
+});
+
+// ── routePatternToPrefixKey ───────────────────────────────────────────────────
+
+describe('routePatternToPrefixKey', () => {
+    it('returns prefix up to the first param segment', () => {
+        expect(routePatternToPrefixKey('/partials/dynamic/[id]')).toBe('/partials/dynamic/');
+    });
+
+    it('strips to the first param when multiple params exist', () => {
+        expect(routePatternToPrefixKey('/blog/[category]/[slug]')).toBe('/blog/');
+    });
+
+    it('handles rest params', () => {
+        expect(routePatternToPrefixKey('/api/items/[...slug]')).toBe('/api/items/');
+    });
+
+    it('returns "/" for a root-level param', () => {
+        expect(routePatternToPrefixKey('/[id]')).toBe('/');
+    });
+
+    it('returns the pattern unchanged when there are no params', () => {
+        expect(routePatternToPrefixKey('/about')).toBe('/about');
+    });
+});
+
+// ── extractProbedPatterns ──────────────────────────────────────────────────────
+
+describe('extractProbedPatterns', () => {
+    it('returns empty array for null/undefined input', () => {
+        expect(extractProbedPatterns(null)).toEqual([]);
+        expect(extractProbedPatterns(undefined)).toEqual([]);
+        expect(extractProbedPatterns([])).toEqual([]);
+    });
+
+    it('excludes prerendered routes', () => {
+        const routes = [{ pattern: '/blog/[slug]', isPrerendered: true, params: ['slug'] }];
+        expect(extractProbedPatterns(routes)).toEqual([]);
+    });
+
+    it('excludes param-free SSR routes', () => {
+        const routes = [{ pattern: '/live', isPrerendered: false, params: [] }];
+        expect(extractProbedPatterns(routes)).toEqual([]);
+    });
+
+    it('excludes redirect routes', () => {
+        const routes = [
+            { pattern: '/old/[id]', isPrerendered: false, type: 'redirect', params: ['id'] },
+        ];
+        expect(extractProbedPatterns(routes)).toEqual([]);
+    });
+
+    it('excludes internal Astro routes starting with /_', () => {
+        const routes = [
+            {
+                pattern: '/_server-islands/[name]',
+                isPrerendered: false,
+                params: ['name'],
+            },
+        ];
+        expect(extractProbedPatterns(routes)).toEqual([]);
+    });
+
+    it('returns patterns for parameterized SSR routes', () => {
+        const routes = [
+            { pattern: '/', isPrerendered: true, params: [] },
+            { pattern: '/partials/dynamic/[id]', isPrerendered: false, params: ['id'] },
+            {
+                pattern: '/blog/[category]/[slug]',
+                isPrerendered: false,
+                params: ['category', 'slug'],
+            },
+        ];
+        expect(extractProbedPatterns(routes)).toEqual([
+            '/partials/dynamic/[id]',
+            '/blog/[category]/[slug]',
+        ]);
+    });
+});
+
 // ── generateManifest (integration) ───────────────────────────────────────────
 
 async function makeTmpDir() {
@@ -375,11 +482,12 @@ describe('generateManifest', () => {
         expect(manifest.pay).toBeDefined();
     });
 
-    it('includes dynamicRoutes in metadata when routes provided', async () => {
+    it('puts dynamic routes into csp.pages with prefix keys', async () => {
         const outDir = await setup();
         const routes = [
             { pattern: '/', isPrerendered: true },
             { pattern: '/api/[id]', isPrerendered: false },
+            { pattern: '/live', isPrerendered: false },
         ];
 
         await generateManifest({
@@ -395,7 +503,10 @@ describe('generateManifest', () => {
 
         const raw = await fs.readFile(path.join(outDir, 'integrity-manifest.json'), 'utf8');
         const manifest = JSON.parse(raw);
-        expect(manifest.pay.metadata.dynamicRoutes).toEqual(['/api/[id]']);
+        expect(manifest.pay.metadata.dynamicRoutes).toBeUndefined();
+        expect(manifest.pay.csp.pages['/api/']).toEqual({ scripts: [], attrs: [] });
+        expect(manifest.pay.csp.pages['/live']).toEqual({ scripts: [], attrs: [] });
+        expect(manifest.pay.csp.pages['/']).toBeUndefined();
     });
 
     it('emits directory-index pathRules by default', async () => {
@@ -433,7 +544,7 @@ describe('generateManifest', () => {
         expect(manifest.pay.pathRules).toEqual([{ type: 'html-extension' }]);
     });
 
-    it('emits empty contentRules when not on Netlify', async () => {
+    it('emits only CSP document rules when not on Netlify', async () => {
         const outDir = await setup();
         await generateManifest({
             outDir,
@@ -447,10 +558,13 @@ describe('generateManifest', () => {
         const manifest = JSON.parse(
             await fs.readFile(path.join(outDir, 'integrity-manifest.json'), 'utf8')
         );
-        expect(manifest.pay.contentRules).toEqual([]);
+        expect(manifest.pay.contentRules).toEqual([
+            { condition: { resourceTypes: ['document'] }, action: { type: 'csp' } },
+            { condition: { resourceTypes: ['document'] }, action: { type: 'verify' } },
+        ]);
     });
 
-    it('emits netlify-cdp contentRule when netlify: true option is set', async () => {
+    it('emits netlify-cdp contentRule when netlify: true option is set (after CSP rules)', async () => {
         const outDir = await setup();
         await generateManifest({
             outDir,
@@ -464,7 +578,9 @@ describe('generateManifest', () => {
         const manifest = JSON.parse(
             await fs.readFile(path.join(outDir, 'integrity-manifest.json'), 'utf8')
         );
-        expect(manifest.pay.contentRules).toHaveLength(3);
-        expect(manifest.pay.contentRules[0].action.transform).toBe('netlify-cdp');
+        expect(manifest.pay.contentRules).toHaveLength(5);
+        expect(manifest.pay.contentRules[0].action.type).toBe('csp');
+        expect(manifest.pay.contentRules[1].action.type).toBe('verify');
+        expect(manifest.pay.contentRules[2].action.transform).toBe('netlify-cdp');
     });
 });

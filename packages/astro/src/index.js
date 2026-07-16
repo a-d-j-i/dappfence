@@ -24,14 +24,20 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
     generateManifest,
-    extractTier1Routes,
-    extractTier2Routes,
+    extractFixedRoutes,
+    extractEnumerableRoutes,
+    extractProbedPatterns,
     hashSSRRoutes,
+    sriHash,
 } from './manifest.js';
 
 const _require = createRequire(import.meta.url);
 const { deriveIdentity } = _require('@dappfence/manifest-tools');
-const DAPPFENCE_JS_PATH = _require.resolve('@dappfence/core');
+
+const resolveDappfenceJsPath = (scriptSrc) =>
+    scriptSrc.endsWith('.dev.js')
+        ? _require.resolve('@dappfence/core/dev')
+        : _require.resolve('@dappfence/core');
 
 const DEFAULTS = {
     scriptSrc: '/dappfence.js',
@@ -105,10 +111,19 @@ export default function dappfence(options = {}) {
                 const destRel = opts.scriptSrc.replace(/^\//, '');
                 const destAbs = path.join(outDir, destRel);
                 await fs.mkdir(path.dirname(destAbs), { recursive: true });
-                await fs.copyFile(DAPPFENCE_JS_PATH, destAbs);
+                await fs.copyFile(resolveDappfenceJsPath(opts.scriptSrc), destAbs);
                 logger.info(`DappFence: copied dappfence.js → ${destRel}`);
 
+                // Hash the copied file and add explicitly to extraHashes so it is
+                // always in the manifest under the exact scriptSrc URL. Also exclude
+                // it from the walk so stale dappfence build files in outDir cannot
+                // appear in the manifest under the wrong key.
+                const scriptSrcWebKey = (resolvedBase || '') + opts.scriptSrc;
+                const dappfenceScriptHash = sriHash(await fs.readFile(destAbs));
+
+                const scriptHash = { [scriptSrcWebKey]: dappfenceScriptHash };
                 let extraHashes = null;
+                let cspPages = null;
                 // config.build.server is set by the adapter after astro:config:setup runs,
                 // so fall back to the conventional sibling server/ directory.
                 const serverDir = resolvedServerDir ?? path.join(path.dirname(outDir), 'server');
@@ -118,19 +133,27 @@ export default function dappfence(options = {}) {
                     .then(() => true)
                     .catch(() => false);
 
-                const tier1Routes = extractTier1Routes(resolvedRoutes);
-                const tier2Routes = entryExists
-                    ? await extractTier2Routes(resolvedRoutes, serverDir, logger)
+                const fixedRoutes = extractFixedRoutes(resolvedRoutes);
+                const enumerableRoutes = entryExists
+                    ? await extractEnumerableRoutes(resolvedRoutes, serverDir, logger)
                     : [];
                 const prefixRoute = resolvedBase ? (r) => resolvedBase + r : (r) => r;
-                const allSSRRoutes = [...tier1Routes, ...tier2Routes].map(prefixRoute);
+                const allSSRRoutes = [...fixedRoutes, ...enumerableRoutes].map(prefixRoute);
+                const probedPatterns = extractProbedPatterns(resolvedRoutes).map(prefixRoute);
 
-                if (allSSRRoutes.length) {
+                if (allSSRRoutes.length || probedPatterns.length) {
                     if (entryExists) {
                         logger.info(
-                            `DappFence: hashing ${tier1Routes.length} Tier-1, ${tier2Routes.length} Tier-2 SSR route(s) via ${path.relative(path.dirname(outDir), entryMjsPath)}`
+                            `DappFence: hashing ${fixedRoutes.length} fixed, ${enumerableRoutes.length} enumerable SSR route(s)${probedPatterns.length ? `, probing ${probedPatterns.length} probed pattern(s)` : ''} via ${path.relative(path.dirname(outDir), entryMjsPath)}`
                         );
-                        extraHashes = await hashSSRRoutes(entryMjsPath, allSSRRoutes, logger);
+                        const result = await hashSSRRoutes(
+                            entryMjsPath,
+                            allSSRRoutes,
+                            logger,
+                            probedPatterns
+                        );
+                        extraHashes = result.bodyHashes;
+                        cspPages = result.cspPages;
                     } else {
                         logger.warn(
                             'DappFence: SSR routes found but no server/entry.mjs detected; add an SSR adapter to hash them'
@@ -140,6 +163,10 @@ export default function dappfence(options = {}) {
 
                 await generateManifest({
                     ...opts,
+                    // Exclude the dappfence script from the walk — it is added
+                    // explicitly via extraHashes above so only the configured
+                    // scriptSrc URL appears in the manifest.
+                    exclude: [...(opts.exclude || []), scriptSrcWebKey],
                     secretKey,
                     outDir,
                     pages,
@@ -148,7 +175,8 @@ export default function dappfence(options = {}) {
                     base: resolvedBase,
                     scriptAttrs: opts,
                     logger,
-                    ...(extraHashes && { extraHashes }),
+                    extraHashes: { ...scriptHash, ...(extraHashes || {}) },
+                    ...(cspPages && Object.keys(cspPages).length > 0 && { cspPages }),
                 });
             },
         },

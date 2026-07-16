@@ -28,7 +28,7 @@ test.describe('CSP injection', () => {
         expect(csp).toContain('script-src-elem');
         expect(csp).toContain('*');
         expect(csp).toContain("object-src 'none'");
-        expect(csp).toContain("base-uri 'self'");
+        expect(csp).toContain("base-uri 'none'");
         expect(csp).toContain('report-uri');
     });
 
@@ -129,10 +129,10 @@ test.describe('CSP injection', () => {
         // docs/js-execution-vectors.md). No legitimate use case requires plugin embeds.
         expect(csp).toContain("object-src 'none'");
 
-        // base-uri 'self': prevents <base href> injection. Without this, an attacker who
-        // can inject a <base> tag can redirect all relative URLs (including script src
-        // attributes) to an attacker-controlled origin.
-        expect(csp).toContain("base-uri 'self'");
+        // base-uri 'none': blocks any <base href> — even same-origin. Tightens 'self'
+        // by refusing base-URL manipulation entirely; Next.js and Astro don't emit
+        // <base>, so this doesn't break the frameworks DappFence targets.
+        expect(csp).toContain("base-uri 'none'");
 
         // frame-ancestors 'none': prevents the page from being loaded inside an iframe,
         // closing clickjacking and UI-redressing attack vectors.

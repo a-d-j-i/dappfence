@@ -6,6 +6,7 @@ const { promises: fs } = require('fs');
 const path = require('path');
 const { calculateFileHash, signManifest } = require('./build');
 const { TRANSFORM } = require('@dappfence/core/constants');
+const { extractInlineHashesFromHtml } = require('./inline-scripts');
 
 const CDP_SCRIPT_PATH = '/.netlify/scripts/cdp';
 
@@ -147,6 +148,10 @@ async function walk(base, dir, excludes, pathPrefix = '') {
  *                                           (e.g. SSR routes hashed by the integration at build time)
  * @param {string}   [opts.pathPrefix]      - URL prefix prepended to every hashed file's web path.
  *                                           Use when outDir maps to a URL sub-path (e.g. '/_next/static').
+ * @param {object}   [opts.csp]             - CSP configuration merged into the manifest.
+ *   @param {string[]} [opts.csp.connectOrigins] - Extra origins for connect-src.
+ *   @param {object}   [opts.csp.pages]          - Pre-built { pageKey: {scripts,attrs} } map for SSR routes.
+ *                                                 Static HTML pages are extracted automatically during the walk.
  */
 async function generateManifest({
     outDir,
@@ -154,7 +159,6 @@ async function generateManifest({
     exclude,
     secretKey,
     mode,
-    dynamicRoutes,
     pathRules,
     contentRules,
     pageFilter,
@@ -162,18 +166,16 @@ async function generateManifest({
     logger,
     extraHashes,
     pathPrefix = '',
+    csp,
 }) {
     const excludes = [...(exclude || []), pathPrefix + '/' + manifestPath];
     const isPage = pageFilter || ((_webPath, ext) => ext === '.html' || ext === '.htm');
-
-    if (dynamicRoutes?.length) {
-        logger.info(`DappFence: ${dynamicRoutes.length} dynamic (SSR) routes captured`);
-    }
 
     const files = await walk(outDir, outDir, excludes, pathPrefix);
     logger.info(`DappFence: hashing ${files.length} files`);
 
     const fileHashes = {};
+    const cspBuiltPages = {};
     for (const { webPath, absPath, ext } of files) {
         let buf = await fs.readFile(absPath);
 
@@ -188,6 +190,21 @@ async function generateManifest({
         }
 
         fileHashes[webPath] = calculateFileHash(buf);
+
+        if (isPage(webPath, ext)) {
+            try {
+                const html = buf.toString('utf8');
+                const { scripts, attrs, warnings } = extractInlineHashesFromHtml(html);
+                for (const w of warnings) {
+                    logger.warn(`DappFence: ${webPath}: ${w}`);
+                }
+                if (scripts.length || attrs.length) {
+                    cspBuiltPages[webPath] = { scripts, attrs };
+                }
+            } catch (err) {
+                logger.warn(`DappFence: CSP hash extraction failed for ${webPath}: ${err.message}`);
+            }
+        }
     }
 
     if (extraHashes) {
@@ -196,23 +213,26 @@ async function generateManifest({
         logger.info(`DappFence: merged ${count} pre-computed SSR route hash(es) into manifest`);
     }
 
-    const hashedPaths = extraHashes
-        ? new Set(Object.keys(extraHashes).map((p) => p.replace(/\/$/, '')))
-        : null;
-    const effectiveDynamicRoutes =
-        hashedPaths && dynamicRoutes?.length
-            ? dynamicRoutes.filter((r) => !hashedPaths.has(r.replace(/\/$/, '')))
-            : dynamicRoutes ?? [];
+    const cspPages = { ...cspBuiltPages, ...(csp?.pages ?? {}) };
+    const cspDocRule = { condition: { resourceTypes: ['document'] }, action: { type: 'csp' } };
+    const cspVerifyRule = {
+        condition: { resourceTypes: ['document'] },
+        action: { type: 'verify' },
+    };
+    const effectiveContentRules = [cspDocRule, cspVerifyRule, ...(contentRules ?? [])];
 
     const payload = {
         files: fileHashes,
         pathRules: pathRules ?? [],
-        contentRules: contentRules ?? [],
+        contentRules: effectiveContentRules,
         mode,
+        csp: {
+            connectOrigins: csp?.connectOrigins ?? [],
+            pages: cspPages,
+        },
         metadata: {
             buildTime: new Date().toISOString(),
             version: 'latest',
-            ...(effectiveDynamicRoutes.length && { dynamicRoutes: effectiveDynamicRoutes }),
         },
     };
 

@@ -59,7 +59,7 @@ export function buildCspHeader(manifest, pageKey, apiToken) {
         `connect-src ${connectSrcParts.join(' ')}`,
         "worker-src 'self'",
         "object-src 'none'",
-        "base-uri 'self'",
+        "base-uri 'none'",
         "frame-ancestors 'none'",
         `report-uri ${reportUri}`,
     ];

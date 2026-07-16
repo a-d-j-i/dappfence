@@ -123,19 +123,19 @@ For details on the manifest format, signature scheme, and verification internals
 ## SSR Support
 
 When using `@astrojs/node` in standalone mode, the integration hashes SSR routes at build time by
-spinning up the compiled server and fetching them. Routes are handled in three tiers:
+spinning up the compiled server and fetching them. Routes are handled in three classes:
 
-### Tier 1 — Param-free SSR routes
+### fixedRoute — Param-free SSR routes
 
 Routes with no URL parameters (e.g. `/api/version.json`, `/partials/tech-stack`) have a fixed URL
 and a deterministic response body. The integration fetches each one and adds its hash to the
 manifest automatically — no configuration needed.
 
-### Tier 2 — Parameterized routes with `getStaticPaths()`
+### enumerableRoute — Parameterized routes with `getStaticPaths()`
 
 Routes that have URL parameters but declare their full set of valid instances via `getStaticPaths()`
 (e.g. `/snippets/[id]`). The integration calls `getStaticPaths()` at build time to enumerate every
-concrete path, then hashes each one exactly like a Tier 1 route.
+concrete path, then hashes each one exactly like a fixedRoute.
 
 ```js
 // src/pages/snippets/[id].astro
@@ -148,18 +148,18 @@ export function getStaticPaths() {
 
 No options or annotations needed — the integration discovers and hashes these automatically.
 
-### Tier 3 — Truly dynamic SSR (not supported)
+### probedRoute — Truly dynamic SSR (not supported)
 
 Routes whose output depends on user sessions, database queries, or unbounded query parameters cannot
-be hashed at build time. They are recorded in the manifest `metadata.dynamicRoutes` field but are
-not verified by the service worker. This is a known limitation — see
+be hashed at build time. They receive an empty CSP entry (`{ scripts: [], attrs: [] }`) in the
+manifest, which blocks all inline scripts on that page. This is a known limitation — see
 [Current Limitations](#current-limitations).
 
 ### Adapter requirement
 
-SSR hashing (Tier 1 and Tier 2) requires the `@astrojs/node` adapter in `standalone` mode. Other
-adapters (Vercel, Netlify, Cloudflare) are not supported for SSR hashing — static files are still
-fully verified, but SSR routes will fall through to `dynamicRoutes` metadata only.
+SSR hashing (fixedRoute and enumerableRoute) requires the `@astrojs/node` adapter in `standalone`
+mode. Other adapters (Vercel, Netlify, Cloudflare) are not supported for SSR hashing — static files
+are still fully verified, but SSR routes will receive empty CSP entries only.
 
 ```js
 import node from '@astrojs/node';
@@ -172,9 +172,9 @@ export default defineConfig({
 
 ## Current Limitations
 
--   **Tier 3 SSR (dynamic params without `getStaticPaths`) is not supported.** Routes whose
-    parameter space cannot be enumerated at build time remain outside the verification boundary and
-    are recorded in the manifest as `dynamicRoutes` metadata only.
+-   **probedRoute SSR (dynamic params without `getStaticPaths`) is not fully supported.** Routes
+    whose parameter space cannot be enumerated at build time receive an empty CSP entry — all inline
+    scripts on those pages are blocked until hashes are recorded.
 
 -   **Dev server is unprotected.** `astro dev` is intentionally skipped. Security testing must be
     done against `astro build` output served with `astro preview` or a static file server.

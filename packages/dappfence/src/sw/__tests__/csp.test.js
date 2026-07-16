@@ -11,7 +11,7 @@ describe('buildCspHeader', () => {
         expect(header).toContain("connect-src 'self'");
         expect(header).toContain("default-src 'none'");
         expect(header).toContain("object-src 'none'");
-        expect(header).toContain("base-uri 'self'");
+        expect(header).toContain("base-uri 'none'");
         expect(header).toContain("frame-ancestors 'none'");
         expect(header).toContain(REPORT_URI);
         expect(header).not.toContain('sha256-');
