@@ -7,6 +7,7 @@ import { monkeyPatch, secureMonkeyPatch, verifyPatchIntegrity } from '../core/mo
 import { notifyServiceWorkerReady, setupSecurityMessageListener } from './security-handler.js';
 import { hasConfigManifest } from '../core/utils.js';
 import { MSG } from '../core/constants.js';
+import { createEmergencyPanel } from '../core/emergency-panel.js';
 
 const logger = createLogger();
 
@@ -286,6 +287,19 @@ export async function initializeClient() {
         logger.log('Standalone SW registration failed:', err);
     }
 
+    const request = indexedDB.open('AppSecurityWatchdog', 1);
+    request.onerror = () => console.error(request.error);
+    request.onsuccess = (event) => {
+        const db = event.target.result;
+        db.onclose = () => {
+            logger.warn('Watchdog database closed, EMERGENCY!!!');
+            // We cannot register the standalone SW during an emergency there is a race condition we must debug.
+            // originalRegister(standaloneUrl, { updateViaCache: 'all' }).catch((err) =>
+            //     logger.error('Error trying to register dappfence during an EMERGENCY', err)
+            // );
+            document.documentElement.innerHTML = createEmergencyPanel();
+        };
+    };
     // PHASE 2: Wait until SW claims control (or is already controlled)
     await waitForControllerClaim();
 

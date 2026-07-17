@@ -7,6 +7,7 @@
  */
 
 export function createDatabase(idb) {
+    let closed = false;
     function openDatabase() {
         return new Promise((resolve, reject) => {
             const request = idb.open('AppSecurity', 1);
@@ -18,9 +19,18 @@ export function createDatabase(idb) {
                     db.createObjectStore('data');
                 }
             };
+            request.onsuccess = (event) => {
+                const db = event.target.result;
+                db.onclose = () => {
+                    closed = true;
+                };
+                resolve(db);
+            };
         });
     }
-
+    function isClosed() {
+        return closed;
+    }
     async function get(key) {
         const db = await openDatabase();
         return new Promise((resolve, reject) => {
@@ -81,5 +91,5 @@ export function createDatabase(idb) {
         });
     }
 
-    return { get, set, delete: del, withTx };
+    return { get, set, delete: del, withTx, isClosed };
 }

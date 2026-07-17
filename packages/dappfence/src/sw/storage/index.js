@@ -122,8 +122,13 @@ export function createAppStore(db, { userAgent, origin } = {}) {
         }
     }
 
+    function isClosed() {
+        return db.isClosed();
+    }
+
     return {
         ...createManifestStore(db),
+        isClosed,
         activeBlocksStore,
         securityEventsStore,
         apiTokenStore: createApiTokenStore(db),
