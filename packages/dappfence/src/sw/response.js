@@ -3,10 +3,7 @@ import securityWarningHtml from '../templates/security-warning.html?raw';
 import securityWarningCss from '../templates/security-warning.css?raw';
 import { isFeatureEnabled } from '../core/utils.js';
 import { API } from '../core/constants.js';
-import { calculateHash } from '../core/crypto.js';
-import { EMERGENCY_PANEL_STYLE, createEmergencyPanel } from '../core/emergency-panel.js';
-
-const emergencyStyleHash = calculateHash(new TextEncoder().encode(EMERGENCY_PANEL_STYLE));
+import { createEmergencyPanel } from '../core/emergency-panel.js';
 
 // CSS and the build-time feature flag are static across all renders — fold
 // them into the template once at a module load instead of repeating the work
@@ -180,8 +177,9 @@ export function createSecurityPageResponse(apiToken, activeBlocks) {
     });
 }
 
-export async function createEmergencyPanelResponse() {
-    const styleHash = await emergencyStyleHash;
+export function createEmergencyPanelResponse() {
+    // __EMERGENCY_STYLE_HASH__ is injected at build time by vite.config.js
+    const styleHash = __EMERGENCY_STYLE_HASH__;
     const nonce = crypto.randomUUID().replace(/-/g, '');
     return createResponse(`<!DOCTYPE html><html>${createEmergencyPanel(nonce)}</html>`, 200, {
         'Content-Type': 'text/html; charset=utf-8',

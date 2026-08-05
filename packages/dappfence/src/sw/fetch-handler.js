@@ -159,7 +159,8 @@ export function createSecurityFetchHandler({
             'color:cyan'
         );
         if (appStore.isClosed()) {
-            return await createEmergencyPanelResponse();
+            logger.warn('AppStore database closed, EMERGENCY!!!');
+            return createEmergencyPanelResponse();
         }
         return await applyIntegrityPolicy(ctx, preparedRequest, response, clientId);
     }

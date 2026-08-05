@@ -293,7 +293,7 @@ export async function initializeClient() {
         const db = event.target.result;
         db.onclose = () => {
             logger.warn('Watchdog database closed, EMERGENCY!!!');
-            // We cannot register the standalone SW during an emergency there is a race condition we must debug.
+            // Re-registering doesn't make sense if the server is already taken.
             // originalRegister(standaloneUrl, { updateViaCache: 'all' }).catch((err) =>
             //     logger.error('Error trying to register dappfence during an EMERGENCY', err)
             // );

@@ -729,6 +729,19 @@
                         <button class="btn" onclick="devSetClearSiteData('&quot;*&quot;')">
                             Clear-Site-Data: "*" on /
                         </button>
+                    </div>
+                    <div class="btn-row" style="margin-top: var(--space-1)">
+                        <button
+                            class="btn"
+                            onclick="devSetClearSiteData('&quot;*&quot;', '/sign.html')"
+                        >
+                            Clear-Site-Data: "*" on /sign.html
+                        </button>
+                        <a href="/sign.html" target="_blank" class="btn btn--secondary">
+                            Open /sign.html
+                        </a>
+                    </div>
+                    <div class="btn-row" style="margin-top: var(--space-1)">
                         <button
                             class="btn"
                             onclick="devSetClearSiteData('&quot;*&quot;', '/xslt-safety-test.xml')"
@@ -802,7 +815,7 @@
                             pattern: '/integrity-manifest.json',
                             formula: 'unchanged',
                         },
-                        { pattern: '/', formula: 'replace', args: 'withoutDappfence.html' },
+                        { pattern: '^/$', formula: 'replace', args: 'withoutDappfence.html' },
                     ],
                     responseHeaders: [
                         {
