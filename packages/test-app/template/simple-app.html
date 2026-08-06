@@ -751,6 +751,9 @@
                         <a href="/xslt-safety-test.xml" target="_blank" class="btn btn--secondary">
                             Open /xslt-safety-test.xml
                         </a>
+                        <button class="btn btn--secondary" onclick="devFetchXslt()">
+                            fetch /xslt-safety-test.xml
+                        </button>
                     </div>
                 </div>
 
@@ -837,6 +840,18 @@
                     `Clear-Site-Data: ${value} armed — navigate to / to trigger`,
                     'var(--color-warn)'
                 );
+            }
+
+            async function devFetchXslt() {
+                try {
+                    const res = await fetch('/xslt-safety-test.xml');
+                    _devToast(`fetch /xslt-safety-test.xml → ${res.status} ${res.statusText}`);
+                } catch (err) {
+                    _devToast(
+                        `fetch /xslt-safety-test.xml failed: ${err.message}`,
+                        'var(--color-danger)'
+                    );
+                }
             }
 
             async function devClearIntercept() {

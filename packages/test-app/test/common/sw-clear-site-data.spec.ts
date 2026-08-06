@@ -124,7 +124,7 @@ test.describe('Clear-Site-Data: SW-side detection via isClosed()', () => {
     });
 });
 
-test.describe.only('Clear-Site-Data: "*" on a navigation opened in a new tab', () => {
+test.describe('Clear-Site-Data: "*" on a navigation opened in a new tab', () => {
     test.beforeEach(async ({ page, swHelper }, testInfo) => {
         await page.goto('');
         await expect(page).toHaveTitle('DappFence - Manifest Mode Example');
