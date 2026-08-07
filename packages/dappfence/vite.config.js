@@ -2,15 +2,9 @@ import { defineConfig } from 'vite';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { readFileSync } from 'fs';
-import { createHash } from 'crypto';
 import obfuscator from 'vite-plugin-bundle-obfuscator';
-import { EMERGENCY_PANEL_STYLE } from './src/core/emergency-panel.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-
-const emergencyStyleHash =
-    'sha256-' +
-    createHash('sha256').update(Buffer.from(EMERGENCY_PANEL_STYLE, 'utf-8')).digest('base64');
 
 export default defineConfig(({ mode }) => ({
     // Build configuration for single file output
@@ -74,7 +68,6 @@ export default defineConfig(({ mode }) => ({
         __VERSION__: JSON.stringify(process.env.npm_package_version || '0.1.0'),
         __BUILD_DATE__: JSON.stringify(new Date().toISOString()),
         __DEV__: mode !== 'production',
-        __EMERGENCY_STYLE_HASH__: JSON.stringify(emergencyStyleHash),
     },
 
     // Vite cache (avoid node_modules inside this package)

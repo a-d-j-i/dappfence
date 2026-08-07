@@ -66,7 +66,6 @@ export default [
                 __BUILD_DATE__: 'readonly',
                 __DEV__: 'readonly',
                 __FEATURES__: 'readonly',
-                __EMERGENCY_STYLE_HASH__: 'readonly',
             },
         },
         rules: {

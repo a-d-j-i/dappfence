@@ -3,7 +3,6 @@ import securityWarningHtml from '../templates/security-warning.html?raw';
 import securityWarningCss from '../templates/security-warning.css?raw';
 import { isFeatureEnabled } from '../core/utils.js';
 import { API } from '../core/constants.js';
-import { createEmergencyPanel } from '../core/emergency-panel.js';
 
 // CSS and the build-time feature flag are static across all renders — fold
 // them into the template once at a module load instead of repeating the work
@@ -174,17 +173,5 @@ export function createSecurityPageResponse(apiToken, activeBlocks) {
             'Content-Security-Policy':
                 "default-src 'unsafe-inline' 'self'; object-src 'none'; base-uri 'self';",
         },
-    });
-}
-
-export function createEmergencyPanelResponse() {
-    // __EMERGENCY_STYLE_HASH__ is injected at build time by vite.config.js
-    const styleHash = __EMERGENCY_STYLE_HASH__;
-    const nonce = crypto.randomUUID().replace(/-/g, '');
-    return createResponse(`<!DOCTYPE html><html>${createEmergencyPanel(nonce)}</html>`, 200, {
-        'Content-Type': 'text/html; charset=utf-8',
-        'Cache-Control': 'no-cache, no-store, must-revalidate',
-        'X-Frame-Options': 'DENY',
-        'Content-Security-Policy': `default-src 'none'; style-src '${styleHash}'; script-src 'nonce-${nonce}'; base-uri 'none';`,
     });
 }

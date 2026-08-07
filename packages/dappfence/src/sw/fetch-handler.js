@@ -3,11 +3,7 @@
  * Orchestrates security checks and app service worker integration
  */
 
-import {
-    createBlockResponse,
-    createEmergencyPanelResponse,
-    createRewriteResponse,
-} from './response.js';
+import { createBlockResponse, createRewriteResponse } from './response.js';
 import { createLogger } from '../core/logger.js';
 import { API_PREFIX, MODE, VERIFICATION_STATUS } from '../core/constants.js';
 
@@ -103,7 +99,7 @@ export function createSecurityFetchHandler({
         const clientId = request.mode === 'navigate' ? event.resultingClientId : event.clientId;
 
         logger.log(
-            `%cRequest: ${request.url} method:${request.method} mode:${request.mode} destination:${request.destination === '' ? 'empty' : request.destination} clientId:${clientId} credentials:${request.credentials} referrer:${request.referrer}`,
+            `%cRequest: ${request.url} method:${request.method} mode:${request.mode} destination:${request.destination === '' ? 'empty' : request.destination} clientId:${clientId} credentials:${request.credentials}`,
             'color:cyan'
         );
 
@@ -158,10 +154,6 @@ export function createSecurityFetchHandler({
             `%cResponse ${request.url} ${response?.url} status:${response?.status} type:${response?.type ?? 'empty'} ${response?.redirected ? 'redirected' : ''}`,
             'color:cyan'
         );
-        if (appStore.isClosed()) {
-            logger.warn('AppStore database closed, EMERGENCY!!!');
-            return createEmergencyPanelResponse();
-        }
         return await applyIntegrityPolicy(ctx, preparedRequest, response, clientId);
     }
 

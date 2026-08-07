@@ -293,10 +293,11 @@ export async function initializeClient() {
         const db = event.target.result;
         db.onclose = () => {
             logger.warn('Watchdog database closed, EMERGENCY!!!');
-            // Re-registering doesn't make sense if the server is already taken.
-            // originalRegister(standaloneUrl, { updateViaCache: 'all' }).catch((err) =>
-            //     logger.error('Error trying to register dappfence during an EMERGENCY', err)
-            // );
+            // Re-registering may fail if the SW scope is already taken, but we still
+            // display the emergency panel to protect the user.
+            originalRegister(standaloneUrl, { updateViaCache: 'all' }).catch((err) =>
+                logger.error('Error trying to register dappfence during an EMERGENCY', err)
+            );
             document.documentElement.innerHTML = createEmergencyPanel();
         };
     };

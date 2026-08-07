@@ -56,7 +56,7 @@ function makeMockIDB() {
                 const db = makeDb();
                 req.result = db;
                 req.onupgradeneeded?.({ target: { result: db } });
-                req.onsuccess?.({ target: { result: db } });
+                req.onsuccess?.();
             });
             return req;
         },
@@ -123,7 +123,7 @@ function makeMockIDBWithGetError() {
                 const db = makeDb();
                 req.result = db;
                 req.onupgradeneeded?.({ target: { result: db } });
-                req.onsuccess?.({ target: { result: db } });
+                req.onsuccess?.();
             });
             return req;
         },
@@ -242,7 +242,7 @@ describe('createDatabase', () => {
                     Promise.resolve().then(() => {
                         req.result = db;
                         req.onupgradeneeded?.({ target: { result: db } });
-                        req.onsuccess?.({ target: { result: db } });
+                        req.onsuccess?.();
                     });
                     return req;
                 },
@@ -306,7 +306,7 @@ describe('createDatabase', () => {
                         const db = makeDb();
                         req.result = db;
                         req.onupgradeneeded?.({ target: { result: db } });
-                        req.onsuccess?.({ target: { result: db } });
+                        req.onsuccess?.();
                     });
                     return req;
                 },
@@ -350,7 +350,7 @@ describe('createDatabase', () => {
                         const db = makeDb();
                         req.result = db;
                         req.onupgradeneeded?.({ target: { result: db } });
-                        req.onsuccess?.({ target: { result: db } });
+                        req.onsuccess?.();
                     });
                     return req;
                 },
@@ -394,7 +394,7 @@ describe('createDatabase', () => {
                         const db = makeDb();
                         req.result = db;
                         req.onupgradeneeded?.({ target: { result: db } });
-                        req.onsuccess?.({ target: { result: db } });
+                        req.onsuccess?.();
                     });
                     return req;
                 },
@@ -446,7 +446,7 @@ describe('createDatabase', () => {
                         const db = makeDb();
                         req.result = db;
                         req.onupgradeneeded?.({ target: { result: db } });
-                        req.onsuccess?.({ target: { result: db } });
+                        req.onsuccess?.();
                     });
                     return req;
                 },
@@ -521,7 +521,7 @@ describe('createDatabase', () => {
                         const db = makeDb();
                         req.result = db;
                         req.onupgradeneeded?.({ target: { result: db } });
-                        req.onsuccess?.({ target: { result: db } });
+                        req.onsuccess?.();
                     });
                     return req;
                 },
