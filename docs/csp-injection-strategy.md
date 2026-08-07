@@ -2,15 +2,129 @@
 
 ## Approach
 
-The service worker injects a `Content-Security-Policy` header into navigation responses before they
-reach the browser. The policy is derived entirely from the signed manifest — no HTML parsing by
-DappFence is required. The browser enforces CSP with its own parser.
+The service worker intercepts navigation responses and applies two transformations:
 
-```js
-new Response(response.body, {
-    headers: { ...response.headers, 'Content-Security-Policy': buildPolicy(manifest, pageKey) },
-});
+**1. CSP header injection** — a `Content-Security-Policy` header is added, derived entirely from the
+signed manifest. The browser enforces the policy with its own parser.
+
+**2. HTML head injection (Tier 2 only)** — for SSR pages without a full-body hash, the SW also
+rewrites the response body stream. It locates the `<head>` opening tag and injects two elements
+immediately after it, before any page-authored content reaches the browser:
+
+```html
+<script type="application/json" id="__df_csp_hashes">
+    [hash1, hash2, ...]
+</script>
+<script
+    src="/dappfence.js"
+    data-manifest="..."
+    data-manifest-signature-identity="..."
+    data-manifest-signature-type="..."
+></script>
 ```
+
+`__df_csp_hashes` comes first because `<script src="...">` is parser-blocking: the HTML parser stops
+when it reaches `dappfence.js` and does not process any subsequent elements until the script has
+executed. Placing the JSON element before it ensures the data is already in the DOM when
+`dappfence.js` runs. An attacker who controls the server response cannot remove or preempt either
+element — they arrive in the SW-controlled stream before any server-authored content.
+
+The injection uses a streaming byte-level HTML tokenizer (`html-tokenizer.js`) operating on
+`Uint8Array` chunks. Only the preamble is buffered; everything after `<head>` streams through
+untouched.
+
+### Preamble scanner
+
+The preamble scanner operates at the byte level on `Uint8Array` chunks. It finds the `<head>`
+opening tag, validates everything before it, and returns the byte offset immediately after `>` — the
+injection point. Everything from that offset onwards is forwarded verbatim without further
+inspection.
+
+The scanner enforces a strict allowlist: anything not listed below is a violation and blocks the
+response. This keeps parsing rules simple; edge cases become violations rather than special
+handling.
+
+**Byte limit:** 8 KB. Exceeding it is a violation.
+
+#### Accepted token sequence
+
+1. **BOM** (optional, first bytes only)
+
+    - UTF-8 BOM `EF BB BF` — skip, continue
+    - UTF-16 LE `FF FE`, UTF-16 BE `FE FF`, UTF-32 variants — **violation**
+    - Rationale: all injected content is pure ASCII. ASCII bytes are not ASCII in UTF-16/UTF-32, so
+      injection would corrupt the document.
+
+2. **Whitespace** (any amount, anywhere between tokens)
+
+    - Bytes: `0x20` (space), `0x09` (tab), `0x0A` (LF), `0x0D` (CR)
+
+3. **`<!DOCTYPE ...>`** (required, case-insensitive)
+
+    - Must appear before `<html>` and `<head>`. Absence is a violation (quirks-mode pages are
+      unsupported).
+    - The DOCTYPE string after `DOCTYPE` is not validated — legacy doctypes are accepted.
+    - Ends at the first `>` outside a quoted string.
+
+4. **Comments** `<!-- ... -->` (zero or more, anywhere between tokens)
+
+    - Start: bytes `3C 21 2D 2D` (`<!--`)
+    - End: first occurrence of `-->` (bytes `2D 2D 3E`)
+    - Unclosed comment (EOF before `-->`) is a violation.
+    - An attacker could place `<!-- <head> -->` before the real `<head>`; the scanner must consume
+      the entire comment before resuming token search.
+
+5. **Processing instructions** `<?...?>` (zero or more)
+
+    - HTML5 parsers treat `<?` as a bogus comment, ending at `>`. We follow suit: skip from `<?` to
+      the next `>`.
+    - Handles `<?xml version="1.0"?>` on legacy XHTML pages.
+
+6. **Bogus comments** `<!...>` not matching `<!--` or `<!DOCTYPE`
+
+    - Includes SGML conditional sections `<![CDATA[...]]>`.
+    - HTML5 treats them as comments ending at `>`. Scanner skips from `<!` to the next `>`.
+
+7. **`<html ...>`** (optional, case-insensitive)
+
+    - Forwarded verbatim — all attributes must be preserved (`lang`, `dir`, `class`, etc.).
+    - Attribute parsing rules (also apply to `<head>`):
+        - **Whitespace** between attributes: ignored
+        - **Quoted values** `"..."` or `'...'`: consume until matching close quote; `>` and `<`
+          inside quotes are not tag boundaries
+        - **Unquoted values**: consume until whitespace or `>`; no other terminators
+        - **Boolean attributes** (no `=`): name only, e.g. `itemscope`
+        - **Self-closing slash** `<html/>`: the `/` before `>` is silently ignored (non-void
+          element)
+        - **Case**: attribute names are case-insensitive; values are forwarded as-is
+    - Only one `<html>` tag is accepted. A second `<html>` after the first closes is a violation.
+
+8. **`<head ...>`** (required, case-insensitive)
+    - Forwarded verbatim including any attributes (e.g. `<head prefix="og: ...">`).
+    - Same attribute parsing rules as `<html>`.
+    - The byte offset immediately after this tag's closing `>` is the injection point.
+
+#### Null bytes
+
+`0x00` anywhere in the preamble is a violation. HTML5 replaces null bytes with U+FFFD, which could
+cause the parser to see different content than the scanner did.
+
+#### What is not accepted
+
+Any tag other than those listed above is a violation. This includes `<body>`, `<script>`, `<style>`,
+`<div>`, `<meta>`, `<link>`, and any other element appearing before `<head>`. The scanner does not
+attempt recovery.
+
+#### What the scanner does NOT need to handle
+
+The full `<head>` and `<body>` content is forwarded byte-for-byte without inspection. Inline
+scripts, stylesheets, and other head elements are not touched.
+
+### Tier 1 — no body rewriting
+
+For static pages with a full-body hash, head injection is skipped. The hash verification already
+guarantees the page is byte-for-byte identical to the build output, so `dappfence.js` was placed
+there by the build and any attacker modification is caught before the response is served.
 
 The base policy blocks everything. Individual directives are relaxed only where the manifest
 provides explicit authorization.

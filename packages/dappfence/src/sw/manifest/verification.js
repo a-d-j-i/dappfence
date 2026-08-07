@@ -95,10 +95,11 @@ export async function verifyLocation({ swContext, manifestService }, url) {
         if (response) {
             if (response.ok) {
                 const ctx = await manifestService.resolveManifest();
-                return ctx.verifyResponse(
+                const { result } = await ctx.verifyResponse(
                     { url, destination: 'script', method: 'GET', mode: '' },
                     response
                 );
+                return result;
             }
             logger.error(`Failed to fetch ${url}: ${response.status}`);
             return { status: VERIFICATION_STATUS.ERROR, httpStatus: response.status };

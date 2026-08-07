@@ -99,17 +99,23 @@ describe('normalizeManifestData', () => {
             expect(result.csp).toBeUndefined();
         });
 
-        it('normalizes a well-formed csp section as-is', () => {
-            const input = {
+        it('normalizes page entries to { scripts, attrs } shape', () => {
+            const result = normalizeManifestData({
                 files: {},
                 csp: {
                     scriptOrigins: ['https://cdn.example.com'],
                     connectOrigins: ['https://api.example.com'],
-                    pages: { '/': ['abc123'] },
+                    pages: {
+                        '/': ['abc123'],
+                        '/other': { scripts: ['sha256-x'], attrs: ['sha256-y'] },
+                    },
                 },
-            };
-            const result = normalizeManifestData(input);
-            expect(result.csp).toEqual(input.csp);
+            });
+            expect(result.csp.pages['/']).toEqual({ scripts: ['abc123'], attrs: [] });
+            expect(result.csp.pages['/other']).toEqual({
+                scripts: ['sha256-x'],
+                attrs: ['sha256-y'],
+            });
         });
 
         it('defaults scriptOrigins to [] when missing', () => {
@@ -431,7 +437,9 @@ describe('verifyLocation', () => {
             actualHash: 'abc',
             timestamp: '2026-01-01T00:00:00.000Z',
         };
-        const verifyResponse = vi.fn().mockResolvedValue(verifyResponseResult);
+        const verifyResponse = vi
+            .fn()
+            .mockResolvedValue({ result: verifyResponseResult, wrappedResponse: null });
         const response = new Response('file content');
         const deps = {
             swContext: {
@@ -481,7 +489,9 @@ describe('verifyImportedScript', () => {
     });
 
     it('calls verifyResponse with script URL and the fetched response', async () => {
-        const verifyResponse = vi.fn().mockResolvedValue({ status: 'MATCH' });
+        const verifyResponse = vi
+            .fn()
+            .mockResolvedValue({ result: { status: 'MATCH' }, wrappedResponse: null });
         const response = new Response('script content');
         const core = {
             manifestService: mockManifestService(verifyResponse),
@@ -506,8 +516,8 @@ describe('verifyImportedScript', () => {
 
     it('records violation on mismatch', async () => {
         const verifyResponse = vi.fn().mockResolvedValue({
-            status: VERIFICATION_STATUS.MISMATCH,
-            fileKey: '/lib.js',
+            result: { status: VERIFICATION_STATUS.MISMATCH, fileKey: '/lib.js' },
+            wrappedResponse: null,
         });
         const core = {
             manifestService: mockManifestService(verifyResponse),
@@ -555,8 +565,8 @@ describe('verifyImportedScript', () => {
 
     it('treats SKIPPED results as non-violations', async () => {
         const verifyResponse = vi.fn().mockResolvedValue({
-            status: VERIFICATION_STATUS.SKIPPED,
-            fileKey: '/lib.js',
+            result: { status: VERIFICATION_STATUS.SKIPPED, fileKey: '/lib.js' },
+            wrappedResponse: null,
         });
         const core = {
             manifestService: mockManifestService(verifyResponse),

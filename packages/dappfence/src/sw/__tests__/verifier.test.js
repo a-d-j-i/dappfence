@@ -1,6 +1,14 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createVerifier } from '../manifest/verifier.js';
 import { VERIFICATION_STATUS } from '../../core/constants.js';
+import { buildCspHeader } from '../response.js';
+
+// response.js calls isFeatureEnabled at module load — stub it so the
+// Vite-injected __FEATURES__ constant is not required in the test runtime.
+vi.mock('../../core/utils.js', async (importOriginal) => {
+    const actual = await importOriginal();
+    return { ...actual, isFeatureEnabled: vi.fn(() => false) };
+});
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -61,13 +69,24 @@ function makeSubResource(path = '/app.js') {
 }
 
 function makeOkResponse() {
-    const r = {
+    const bytes = new TextEncoder().encode(
+        '<!DOCTYPE html><html><head></head><body></body></html>'
+    );
+    const body = new ReadableStream({
+        start(controller) {
+            controller.enqueue(bytes);
+            controller.close();
+        },
+    });
+    return {
         ok: true,
         type: 'basic',
-        arrayBuffer: vi.fn(() => Promise.resolve(new ArrayBuffer(8))),
+        status: 200,
+        statusText: 'OK',
+        headers: new Headers(),
+        body,
+        clone: vi.fn(() => makeOkResponse()),
     };
-    r.clone = vi.fn(() => makeOkResponse());
-    return r;
 }
 
 function makeVerifier({
@@ -90,8 +109,10 @@ function makeVerifier({
 
     const { verifyResponse } = createVerifier({ swContext, appStore, config }, manifestLoader);
 
-    const verify = (req, response, clientId = 'client-1') =>
-        verifyResponse(req, response, clientId, latestManifest);
+    const verify = async (req, response, clientId = 'client-1') => {
+        const { result } = await verifyResponse(req, response, clientId, latestManifest);
+        return result;
+    };
 
     return {
         verifyResponse,
@@ -235,7 +256,7 @@ describe('step 2 — latestManifest', () => {
         // Second request (sub-resource, non-navigation) should use the pin without escalating.
         fetchAndStoreManifest.mockClear();
         const response2 = makeOkResponse();
-        const result = await verifyResponse(
+        const { result } = await verifyResponse(
             makeSubResource('/index.html'),
             response2,
             'client-1',
@@ -266,7 +287,7 @@ describe('step 1 — pinned client', () => {
         getManifestHistory.mockClear();
 
         // Sub-resource should use the pin directly.
-        const result = await verifyResponse(
+        const { result } = await verifyResponse(
             makeSubResource('/index.html'),
             makeOkResponse(),
             'client-1',
@@ -286,7 +307,7 @@ describe('step 1 — pinned client', () => {
         // applyAction returns null on verify failure so the pipeline falls through
         // to NOT_FOUND_IN_MANIFEST — still a violation, just not escalated.
         calculateHash.mockResolvedValueOnce('sha256-tampered');
-        const result = await verifyResponse(
+        const { result } = await verifyResponse(
             makeSubResource('/index.html'),
             makeOkResponse(),
             'client-1',
@@ -302,7 +323,12 @@ describe('step 1 — pinned client', () => {
         fetchAndStoreManifest.mockClear();
 
         // Navigation bypasses pin and re-evaluates (step 2 passes here).
-        const result = await verifyResponse(makeNav('/'), makeOkResponse(), 'client-1', INFO_V1);
+        const { result } = await verifyResponse(
+            makeNav('/'),
+            makeOkResponse(),
+            'client-1',
+            INFO_V1
+        );
         expect(result.status).toBe(VERIFICATION_STATUS.MATCH);
     });
 });
@@ -344,7 +370,7 @@ describe('step 3 — historic manifests', () => {
         await verifyResponse(makeNav('/'), makeOkResponse(), 'client-1', wrongManifest);
         fetchAndStoreManifest.mockClear();
 
-        const result = await verifyResponse(
+        const { result } = await verifyResponse(
             makeSubResource('/index.html'),
             makeOkResponse(),
             'client-1',
@@ -386,7 +412,7 @@ describe('step 4 — fetchAndStoreManifest (terminal)', () => {
                 fileKey: '/integrity-manifest.json',
             })
         );
-        const { verifyResponse: verify } = createVerifier(
+        const { verifyResponse } = createVerifier(
             {
                 swContext: makeSwContext(),
                 appStore: makeAppStore(),
@@ -394,7 +420,7 @@ describe('step 4 — fetchAndStoreManifest (terminal)', () => {
             },
             { fetchAndStoreManifest, getManifestHistory: vi.fn(() => Promise.resolve([])) }
         );
-        const result = await verify(makeNav('/'), makeOkResponse(), 'client-1', {
+        const { result } = await verifyResponse(makeNav('/'), makeOkResponse(), 'client-1', {
             appVersion: 'v-stale',
             manifest: MANIFEST_V2,
         });
@@ -411,7 +437,7 @@ describe('step 4 — fetchAndStoreManifest (terminal)', () => {
         await verifyResponse(makeNav('/'), makeOkResponse(), 'client-1', staleInfo);
         fetch1.mockClear();
 
-        const result = await verifyResponse(
+        const { result } = await verifyResponse(
             makeSubResource('/index.html'),
             makeOkResponse(),
             'client-1',
@@ -509,31 +535,34 @@ describe('csp action handler', () => {
         expect(result.keepTryingActions).toBeFalsy();
     });
 
-    it('result carries a Content-Security-Policy header', async () => {
+    it('result carries csp data for header construction', async () => {
         const { verify } = makeVerifier({ latestManifest: cspManifest() });
         const result = await verify(makeNav('/'), makeOkResponse());
-        expect(result.headers).toBeDefined();
-        expect(result.headers['Content-Security-Policy']).toBeDefined();
+        expect(result.csp).toBeDefined();
+        expect(result.csp.hashes).toBeDefined();
+        expect(result.csp.connectOrigins).toBeDefined();
     });
 
-    it('CSP header uses script-src-elem with * for external scripts', async () => {
+    it('csp.hashes defaults to empty arrays when manifest has no pages entry', async () => {
         const { verify } = makeVerifier({ latestManifest: cspManifest() });
         const result = await verify(makeNav('/'), makeOkResponse());
-        expect(result.headers['Content-Security-Policy']).toContain('script-src-elem');
-        expect(result.headers['Content-Security-Policy']).toContain('*');
-        expect(result.headers['Content-Security-Policy']).not.toContain('strict-dynamic');
+        const header = buildCspHeader(result.csp.hashes, result.csp.connectOrigins, null);
+        expect(header).toContain('script-src-elem');
+        expect(header).toContain('*');
+        expect(header).not.toContain('strict-dynamic');
     });
 
-    it('CSP header includes inline hash and * when pages entry matches the page key', async () => {
+    it('csp.hashes includes inline scripts when pages entry matches the page key', async () => {
         const { verify } = makeVerifier({
             latestManifest: cspManifest({
-                pages: { '/': ['sha256-abc123'] },
+                pages: { '/': { scripts: ['sha256-abc123'], attrs: [] } },
             }),
         });
         const result = await verify(makeNav('/'), makeOkResponse());
-        expect(result.headers['Content-Security-Policy']).toContain("'sha256-abc123'");
-        expect(result.headers['Content-Security-Policy']).toContain('*');
-        expect(result.headers['Content-Security-Policy']).not.toContain('strict-dynamic');
+        const header = buildCspHeader(result.csp.hashes, result.csp.connectOrigins, null);
+        expect(header).toContain("'sha256-abc123'");
+        expect(header).toContain('*');
+        expect(header).not.toContain('strict-dynamic');
     });
 
     it('does not escalate to historic manifests — csp action is terminal', async () => {

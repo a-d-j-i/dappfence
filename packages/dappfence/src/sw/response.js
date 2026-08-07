@@ -223,3 +223,87 @@ export function createSecurityPageResponse(apiToken, activeBlocks) {
         },
     });
 }
+
+/**
+ * Builds the Content-Security-Policy header value.
+ *
+ * External script sources are allowed via `*` in `script-src-elem` — DappFence already
+ * verifies every external script by content hash at the SW level, so there is no security
+ * benefit in restricting them by origin in the CSP. Inline scripts are restricted to the
+ * hashes listed in `scripts`; unknown inline scripts are blocked by the browser.
+ *
+ * Note: `'strict-dynamic'` is intentionally omitted. It is incompatible with the `*`
+ * wildcard (strict-dynamic ignores all origin allowlists), and the external-script trust
+ * that strict-dynamic would otherwise propagate is already covered by DappFence's SW-level
+ * verification.
+ *
+ * `worker-src 'self'` is required because DappFence registers its own service worker from
+ * the page context (dappfence.js calls navigator.serviceWorker.register()). Without it,
+ * `default-src 'none'` blocks the registration.
+ *
+ * @param {{ scripts: string[], attrs: string[] }} pageHashes
+ * @param {string[]} connectOrigins
+ * @param {string|null} [apiToken]
+ * @returns {string}
+ */
+export function buildCspHeader({ scripts, attrs }, connectOrigins, apiToken) {
+    const scriptElemParts = [...scripts.map((h) => `'${h}'`), '*'];
+    const connectSrcParts = ["'self'", ...connectOrigins];
+    const reportUri = apiToken
+        ? `${API.CSP_VIOLATION}?token=${encodeURIComponent(apiToken)}`
+        : API.CSP_VIOLATION;
+
+    const directives = [
+        "default-src 'none'",
+        `script-src-elem ${scriptElemParts.join(' ')}`,
+        // 'unsafe-inline' is safe for styles: all CSS JS-execution vectors (expression(),
+        // behavior:, HTC) are IE-only and dead in modern browsers — see docs/js-execution-vectors.md §11.
+        "style-src 'self' 'unsafe-inline'",
+        "img-src 'self' data:",
+        "font-src 'self'",
+        `connect-src ${connectSrcParts.join(' ')}`,
+        "worker-src 'self'",
+        "object-src 'none'",
+        "base-uri 'self'",
+        "frame-ancestors 'none'",
+        `report-uri ${reportUri}`,
+    ];
+
+    // script-src-attr is only emitted when on* attribute hashes are declared.
+    // 'unsafe-hashes' is required by the CSP spec for hashes to apply to event handlers;
+    // without it hashes in this directive are silently ignored.
+    if (attrs.length > 0) {
+        const attrParts = ["'unsafe-hashes'", ...attrs.map((h) => `'${h}'`)];
+        directives.splice(2, 0, `script-src-attr ${attrParts.join(' ')}`);
+    }
+
+    return directives.join('; ');
+}
+
+/**
+ * Injects the CSP hashes script tag and the dappfence bootstrap script tag into
+ * the HTML head, and returns a response with the Content-Security-Policy header set.
+ *
+ * The dappfence script tag is injected unconditionally so that a compromised server
+ * that strips the tag from the original HTML cannot disable client-side protection.
+ *
+ * @param {{ hashes, connectOrigins }} csp - CSP data from the verification result
+ * @param {object} wrappedResponse - Response wrapper with `.injectAtHead` and `.asResponse`
+ * @param {string|null} apiToken
+ * @param {string} swHref - The SW's own script URL, injected as-is into the page
+ * @returns {Response}
+ */
+export function createCspPageResponse(
+    { hashes, connectOrigins },
+    wrappedResponse,
+    apiToken,
+    swHref
+) {
+    const encoder = new TextEncoder();
+    const hashesTag = `<script type="application/json" id="__df_csp_hashes">${JSON.stringify(hashes)}</script>`;
+    wrappedResponse.injectAtHead(encoder.encode(hashesTag));
+    wrappedResponse.injectAtHead(encoder.encode(`<script src="${swHref}"></script>`));
+    return injectResponseHeaders(wrappedResponse.asResponse(), {
+        'Content-Security-Policy': buildCspHeader(hashes, connectOrigins, apiToken),
+    });
+}

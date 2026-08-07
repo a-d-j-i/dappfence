@@ -1,12 +1,24 @@
-import { describe, it, expect } from 'vitest';
-import { buildCspHeader } from '../manifest/csp.js';
+import { describe, it, expect, vi } from 'vitest';
+import { buildCspHeader } from '../response.js';
 import { API } from '../../core/constants.js';
+
+vi.mock('../../core/utils.js', () => ({
+    isFeatureEnabled: vi.fn(() => false),
+}));
 
 const REPORT_URI = `report-uri ${API.CSP_VIOLATION}`;
 
+function build(manifest, pageKey, apiToken) {
+    return buildCspHeader(
+        manifest?.csp?.pages?.[pageKey] ?? { scripts: [], attrs: [] },
+        manifest?.csp?.connectOrigins ?? [],
+        apiToken
+    );
+}
+
 describe('buildCspHeader', () => {
     it('produces a minimal CSP when the manifest has no csp section', () => {
-        const header = buildCspHeader({}, '/');
+        const header = build({}, '/');
         expect(header).toContain('script-src-elem *');
         expect(header).toContain("connect-src 'self'");
         expect(header).toContain("default-src 'none'");
@@ -19,7 +31,7 @@ describe('buildCspHeader', () => {
     });
 
     it('produces the same minimal CSP when manifest is null', () => {
-        const header = buildCspHeader(null, '/');
+        const header = build(null, '/');
         expect(header).toContain('script-src-elem *');
         expect(header).not.toContain('sha256-');
     });
@@ -28,7 +40,7 @@ describe('buildCspHeader', () => {
         const manifest = {
             csp: { connectOrigins: ['https://api.example.com', 'wss://ws.example.com'] },
         };
-        const header = buildCspHeader(manifest, '/');
+        const header = build(manifest, '/');
         expect(header).toContain('https://api.example.com');
         expect(header).toContain('wss://ws.example.com');
         expect(header).toMatch(
@@ -38,9 +50,9 @@ describe('buildCspHeader', () => {
 
     it('adds hashes before * in script-src-elem when the pageKey has inline hashes', () => {
         const manifest = {
-            csp: { pages: { '/': ['sha256-abc123', 'sha256-def456'] } },
+            csp: { pages: { '/': { scripts: ['sha256-abc123', 'sha256-def456'], attrs: [] } } },
         };
-        const header = buildCspHeader(manifest, '/');
+        const header = build(manifest, '/');
         expect(header).toContain("'sha256-abc123'");
         expect(header).toContain("'sha256-def456'");
         expect(header).toContain('*');
@@ -49,9 +61,9 @@ describe('buildCspHeader', () => {
 
     it('uses * without hashes when the pageKey has no inline hashes', () => {
         const manifest = {
-            csp: { pages: { '/other': ['sha256-abc123'] } },
+            csp: { pages: { '/other': { scripts: ['sha256-abc123'], attrs: [] } } },
         };
-        const header = buildCspHeader(manifest, '/');
+        const header = build(manifest, '/');
         expect(header).toContain('script-src-elem *');
         expect(header).not.toContain('sha256-');
     });
@@ -60,13 +72,13 @@ describe('buildCspHeader', () => {
         const manifest = {
             csp: {
                 pages: {
-                    '/page-a': ['sha256-hash-a'],
-                    '/page-b': ['sha256-hash-b'],
+                    '/page-a': { scripts: ['sha256-hash-a'], attrs: [] },
+                    '/page-b': { scripts: ['sha256-hash-b'], attrs: [] },
                 },
             },
         };
-        const headerA = buildCspHeader(manifest, '/page-a');
-        const headerB = buildCspHeader(manifest, '/page-b');
+        const headerA = build(manifest, '/page-a');
+        const headerB = build(manifest, '/page-b');
         expect(headerA).toContain("'sha256-hash-a'");
         expect(headerA).not.toContain("'sha256-hash-b'");
         expect(headerB).toContain("'sha256-hash-b'");
@@ -74,45 +86,39 @@ describe('buildCspHeader', () => {
     });
 
     it('always includes the report-uri directive', () => {
-        expect(buildCspHeader({}, '/')).toContain(REPORT_URI);
-        expect(buildCspHeader(null, '/')).toContain(REPORT_URI);
-        expect(buildCspHeader({ csp: { pages: { '/': ['sha256-h'] } } }, '/')).toContain(
-            REPORT_URI
-        );
+        expect(build({}, '/')).toContain(REPORT_URI);
+        expect(build(null, '/')).toContain(REPORT_URI);
+        expect(
+            build({ csp: { pages: { '/': { scripts: ['sha256-h'], attrs: [] } } } }, '/')
+        ).toContain(REPORT_URI);
     });
 
     it('appends token as query param on report-uri when provided', () => {
-        const header = buildCspHeader({}, '/', 'my-secret-token');
+        const header = build({}, '/', 'my-secret-token');
         expect(header).toContain(`${API.CSP_VIOLATION}?token=my-secret-token`);
     });
 
     it('uses bare report-uri when no token is provided', () => {
-        const header = buildCspHeader({}, '/');
+        const header = build({}, '/');
         expect(header).toContain(`report-uri ${API.CSP_VIOLATION}`);
         expect(header).not.toContain('?token=');
     });
 
     it('encodes special characters in the token', () => {
-        const header = buildCspHeader({}, '/', 'tok en+special=chars');
+        const header = build({}, '/', 'tok en+special=chars');
         expect(header).toContain('token=tok%20en%2Bspecial%3Dchars');
     });
 });
 
 describe('buildCspHeader — script-src-attr (on* attribute hashes)', () => {
-    it('omits script-src-attr when the page entry is an array (legacy format)', () => {
-        const manifest = { csp: { pages: { '/': ['sha256-abc'] } } };
-        const header = buildCspHeader(manifest, '/');
-        expect(header).not.toContain('script-src-attr');
-    });
-
     it('omits script-src-attr when the page entry has no attrs', () => {
         const manifest = { csp: { pages: { '/': { scripts: ['sha256-abc'], attrs: [] } } } };
-        const header = buildCspHeader(manifest, '/');
+        const header = build(manifest, '/');
         expect(header).not.toContain('script-src-attr');
     });
 
     it('omits script-src-attr when there is no page entry', () => {
-        const header = buildCspHeader({}, '/');
+        const header = build({}, '/');
         expect(header).not.toContain('script-src-attr');
     });
 
@@ -120,7 +126,7 @@ describe('buildCspHeader — script-src-attr (on* attribute hashes)', () => {
         const manifest = {
             csp: { pages: { '/': { scripts: [], attrs: ['sha256-h1', 'sha256-h2'] } } },
         };
-        const header = buildCspHeader(manifest, '/');
+        const header = build(manifest, '/');
         expect(header).toContain("script-src-attr 'unsafe-hashes' 'sha256-h1' 'sha256-h2'");
     });
 
@@ -130,7 +136,7 @@ describe('buildCspHeader — script-src-attr (on* attribute hashes)', () => {
                 pages: { '/': { scripts: ['sha256-script'], attrs: ['sha256-attr'] } },
             },
         };
-        const header = buildCspHeader(manifest, '/');
+        const header = build(manifest, '/');
         expect(header).toContain("'sha256-script'");
         expect(header).toContain('script-src-elem');
         expect(header).toContain("script-src-attr 'unsafe-hashes' 'sha256-attr'");
@@ -140,7 +146,7 @@ describe('buildCspHeader — script-src-attr (on* attribute hashes)', () => {
         const manifest = {
             csp: { pages: { '/': { scripts: [], attrs: ['sha256-h'] } } },
         };
-        const directives = buildCspHeader(manifest, '/').split('; ');
+        const directives = build(manifest, '/').split('; ');
         const elemIdx = directives.findIndex((d) => d.startsWith('script-src-elem'));
         const attrIdx = directives.findIndex((d) => d.startsWith('script-src-attr'));
         const styleIdx = directives.findIndex((d) => d.startsWith('style-src'));
