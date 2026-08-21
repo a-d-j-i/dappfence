@@ -180,11 +180,10 @@ describe('generateManifest', () => {
             await fs.readFile(path.join(outDir, 'integrity-manifest.json'), 'utf8')
         );
         expect(manifest.pay.pathRules).toEqual(pathRules);
-        expect(manifest.pay.contentRules).toEqual([
-            { condition: { resourceTypes: ['document'] }, action: { type: 'csp' } },
-            { condition: { resourceTypes: ['document'] }, action: { type: 'verify' } },
-            ...extraContentRules,
-        ]);
+        // CSP is layered on every document response by the SW; no implicit
+        // document-scoped rule is emitted. Static docs fall through to `verify`;
+        // SSR routes must declare `{ action: { type: 'csp' } }` themselves.
+        expect(manifest.pay.contentRules).toEqual(extraContentRules);
     });
 });
 

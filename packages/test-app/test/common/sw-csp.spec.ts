@@ -1,7 +1,7 @@
 import { expect, test } from '../sw-fixtures';
 
 // SHA-256 of the first inline template script body in simple-app.html:
-//   "\n            window.__csp_inline_1 = 'script-1-ran';\n        "
+//   "\n window.__csp_inline_1 = 'script-1-ran';\n        "
 // Stable as long as the template script content and indentation don't change.
 const CSP_INLINE_1_HASH = 'sha256-vRDxHJVof5XdgQz3jMqMeB0wpoGfCWXTSV60g2VfXx4=';
 
@@ -30,6 +30,57 @@ test.describe('CSP injection', () => {
         expect(csp).toContain("object-src 'none'");
         expect(csp).toContain("base-uri 'none'");
         expect(csp).toContain('report-uri');
+    });
+
+    test('SW strips origin CSP headers and replaces them, but preserves other policy headers', async ({
+        page,
+        swHelper,
+    }) => {
+        const REPORT_TO_VALUE =
+            '{"group":"default","max_age":86400,"endpoints":[{"url":"https://origin.example/reports"}]}';
+        await swHelper.setServerTestParameters({
+            responseHeaders: [
+                {
+                    match: '/csp-test-denied',
+                    headers: {
+                        'Content-Security-Policy':
+                            "script-src 'unsafe-inline' 'unsafe-eval'; frame-ancestors *",
+                        'Content-Security-Policy-Report-Only': "script-src 'unsafe-inline'",
+                        'Permissions-Policy': 'geolocation=(), camera=()',
+                        'Reporting-Endpoints': 'default="https://origin.example/reports"',
+                        'Report-To': REPORT_TO_VALUE,
+                        'Cache-Control': 'no-store',
+                    },
+                },
+            ],
+            intercept: {
+                pattern: '/csp-test-denied',
+                formula: 'remap',
+                args: { file: 'index.html' },
+            },
+        });
+        const response = await page.goto('/csp-test-denied');
+        expect(response.fromServiceWorker()).toBeTruthy();
+        const headers = response.headers();
+
+        // Origin CSP is untrusted — its directives must not survive, and DappFence's
+        // replacement must be what actually enforces on the page.
+        const csp = headers['content-security-policy'];
+        expect(csp).toBeDefined();
+        expect(csp).not.toContain("'unsafe-eval'");
+        expect(csp).not.toContain('frame-ancestors *');
+        expect(csp).toContain("frame-ancestors 'none'");
+        expect(csp).toContain('script-src-elem');
+        expect(csp).toContain('report-uri');
+        // Report-Only flavor is stripped too — otherwise attacker-controlled
+        // report-uri would exfiltrate the browser's violation reports.
+        expect(headers['content-security-policy-report-only']).toBeUndefined();
+
+        // Headers that used to be in ADDITIVE_HEADERS pass through unmodified.
+        // The SW never appends to or overrides them and never emits its own.
+        expect(headers['permissions-policy']).toBe('geolocation=(), camera=()');
+        expect(headers['reporting-endpoints']).toBe('default="https://origin.example/reports"');
+        expect(headers['report-to']).toBe(REPORT_TO_VALUE);
     });
 
     test('CSP header for path with no csp.pages entry has no hash or strict-dynamic', async ({
@@ -349,19 +400,21 @@ test.describe('CSP injection', () => {
         expect(result.cspAllowedScriptRan).toBeUndefined();
     });
 
-    test('all template inline scripts run when the page has no CSP header', async ({ page }) => {
-        // Navigate to the root — full-hash path, no CSP rule matches, no CSP header injected.
-        // All inline scripts in simple-app.html should execute normally.
+    test('CSP is always emitted on document navigations, even without a csp.pages entry', async ({
+        page,
+    }) => {
+        // Navigate to '/' → resolves to '/index.html'. The manifest has no
+        // csp.pages entry for '/index.html' (only '/csp-test-allowed'), so the
+        // CSP header emits with just the nonce + '*' — no inline script hashes.
+        // All inline scripts on the page are blocked by the browser as a result;
+        // this is the forcing-function property (see docs/csp-injection-strategy.md).
         const response = await page.goto('/');
         expect(response.fromServiceWorker()).toBeTruthy();
         const csp = response.headers()['content-security-policy'];
-        expect(csp).toBeUndefined();
-
-        // Wait for the 50ms setTimeout in the template to fire.
-        await page.waitForFunction(
-            () => (window as unknown as Record<string, unknown>).__csp_timer !== undefined,
-            { timeout: 2000 }
-        );
+        expect(csp).toBeDefined();
+        expect(csp).toContain('script-src-elem');
+        expect(csp).toContain('nonce-');
+        expect(csp).not.toContain('sha256-');
 
         const result = await page.evaluate(() => {
             const w = window as unknown as Record<string, unknown>;
@@ -372,15 +425,9 @@ test.describe('CSP injection', () => {
                 bypassExecuted: w.__bypass_executed,
             };
         });
-
-        expect(result.cspInline1).toBe('script-1-ran');
-        expect(result.cspTimer).toBe('timer-ran');
-        // Both RSC pushes run: first the object push, then the double-escape push.
-        expect(result.rscChunks).toEqual([
-            [0, { value: 42 }],
-            [0, '<!--<script>'],
-        ]);
-        // The </script>/ trick makes </script> parse as </regexp/ in JS; __bypass_executed runs.
-        expect(result.bypassExecuted).toBe(true);
+        expect(result.cspInline1).toBeUndefined();
+        expect(result.cspTimer).toBeUndefined();
+        expect(result.rscChunks).toBeUndefined();
+        expect(result.bypassExecuted).toBeUndefined();
     });
 });

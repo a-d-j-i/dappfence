@@ -479,9 +479,15 @@ describe('pipeline action semantics', () => {
     });
 });
 
-// ── csp action handler ────────────────────────────────────────────────────────
+// ── csp action + layered CSP headers ─────────────────────────────────────────
+//
+// `csp` action is a per-route opt-out of hash-verify for SSR/dynamic routes:
+// the handler returns CSP_PROTECTED (distinct from SKIPPED, which means
+// "hands off entirely"). CSP headers are layered on document responses by
+// layerCsp when the manifest defines a `csp` section AND the decision is
+// not SKIPPED. See verifier.js § layerCsp.
 
-describe('csp action handler', () => {
+describe('csp action + layered CSP headers', () => {
     const cspManifest = (cspSection = {}) => ({
         appVersion: 'v-csp',
         manifest: {
@@ -493,7 +499,7 @@ describe('csp action handler', () => {
         },
     });
 
-    it('returns CSP_PROTECTED status for a navigation matched by a csp contentRule', async () => {
+    it('csp action returns CSP_PROTECTED (route opts out of hash-verify but keeps CSP)', async () => {
         const { verify } = makeVerifier({ latestManifest: cspManifest() });
         const result = await verify(makeNav('/'), makeOkResponse());
         expect(result.status).toBe(VERIFICATION_STATUS.CSP_PROTECTED);
@@ -503,25 +509,35 @@ describe('csp action handler', () => {
         expect(VERIFICATION_STATUS.CSP_PROTECTED.isViolation).toBe(false);
     });
 
-    it('CSP_PROTECTED is terminal — handler result does not set keepTryingActions', async () => {
+    it('csp action is terminal — result does not set keepTryingActions', async () => {
         const { verify } = makeVerifier({ latestManifest: cspManifest() });
         const result = await verify(makeNav('/'), makeOkResponse());
         expect(result.keepTryingActions).toBeFalsy();
     });
 
-    it('result carries a Content-Security-Policy header', async () => {
+    it('document result carries a Content-Security-Policy header (Headers instance)', async () => {
         const { verify } = makeVerifier({ latestManifest: cspManifest() });
         const result = await verify(makeNav('/'), makeOkResponse());
-        expect(result.headers).toBeDefined();
-        expect(result.headers['Content-Security-Policy']).toBeDefined();
+        expect(result.headers).toBeInstanceOf(Headers);
+        expect(result.headers.get('Content-Security-Policy')).toBeTruthy();
     });
 
-    it('CSP header uses script-src-elem with * for external scripts', async () => {
+    it('layered CSP surfaces a per-response nonce', async () => {
         const { verify } = makeVerifier({ latestManifest: cspManifest() });
         const result = await verify(makeNav('/'), makeOkResponse());
-        expect(result.headers['Content-Security-Policy']).toContain('script-src-elem');
-        expect(result.headers['Content-Security-Policy']).toContain('*');
-        expect(result.headers['Content-Security-Policy']).not.toContain('strict-dynamic');
+        expect(result.nonce).toEqual(expect.any(String));
+        expect(result.nonce.length).toBeGreaterThan(0);
+        expect(result.headers.get('Content-Security-Policy')).toContain(`'nonce-${result.nonce}'`);
+    });
+
+    it('CSP header uses script-src-elem with nonce + * for external scripts', async () => {
+        const { verify } = makeVerifier({ latestManifest: cspManifest() });
+        const result = await verify(makeNav('/'), makeOkResponse());
+        const csp = result.headers.get('Content-Security-Policy');
+        expect(csp).toContain('script-src-elem');
+        expect(csp).toContain(`'nonce-${result.nonce}'`);
+        expect(csp).toContain('*');
+        expect(csp).not.toContain('strict-dynamic');
     });
 
     it('CSP header includes inline hash and * when pages entry matches the page key', async () => {
@@ -531,9 +547,10 @@ describe('csp action handler', () => {
             }),
         });
         const result = await verify(makeNav('/'), makeOkResponse());
-        expect(result.headers['Content-Security-Policy']).toContain("'sha256-abc123'");
-        expect(result.headers['Content-Security-Policy']).toContain('*');
-        expect(result.headers['Content-Security-Policy']).not.toContain('strict-dynamic');
+        const csp = result.headers.get('Content-Security-Policy');
+        expect(csp).toContain("'sha256-abc123'");
+        expect(csp).toContain('*');
+        expect(csp).not.toContain('strict-dynamic');
     });
 
     it('does not escalate to historic manifests — csp action is terminal', async () => {

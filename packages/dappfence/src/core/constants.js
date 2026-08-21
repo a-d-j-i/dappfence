@@ -119,6 +119,21 @@ const INERT_DESTINATIONS = new Set([
 export const isExecutableDestination = (destination) =>
     !(INERT_DESTINATIONS.has(destination) || !destination);
 
+// Destinations that create a browsing context and enforce CSP from the
+// response headers. Anything else (script, style, image, XHR, etc.) has
+// its CSP headers ignored by the browser — DappFence skips composing them.
+// See https://fetch.spec.whatwg.org/#concept-request-destination.
+const CSP_ENFORCING_DESTINATIONS = new Set([
+    'document', // top-level navigation
+    'iframe',
+    'frame', // legacy
+    'embed', // <embed src>
+    'object', // <object data>
+    'fencedframe', // sandboxed frame primitive
+]);
+
+export const enforcesCsp = (destination) => CSP_ENFORCING_DESTINATIONS.has(destination);
+
 // These string values appear verbatim in signed manifests (contentRules actions).
 // Changing a value is a breaking change — existing signed manifests would reject.
 export const TRANSFORM = Object.freeze({

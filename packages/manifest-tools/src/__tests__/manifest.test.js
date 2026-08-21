@@ -175,14 +175,14 @@ describe('generateManifest', () => {
             await fs.readFile(path.join(outDir, 'integrity-manifest.json'), 'utf8')
         );
         expect(manifest.pay.pathRules).toEqual(pathRules);
-        expect(manifest.pay.contentRules).toEqual([
-            { condition: { resourceTypes: ['document'] }, action: { type: 'csp' } },
-            { condition: { resourceTypes: ['document'] }, action: { type: 'verify' } },
-            ...extraContentRules,
-        ]);
+        // CSP headers are now layered on every document response by the SW
+        // regardless of contentRules — no implicit document-scoped rule is
+        // injected. Static documents fall through to the SW's default `verify`;
+        // SSR routes must declare `{ action: { type: 'csp' } }` themselves.
+        expect(manifest.pay.contentRules).toEqual(extraContentRules);
     });
 
-    it('emits empty pathRules and always-present CSP document rules when not provided', async () => {
+    it('emits empty pathRules and empty contentRules when nothing is provided', async () => {
         const outDir = await setup();
         await generateManifest({
             outDir,
@@ -197,10 +197,7 @@ describe('generateManifest', () => {
             await fs.readFile(path.join(outDir, 'integrity-manifest.json'), 'utf8')
         );
         expect(manifest.pay.pathRules).toEqual([]);
-        expect(manifest.pay.contentRules).toEqual([
-            { condition: { resourceTypes: ['document'] }, action: { type: 'csp' } },
-            { condition: { resourceTypes: ['document'] }, action: { type: 'verify' } },
-        ]);
+        expect(manifest.pay.contentRules).toEqual([]);
     });
 
     it('skips injection when scriptAttrs is omitted', async () => {

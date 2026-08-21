@@ -404,11 +404,25 @@ export async function generateManifest({
     // CSP headers for them. Routes with inline scripts already have entries from
     // hashSSRRoutes; add empty entries for the rest. Parameterised routes use a
     // prefix key (e.g. '/partials/[id]' → '/partials/') for startsWith matching.
+    //
+    // Each dynamic-route prefix also becomes a contentRule with action `csp` so
+    // the SW skips hash-verify for those routes (their content varies per request)
+    // while still applying CSP. Static prerendered pages have no matching rule
+    // and fall through to the SW's default `verify`.
     const completeCspPages = { ...(cspPages ?? {}) };
+    const cspRules = [];
+    const seenPrefixes = new Set();
     for (const route of extractDynamicRoutes(routes)) {
         const key = prefixRoute(routePatternToPrefixKey(route));
         if (!(key in completeCspPages)) {
             completeCspPages[key] = { scripts: [], attrs: [] };
+        }
+        if (!seenPrefixes.has(key)) {
+            seenPrefixes.add(key);
+            cspRules.push({
+                condition: { resourceTypes: ['document'], urlFilter: key },
+                action: { type: 'csp' },
+            });
         }
     }
 
@@ -416,7 +430,7 @@ export async function generateManifest({
         ...rest,
         logger,
         pathRules: buildPathRules(buildFormat, notFoundKey),
-        contentRules: buildContentRules({ isNetlify }),
+        contentRules: [...cspRules, ...buildContentRules({ isNetlify })],
         // walk() generates keys as base + '/...' when pathPrefix is set; strip the
         // prefix before comparing against pageSet (which is built from page pathnames
         // without the base).

@@ -544,7 +544,10 @@ describe('generateManifest', () => {
         expect(manifest.pay.pathRules).toEqual([{ type: 'html-extension' }]);
     });
 
-    it('emits only CSP document rules when not on Netlify', async () => {
+    it('emits empty contentRules when not on Netlify', async () => {
+        // CSP headers are layered on every document by the SW regardless of
+        // contentRules; static documents fall through to the SW's default
+        // `verify`. No implicit document-scoped rule is emitted here.
         const outDir = await setup();
         await generateManifest({
             outDir,
@@ -558,13 +561,10 @@ describe('generateManifest', () => {
         const manifest = JSON.parse(
             await fs.readFile(path.join(outDir, 'integrity-manifest.json'), 'utf8')
         );
-        expect(manifest.pay.contentRules).toEqual([
-            { condition: { resourceTypes: ['document'] }, action: { type: 'csp' } },
-            { condition: { resourceTypes: ['document'] }, action: { type: 'verify' } },
-        ]);
+        expect(manifest.pay.contentRules).toEqual([]);
     });
 
-    it('emits netlify-cdp contentRule when netlify: true option is set (after CSP rules)', async () => {
+    it('emits only netlify-cdp contentRules when netlify: true is set', async () => {
         const outDir = await setup();
         await generateManifest({
             outDir,
@@ -578,9 +578,66 @@ describe('generateManifest', () => {
         const manifest = JSON.parse(
             await fs.readFile(path.join(outDir, 'integrity-manifest.json'), 'utf8')
         );
-        expect(manifest.pay.contentRules).toHaveLength(5);
+        expect(manifest.pay.contentRules).toHaveLength(3);
+        expect(manifest.pay.contentRules[0].action.transform).toBe('netlify-cdp');
+    });
+
+    it('emits a `csp` contentRule for each SSR route prefix', async () => {
+        // SSR routes have no manifest.files entry — without an explicit `csp`
+        // rule the SW would treat them as NOT_FOUND_IN_MANIFEST → violation.
+        // The build must emit one rule per dynamic-route prefix so those
+        // navigations skip hash-verify while still getting CSP.
+        const outDir = await setup();
+        const routes = [
+            { pattern: '/api/data', isPrerendered: false },
+            { pattern: '/blog/[slug]', isPrerendered: false },
+            { pattern: '/blog/[slug]/comments', isPrerendered: false },
+            { pattern: '/about', isPrerendered: true }, // static → no rule
+        ];
+        await generateManifest({
+            outDir,
+            manifestPath: 'integrity-manifest.json',
+            exclude: [],
+            mode: 'protected',
+            routes,
+            logger: LOGGER,
+            scriptAttrs: MINIMAL,
+        });
+        const manifest = JSON.parse(
+            await fs.readFile(path.join(outDir, 'integrity-manifest.json'), 'utf8')
+        );
+        // /api/data has no bracket → prefix key is the route itself.
+        // /blog/[slug] and /blog/[slug]/comments both collapse to '/blog/' —
+        // the seenPrefixes dedupe keeps only one rule.
+        expect(manifest.pay.contentRules).toEqual([
+            {
+                condition: { resourceTypes: ['document'], urlFilter: '/api/data' },
+                action: { type: 'csp' },
+            },
+            {
+                condition: { resourceTypes: ['document'], urlFilter: '/blog/' },
+                action: { type: 'csp' },
+            },
+        ]);
+    });
+
+    it('SSR csp rules come before netlify transform rules', async () => {
+        const outDir = await setup();
+        const routes = [{ pattern: '/api/data', isPrerendered: false }];
+        await generateManifest({
+            outDir,
+            manifestPath: 'integrity-manifest.json',
+            netlify: true,
+            exclude: [],
+            mode: 'protected',
+            routes,
+            logger: LOGGER,
+            scriptAttrs: MINIMAL,
+        });
+        const manifest = JSON.parse(
+            await fs.readFile(path.join(outDir, 'integrity-manifest.json'), 'utf8')
+        );
         expect(manifest.pay.contentRules[0].action.type).toBe('csp');
-        expect(manifest.pay.contentRules[1].action.type).toBe('verify');
-        expect(manifest.pay.contentRules[2].action.transform).toBe('netlify-cdp');
+        expect(manifest.pay.contentRules[1].action.transform).toBe('netlify-cdp');
     });
 });

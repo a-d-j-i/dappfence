@@ -214,12 +214,12 @@ async function generateManifest({
     }
 
     const cspPages = { ...cspBuiltPages, ...(csp?.pages ?? {}) };
-    const cspDocRule = { condition: { resourceTypes: ['document'] }, action: { type: 'csp' } };
-    const cspVerifyRule = {
-        condition: { resourceTypes: ['document'] },
-        action: { type: 'verify' },
-    };
-    const effectiveContentRules = [cspDocRule, cspVerifyRule, ...(contentRules ?? [])];
+    // CSP headers are always layered on document responses by the SW (see
+    // verifier.js § layerCsp). Content-verification is orthogonal: static
+    // pages fall through to the SW's default `verify`; SSR routes must
+    // declare `{ action: { type: 'csp' } }` explicitly to opt out of verify.
+    // No implicit document-scoped rule is emitted here.
+    const effectiveContentRules = contentRules ?? [];
 
     const payload = {
         files: fileHashes,

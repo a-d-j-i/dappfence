@@ -178,13 +178,27 @@ export function createManifestStore(database) {
             return allResults[appVersion] || [];
         },
 
-        async add(appVersion, result) {
+        async add(
+            appVersion,
+            { status, timestamp, fileKey, url, assetType, expectedHashes, actualHash }
+        ) {
             const allResults = (await database.get(VERIFICATION_RESULTS_KEY)) || {};
             if (!allResults[appVersion]) {
                 allResults[appVersion] = [];
             }
 
-            allResults[appVersion].push(result);
+            // Named params act as the allowlist: extra fields passed by callers
+            // (Headers from CSP layering, per-response nonce, etc.) are dropped
+            // by destructuring — nothing non-cloneable can reach IndexedDB.
+            allResults[appVersion].push({
+                status,
+                timestamp,
+                fileKey,
+                url,
+                assetType,
+                expectedHashes,
+                actualHash,
+            });
 
             // Keep only last 100 results per app version to avoid unbounded growth
             if (allResults[appVersion].length > 100) {

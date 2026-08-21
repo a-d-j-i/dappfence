@@ -108,13 +108,27 @@ async function runSSR(opts, projectRoot) {
     };
     // All dynamic routes must appear in csp.pages so the SW knows to inject CSP
     // headers for them. Parameterised routes use a prefix key for startsWith matching.
+    //
+    // Each dynamic-route prefix also becomes a contentRule with action `csp` so
+    // the SW skips hash-verify for those routes (their content varies per request)
+    // while still applying CSP. Prerendered pages have no matching rule and fall
+    // through to the SW's default `verify`.
     const completeCspPages = { ...pageResult.cspPages, ...ssrResult.cspPages };
+    const cspRules = [];
+    const seenPrefixes = new Set();
     for (const route of dynamicRoutes) {
         const key = basePath
             ? basePath + routePatternToPrefixKey(route)
             : routePatternToPrefixKey(route);
         if (!(key in completeCspPages)) {
             completeCspPages[key] = { scripts: [], attrs: [] };
+        }
+        if (!seenPrefixes.has(key)) {
+            seenPrefixes.add(key);
+            cspRules.push({
+                condition: { resourceTypes: ['document'], urlFilter: key },
+                action: { type: 'csp' },
+            });
         }
     }
 
@@ -136,7 +150,7 @@ async function runSSR(opts, projectRoot) {
         secretKey,
         mode: opts.mode,
         pathRules: ssrPathRules,
-        contentRules: isNetlify ? buildNetlifyContentRules() : [],
+        contentRules: [...cspRules, ...(isNetlify ? buildNetlifyContentRules() : [])],
         scriptAttrs: null,
         logger,
         ...(Object.keys(extraHashes).length > 0 && { extraHashes }),
@@ -171,9 +185,22 @@ async function runStaticExport(opts, projectRoot) {
         isNetlify ? resolveNetlifyCdpHashes(logger) : Promise.resolve(null),
     ]);
 
+    // Static export usually has no dynamic routes, but readDynamicRoutes may
+    // include rewrites or API routes. Emit `csp` rules + csp.pages entries for
+    // whatever it returns — matches the SSR pipeline's treatment.
     const completeCspPages = {};
+    const cspRules = [];
+    const seenPrefixes = new Set();
     for (const route of dynamicRoutes) {
-        completeCspPages[routePatternToPrefixKey(route)] = { scripts: [], attrs: [] };
+        const key = routePatternToPrefixKey(route);
+        completeCspPages[key] = { scripts: [], attrs: [] };
+        if (!seenPrefixes.has(key)) {
+            seenPrefixes.add(key);
+            cspRules.push({
+                condition: { resourceTypes: ['document'], urlFilter: key },
+                action: { type: 'csp' },
+            });
+        }
     }
 
     await generateManifest({
@@ -183,7 +210,7 @@ async function runStaticExport(opts, projectRoot) {
         secretKey,
         mode: opts.mode,
         pathRules: STATIC_EXPORT_PATH_RULES,
-        contentRules: isNetlify ? buildNetlifyContentRules() : [],
+        contentRules: [...cspRules, ...(isNetlify ? buildNetlifyContentRules() : [])],
         scriptAttrs: opts,
         logger,
         ...(cdpHashes && { extraHashes: { '/.netlify/scripts/cdp': cdpHashes } }),
