@@ -1,6 +1,22 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createManifestStore } from '../storage/manifest-store.js';
 
+const DEFAULT_CSP = {
+    scriptOrigins: [],
+    connectOrigins: [],
+    formActionOrigins: [],
+    frameOrigins: [],
+    mediaOrigins: [],
+    manifestSrcOrigins: [],
+    imgOrigins: [],
+    fontOrigins: [],
+    styleOrigins: [],
+    frameAncestors: [],
+    upgradeInsecureRequests: true,
+    reportSample: false,
+    pages: {},
+};
+
 function createInMemoryStorage() {
     const store = new Map();
     return {
@@ -64,6 +80,7 @@ describe('createManifestStore', () => {
                 pathRules: [],
                 contentRules: [],
                 mode: 'reporting',
+                csp: DEFAULT_CSP,
             };
             const { appVersion } = await storage.trustedManifestStore.addLatest(manifestData);
 
@@ -85,6 +102,7 @@ describe('createManifestStore', () => {
                 files: { '/app.js': ['abc'] },
                 pathRules: [],
                 contentRules: [],
+                csp: DEFAULT_CSP,
             };
             const { appVersion } = await storage.trustedManifestStore.addLatest(manifestData);
 
@@ -105,6 +123,7 @@ describe('createManifestStore', () => {
                 pathRules: [],
                 contentRules: [],
                 mode: 'reporting',
+                csp: DEFAULT_CSP,
             });
         });
 

@@ -167,7 +167,7 @@ test.describe('CSP injection', () => {
         // style-src 'self' 'unsafe-inline': 'unsafe-inline' is safe for styles because all
         // CSS JS-execution vectors (expression(), behavior:, HTC) are IE-only and dead in
         // modern browsers — see docs/js-execution-vectors.md §11.
-        expect(csp).toContain("style-src 'self' 'unsafe-inline'");
+        expect(csp).toMatch(/style-src (?:'report-sample' )?'self' 'unsafe-inline'/);
 
         // worker-src 'self': DappFence registers its own service worker from the page
         // context (navigator.serviceWorker.register in dappfence.js). Without this,

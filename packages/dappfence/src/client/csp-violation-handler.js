@@ -26,7 +26,7 @@ async function scanInlineScripts() {
         const hash = await computeHash(content);
         processedScripts.set(script, hash);
         // TODO: compare hash against allowed set; RSC validation; generate violation
-        logger.warn('[CSP] unrecognised inline script', { hash, sample: content.slice(0, 64) });
+        logger.log('[CSP] unrecognised inline script', { hash, sample: content.slice(0, 64) });
     }
 }
 
@@ -47,7 +47,7 @@ async function scanEventHandlerAttributes() {
             seen.add(attr.name);
             const hash = await computeHash(attr.value);
             // TODO: compare hash against allowed set; generate violation
-            logger.warn('[CSP] unrecognised event handler attribute', {
+            logger.log('[CSP] unrecognised event handler attribute', {
                 tag: el.tagName,
                 attr: attr.name,
                 hash,

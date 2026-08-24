@@ -1,6 +1,13 @@
-import { describe, it, expect } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import { buildCspHeader } from '../manifest/csp.js';
+import { normalizeManifestData } from '../storage/manifest-store.js';
 import { API } from '../../core/constants.js';
+
+// Every test runs its manifest through `normalizeManifestData` before handing
+// it to `buildCspHeader` — mirroring production, where the SW only ever passes
+// pre-normalized manifests to the CSP builder. That path also resolves the
+// `csp_upgrade_insecure_requests` tri-state to a plain boolean, so tests that need
+// to control the flag do so via `vi.stubGlobal('__FEATURES__', …)` below.
 
 const REPORT_URI = `report-uri ${API.CSP_VIOLATION}`;
 const NONCE = 'test-nonce-value';
@@ -10,10 +17,16 @@ const NONCE = 'test-nonce-value';
 // response and returns the composed CSP header value so the existing
 // string-oriented assertions still read cleanly.
 const emptyResponse = () => new Response(null, { headers: new Headers() });
-const csp = (manifest, fileKey = '/', apiToken, nonce = NONCE) =>
-    buildCspHeader(fileKey, emptyResponse(), manifest, apiToken, nonce).get(
+const csp = (manifest, fileKey = '/', apiToken, nonce = NONCE) => {
+    const normalized = normalizeManifestData({ files: {}, ...(manifest ?? {}) });
+    return buildCspHeader(fileKey, emptyResponse(), normalized, apiToken, nonce).get(
         'Content-Security-Policy'
     );
+};
+
+afterEach(() => {
+    vi.unstubAllGlobals();
+});
 
 describe('buildCspHeader', () => {
     it('produces a minimal CSP when the manifest has no csp section', () => {
@@ -22,13 +35,20 @@ describe('buildCspHeader', () => {
         expect(header).toContain(`'nonce-${NONCE}'`);
         expect(header).toContain('*');
         expect(header).toContain("connect-src 'self'");
+        expect(header).toContain("form-action 'self'");
+        expect(header).toContain("manifest-src 'self'");
         expect(header).toContain("default-src 'none'");
         expect(header).toContain("object-src 'none'");
         expect(header).toContain("base-uri 'none'");
         expect(header).toContain("frame-ancestors 'none'");
+        // `upgrade-insecure-requests` defaults to on via the feature flag
+        // fallback (missing flag → default true); the manifest doesn't opt out.
+        expect(header).toContain('upgrade-insecure-requests');
         expect(header).toContain(REPORT_URI);
         expect(header).not.toContain('sha256-');
         expect(header).not.toContain('strict-dynamic');
+        expect(header).not.toContain('frame-src');
+        expect(header).not.toContain('media-src');
     });
 
     it('produces the same minimal CSP when manifest is null', () => {
@@ -107,6 +127,170 @@ describe('buildCspHeader', () => {
     it('encodes special characters in the token', () => {
         const header = csp({}, '/', 'tok en+special=chars');
         expect(header).toContain('token=tok%20en%2Bspecial%3Dchars');
+    });
+});
+
+describe('buildCspHeader — configurable origin fields', () => {
+    it('appends formActionOrigins to form-action after self', () => {
+        const manifest = {
+            csp: { formActionOrigins: ['https://payments.example', 'https://sso.example'] },
+        };
+        expect(csp(manifest)).toMatch(
+            /form-action 'self' https:\/\/payments\.example https:\/\/sso\.example/
+        );
+    });
+
+    it('appends manifestSrcOrigins to manifest-src after self', () => {
+        const manifest = { csp: { manifestSrcOrigins: ['https://cdn.example'] } };
+        expect(csp(manifest)).toContain("manifest-src 'self' https://cdn.example");
+    });
+
+    it('appends imgOrigins to img-src after self and data:', () => {
+        const manifest = { csp: { imgOrigins: ['https://images.example'] } };
+        expect(csp(manifest)).toContain("img-src 'self' data: https://images.example");
+    });
+
+    it('appends fontOrigins to font-src after self', () => {
+        const manifest = { csp: { fontOrigins: ['https://fonts.example'] } };
+        expect(csp(manifest)).toContain("font-src 'self' https://fonts.example");
+    });
+
+    it('appends styleOrigins to style-src after self and unsafe-inline', () => {
+        const manifest = { csp: { styleOrigins: ['https://styles.example'] } };
+        expect(csp(manifest)).toContain("style-src 'self' 'unsafe-inline' https://styles.example");
+    });
+
+    it('emits frame-src only when frameOrigins is non-empty', () => {
+        expect(csp({ csp: { frameOrigins: [] } })).not.toContain('frame-src');
+        expect(csp({ csp: { frameOrigins: ['https://embeds.example'] } })).toContain(
+            "frame-src 'self' https://embeds.example"
+        );
+    });
+
+    it('emits media-src only when mediaOrigins is non-empty', () => {
+        expect(csp({ csp: { mediaOrigins: [] } })).not.toContain('media-src');
+        expect(csp({ csp: { mediaOrigins: ['https://media.example'] } })).toContain(
+            "media-src 'self' https://media.example"
+        );
+    });
+
+    it('replaces frame-ancestors none with self + values when frameAncestors is non-empty', () => {
+        const permissive = csp({ csp: { frameAncestors: ['https://parent.example'] } });
+        expect(permissive).toContain("frame-ancestors 'self' https://parent.example");
+        expect(permissive).not.toContain("frame-ancestors 'none'");
+    });
+
+    it('keeps frame-ancestors none when frameAncestors is empty or missing', () => {
+        expect(csp({ csp: {} })).toContain("frame-ancestors 'none'");
+        expect(csp({ csp: { frameAncestors: [] } })).toContain("frame-ancestors 'none'");
+    });
+
+    it('always emits report-uri as the last directive so URI regex extractors work', () => {
+        // Consumers (including our own e2e tests) scan the policy with
+        // `/report-uri\s+(\S+)/` to POST reports back. If anything follows
+        // report-uri, the `; ` separator gets glued onto the captured URI.
+        const manifest = {
+            csp: {
+                frameOrigins: ['https://embeds.example'],
+                mediaOrigins: ['https://media.example'],
+                upgradeInsecureRequests: true,
+            },
+        };
+        const header = csp(manifest);
+        const directives = header.split('; ');
+        expect(directives[directives.length - 1]).toMatch(/^report-uri /);
+    });
+
+    describe("'report-sample' (tri-state resolved in normalizeManifestData)", () => {
+        it('prepends the keyword to script-src-elem and style-src when opted in', () => {
+            const header = csp({ csp: { reportSample: true } });
+            expect(header).toContain("script-src-elem 'report-sample' 'nonce-");
+            expect(header).toContain("style-src 'report-sample' 'self' 'unsafe-inline'");
+        });
+
+        it('prepends the keyword to script-src-attr when both attrs and sample are on', () => {
+            const manifest = {
+                csp: {
+                    reportSample: true,
+                    pages: { '/': { scripts: [], attrs: ['sha256-h'] } },
+                },
+            };
+            expect(csp(manifest)).toContain(
+                "script-src-attr 'report-sample' 'unsafe-hashes' 'sha256-h'"
+            );
+        });
+
+        it('does not touch origin-list directives (img-src, font-src, connect-src, ...)', () => {
+            const header = csp({ csp: { reportSample: true } });
+            expect(header).not.toMatch(/img-src 'report-sample'/);
+            expect(header).not.toMatch(/font-src 'report-sample'/);
+            expect(header).not.toMatch(/connect-src 'report-sample'/);
+            expect(header).not.toMatch(/form-action 'report-sample'/);
+            expect(header).not.toMatch(/manifest-src 'report-sample'/);
+        });
+
+        it('manifest false wins over flag true', () => {
+            vi.stubGlobal('__FEATURES__', { csp_report_sample: true });
+            expect(csp({ csp: { reportSample: false } })).not.toContain("'report-sample'");
+        });
+
+        it('manifest omitted → flag decides', () => {
+            vi.stubGlobal('__FEATURES__', { csp_report_sample: true });
+            expect(csp({ csp: {} })).toContain("'report-sample'");
+            vi.stubGlobal('__FEATURES__', { csp_report_sample: false });
+            expect(csp({ csp: {} })).not.toContain("'report-sample'");
+        });
+
+        it('code default is false when the flag is missing entirely', () => {
+            vi.stubGlobal('__FEATURES__', {});
+            expect(csp({})).not.toContain("'report-sample'");
+        });
+    });
+
+    describe('upgrade-insecure-requests (tri-state resolved in normalizeManifestData)', () => {
+        it('emits the directive when the manifest explicitly opts in', () => {
+            // Even with the flag forced off, the manifest boolean wins.
+            vi.stubGlobal('__FEATURES__', { csp_upgrade_insecure_requests: false });
+            expect(csp({ csp: { upgradeInsecureRequests: true } })).toContain(
+                'upgrade-insecure-requests'
+            );
+        });
+
+        it('omits the directive when the manifest explicitly opts out (overrides flag)', () => {
+            vi.stubGlobal('__FEATURES__', { csp_upgrade_insecure_requests: true });
+            expect(csp({ csp: { upgradeInsecureRequests: false } })).not.toContain(
+                'upgrade-insecure-requests'
+            );
+        });
+
+        it('non-boolean manifest values fall back to the feature flag (default true here)', () => {
+            // __FEATURES__ absent → normalizer returns default true → directive emitted.
+            expect(csp({ csp: { upgradeInsecureRequests: 'yes' } })).toContain(
+                'upgrade-insecure-requests'
+            );
+        });
+
+        it('defers to the feature flag when the manifest omits the field — flag on → emit', () => {
+            vi.stubGlobal('__FEATURES__', { csp_upgrade_insecure_requests: true });
+            expect(csp({ csp: {} })).toContain('upgrade-insecure-requests');
+        });
+
+        it('defers to the feature flag when the manifest omits the field — flag off → skip', () => {
+            vi.stubGlobal('__FEATURES__', { csp_upgrade_insecure_requests: false });
+            expect(csp({ csp: {} })).not.toContain('upgrade-insecure-requests');
+        });
+
+        it('defaults to true when the flag is missing entirely from __FEATURES__', () => {
+            // Flag present as an object but this key absent — code default kicks in.
+            vi.stubGlobal('__FEATURES__', { some_other_flag: false });
+            expect(csp({ csp: {} })).toContain('upgrade-insecure-requests');
+        });
+
+        it('defaults to true when the manifest has no csp section at all', () => {
+            // The normalizer always emits a fully-resolved csp block, even when
+            // the raw manifest is silent, so the flag-default path still fires.
+            expect(csp({})).toContain('upgrade-insecure-requests');
+        });
     });
 });
 

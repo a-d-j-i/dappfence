@@ -9,6 +9,20 @@
 import { calculateHash } from '../../core/crypto.js';
 import { MODE } from '../../core/constants.js';
 
+// Reads a build-time flag with a caller-supplied default. Not `isFeatureEnabled`
+// because it collapses "missing" and "explicitly false" — the tri-state needs both.
+const flagOrDefault = (name, defaultValue) => {
+    if (typeof __FEATURES__ === 'undefined' || __FEATURES__ === null) {
+        return defaultValue;
+    }
+
+    const v = __FEATURES__[name];
+    if (v === undefined) {
+        return defaultValue;
+    }
+    return v === true;
+};
+
 /**
  * Normalize manifest data from external sources (pure function).
  * Handles both enhanced format ({ files: {...}, metadata, mode, ... }) and
@@ -49,20 +63,33 @@ export const normalizeManifestData = (manifestData) => {
             }
         }
     }
-    const rawCsp = manifestData?.csp;
-    const csp =
-        rawCsp && typeof rawCsp === 'object'
-            ? {
-                  scriptOrigins: Array.isArray(rawCsp.scriptOrigins) ? rawCsp.scriptOrigins : [],
-                  connectOrigins: Array.isArray(rawCsp.connectOrigins) ? rawCsp.connectOrigins : [],
-                  pages:
-                      rawCsp.pages &&
-                      typeof rawCsp.pages === 'object' &&
-                      !Array.isArray(rawCsp.pages)
-                          ? rawCsp.pages
-                          : {},
-              }
-            : undefined;
+    const rawCsp =
+        manifestData?.csp && typeof manifestData.csp === 'object' ? manifestData.csp : {};
+    const arr = (v) => (Array.isArray(v) ? v : []);
+    const csp = {
+        scriptOrigins: arr(rawCsp.scriptOrigins),
+        connectOrigins: arr(rawCsp.connectOrigins),
+        formActionOrigins: arr(rawCsp.formActionOrigins),
+        frameOrigins: arr(rawCsp.frameOrigins),
+        mediaOrigins: arr(rawCsp.mediaOrigins),
+        manifestSrcOrigins: arr(rawCsp.manifestSrcOrigins),
+        imgOrigins: arr(rawCsp.imgOrigins),
+        fontOrigins: arr(rawCsp.fontOrigins),
+        styleOrigins: arr(rawCsp.styleOrigins),
+        frameAncestors: arr(rawCsp.frameAncestors),
+        upgradeInsecureRequests:
+            typeof rawCsp.upgradeInsecureRequests === 'boolean'
+                ? rawCsp.upgradeInsecureRequests
+                : flagOrDefault('csp_upgrade_insecure_requests', true),
+        reportSample:
+            typeof rawCsp.reportSample === 'boolean'
+                ? rawCsp.reportSample
+                : flagOrDefault('csp_report_sample', false),
+        pages:
+            rawCsp.pages && typeof rawCsp.pages === 'object' && !Array.isArray(rawCsp.pages)
+                ? rawCsp.pages
+                : {},
+    };
 
     return {
         ...manifestData,

@@ -149,9 +149,29 @@ async function walk(base, dir, excludes, pathPrefix = '') {
  * @param {string}   [opts.pathPrefix]      - URL prefix prepended to every hashed file's web path.
  *                                           Use when outDir maps to a URL sub-path (e.g. '/_next/static').
  * @param {object}   [opts.csp]             - CSP configuration merged into the manifest.
- *   @param {string[]} [opts.csp.connectOrigins] - Extra origins for connect-src.
- *   @param {object}   [opts.csp.pages]          - Pre-built { pageKey: {scripts,attrs} } map for SSR routes.
- *                                                 Static HTML pages are extracted automatically during the walk.
+ *   Each *Origins field is additive to the SW's secure default (which already includes
+ *   `'self'` plus `data:` for img-src and `'unsafe-inline'` for style-src); the manifest
+ *   cannot introduce `'unsafe-*'` keywords or `*` wildcards. See sw/manifest/csp.js.
+ *   @param {string[]} [opts.csp.connectOrigins]      - Extra origins for connect-src.
+ *   @param {string[]} [opts.csp.formActionOrigins]   - Extra origins for form-action.
+ *   @param {string[]} [opts.csp.frameOrigins]        - Extra origins for frame-src (iframes).
+ *                                                      Only emitted when non-empty.
+ *   @param {string[]} [opts.csp.mediaOrigins]        - Extra origins for media-src (<audio>/<video>).
+ *                                                      Only emitted when non-empty.
+ *   @param {string[]} [opts.csp.manifestSrcOrigins]  - Extra origins for manifest-src (web app manifest).
+ *   @param {string[]} [opts.csp.imgOrigins]          - Extra origins for img-src.
+ *   @param {string[]} [opts.csp.fontOrigins]         - Extra origins for font-src.
+ *   @param {string[]} [opts.csp.styleOrigins]        - Extra origins for style-src (external stylesheets).
+ *   @param {string[]} [opts.csp.frameAncestors]      - Parents allowed to embed this page.
+ *                                                      When non-empty, emits `'self' + <values>` instead of `'none'`.
+ *   @param {boolean}  [opts.csp.upgradeInsecureRequests] - Tri-state: true forces the directive on,
+ *                                                          false forces it off, omit to defer to the
+ *                                                          SW's `csp_upgrade_insecure_requests` feature
+ *                                                          flag (defaults to true when absent).
+ *   @param {boolean}  [opts.csp.reportSample] - Tri-state: forces `'report-sample'` on/off, omit to
+ *                                               defer to the SW's `csp_report_sample` flag (dev=true, prod=false).
+ *   @param {object}   [opts.csp.pages]               - Pre-built { pageKey: {scripts,attrs} } map for SSR routes.
+ *                                                      Static HTML pages are extracted automatically during the walk.
  */
 async function generateManifest({
     outDir,
@@ -228,6 +248,18 @@ async function generateManifest({
         mode,
         csp: {
             connectOrigins: csp?.connectOrigins ?? [],
+            formActionOrigins: csp?.formActionOrigins ?? [],
+            frameOrigins: csp?.frameOrigins ?? [],
+            mediaOrigins: csp?.mediaOrigins ?? [],
+            manifestSrcOrigins: csp?.manifestSrcOrigins ?? [],
+            imgOrigins: csp?.imgOrigins ?? [],
+            fontOrigins: csp?.fontOrigins ?? [],
+            styleOrigins: csp?.styleOrigins ?? [],
+            frameAncestors: csp?.frameAncestors ?? [],
+            ...(typeof csp?.upgradeInsecureRequests === 'boolean'
+                ? { upgradeInsecureRequests: csp.upgradeInsecureRequests }
+                : {}),
+            ...(typeof csp?.reportSample === 'boolean' ? { reportSample: csp.reportSample } : {}),
             pages: cspPages,
         },
         metadata: {

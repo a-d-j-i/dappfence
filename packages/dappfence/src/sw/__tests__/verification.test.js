@@ -54,9 +54,26 @@ describe('normalizeManifestData', () => {
     });
 
     it('returns empty files for non-object input', () => {
-        const empty = { files: {}, pathRules: [], contentRules: [], mode: 'reporting' };
-        expect(normalizeManifestData(42)).toEqual(empty);
-        expect(normalizeManifestData(undefined)).toEqual(empty);
+        // The `csp` block is always emitted (see "always emits a fully-populated
+        // csp block" test) — so even a bogus input produces the same default shape.
+        expect(normalizeManifestData(42)).toEqual(
+            expect.objectContaining({
+                files: {},
+                pathRules: [],
+                contentRules: [],
+                mode: 'reporting',
+                csp: expect.objectContaining({ upgradeInsecureRequests: true }),
+            })
+        );
+        expect(normalizeManifestData(undefined)).toEqual(
+            expect.objectContaining({
+                files: {},
+                pathRules: [],
+                contentRules: [],
+                mode: 'reporting',
+                csp: expect.objectContaining({ upgradeInsecureRequests: true }),
+            })
+        );
     });
 
     it('stores empty array for unparseable entries', () => {
@@ -94,12 +111,21 @@ describe('normalizeManifestData', () => {
     });
 
     describe('csp normalization', () => {
-        it('omits csp field when manifest has no csp section', () => {
-            const result = normalizeManifestData({ files: {} });
-            expect(result.csp).toBeUndefined();
+        afterEach(() => {
+            vi.unstubAllGlobals();
         });
 
-        it('normalizes a well-formed csp section as-is', () => {
+        it('always emits a fully-populated csp block, even when the raw manifest has no csp section', () => {
+            const result = normalizeManifestData({ files: {} });
+            expect(result.csp).toBeDefined();
+            expect(result.csp.scriptOrigins).toEqual([]);
+            expect(result.csp.connectOrigins).toEqual([]);
+            expect(result.csp.pages).toEqual({});
+            expect(result.csp.upgradeInsecureRequests).toBe(true);
+            expect(result.csp.reportSample).toBe(false);
+        });
+
+        it('normalizes a well-formed csp section, filling missing optional fields with defaults', () => {
             const input = {
                 files: {},
                 csp: {
@@ -109,7 +135,57 @@ describe('normalizeManifestData', () => {
                 },
             };
             const result = normalizeManifestData(input);
-            expect(result.csp).toEqual(input.csp);
+            // Fields present in the input survive verbatim…
+            expect(result.csp.scriptOrigins).toEqual(['https://cdn.example.com']);
+            expect(result.csp.connectOrigins).toEqual(['https://api.example.com']);
+            expect(result.csp.pages).toEqual({ '/': ['abc123'] });
+            // …every optional loosening knob defaults to a safe empty value…
+            expect(result.csp.formActionOrigins).toEqual([]);
+            expect(result.csp.frameOrigins).toEqual([]);
+            expect(result.csp.mediaOrigins).toEqual([]);
+            expect(result.csp.manifestSrcOrigins).toEqual([]);
+            expect(result.csp.imgOrigins).toEqual([]);
+            expect(result.csp.fontOrigins).toEqual([]);
+            expect(result.csp.styleOrigins).toEqual([]);
+            expect(result.csp.frameAncestors).toEqual([]);
+            expect(result.csp.upgradeInsecureRequests).toBe(true);
+            expect(result.csp.reportSample).toBe(false);
+        });
+
+        it('resolves reportSample: manifest boolean wins, non-boolean defers to the flag', () => {
+            expect(
+                normalizeManifestData({ files: {}, csp: { reportSample: true } }).csp.reportSample
+            ).toBe(true);
+            expect(
+                normalizeManifestData({ files: {}, csp: { reportSample: false } }).csp.reportSample
+            ).toBe(false);
+            vi.stubGlobal('__FEATURES__', { csp_report_sample: true });
+            expect(
+                normalizeManifestData({ files: {}, csp: { reportSample: 'yes' } }).csp.reportSample
+            ).toBe(true);
+        });
+
+        it('resolves upgradeInsecureRequests: manifest boolean wins, non-booleans defer to the flag', () => {
+            const on = normalizeManifestData({
+                files: {},
+                csp: { upgradeInsecureRequests: true },
+            });
+            expect(on.csp.upgradeInsecureRequests).toBe(true);
+
+            const off = normalizeManifestData({
+                files: {},
+                csp: { upgradeInsecureRequests: false },
+            });
+            expect(off.csp.upgradeInsecureRequests).toBe(false);
+
+            // Non-boolean → defer to feature flag. Force it off and confirm the
+            // resolved value follows, proving the fallback path is exercised.
+            vi.stubGlobal('__FEATURES__', { csp_upgrade_insecure_requests: false });
+            const bogus = normalizeManifestData({
+                files: {},
+                csp: { upgradeInsecureRequests: 'yes' },
+            });
+            expect(bogus.csp.upgradeInsecureRequests).toBe(false);
         });
 
         it('defaults scriptOrigins to [] when missing', () => {
@@ -137,9 +213,14 @@ describe('normalizeManifestData', () => {
             expect(result.csp.scriptOrigins).toEqual([]);
         });
 
-        it('ignores a csp value that is not an object', () => {
+        it('ignores a non-object csp value and falls back to the default resolved shape', () => {
             const result = normalizeManifestData({ files: {}, csp: 'bad' });
-            expect(result.csp).toBeUndefined();
+            // Non-object input is treated as absent — every field gets its safe default.
+            expect(result.csp).toBeDefined();
+            expect(result.csp.scriptOrigins).toEqual([]);
+            expect(result.csp.connectOrigins).toEqual([]);
+            expect(result.csp.pages).toEqual({});
+            expect(result.csp.upgradeInsecureRequests).toBe(true);
         });
     });
 });
