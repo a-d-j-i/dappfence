@@ -34,6 +34,45 @@ import {
 const _require = createRequire(import.meta.url);
 const { deriveIdentity } = _require('@dappfence/manifest-tools');
 
+const SERVER_ISLANDS_TARGET_SUFFIX = '/astro/dist/runtime/server/render/server-islands.js';
+const SUBCLASS_SOURCE_URL = new URL('./inject/server-island-subclass.js', import.meta.url);
+
+// Replaces Astro's ServerIslandComponent with a subclass that emits per-request
+// island data as an inert <script type="application/json"> plus two static
+// scripts (Astro's SERVER_ISLAND_REPLACER + our listener) in <head>. This makes
+// every executable script on the page hash-stable at build time — the whole
+// island machinery collapses to two CSP hashes shared across all pages.
+//
+// Concatenation strategy: the subclass source is appended into the target
+// module verbatim so it inherits the module-local identifiers it depends on
+// (SERVER_ISLAND_REPLACER, markHTMLString, encryptString, …). The export line
+// is rewritten so `ServerIslandComponent` resolves to our subclass everywhere
+// downstream.
+function serverIslandPatchPlugin() {
+    return {
+        name: 'dappfence:patch-server-islands',
+        enforce: 'post',
+        async load(id) {
+            if (!id.endsWith(SERVER_ISLANDS_TARGET_SUFFIX)) {
+                return null;
+            }
+            const subclassSource = await fs.readFile(fileURLToPath(SUBCLASS_SOURCE_URL), 'utf8');
+            const orig = await fs.readFile(id, 'utf8');
+            const exportRe = /export\s*\{\s*ServerIslandComponent[\s\S]*?\};\s*$/;
+            if (!exportRe.test(orig)) {
+                throw new Error(
+                    '[@dappfence/astro] server-islands.js export block not found — Astro version may be incompatible'
+                );
+            }
+            return orig.replace(
+                exportRe,
+                subclassSource +
+                    '\nexport { DfServerIslandComponent as ServerIslandComponent, containsServerDirective, renderServerIslandRuntime };\n'
+            );
+        },
+    };
+}
+
 const resolveDappfenceJsPath = (scriptSrc) =>
     scriptSrc.endsWith('.dev.js')
         ? _require.resolve('@dappfence/core/dev')
@@ -48,6 +87,7 @@ const DEFAULTS = {
     warningUrl: null,
     manifestPath: 'integrity-manifest.json',
     exclude: [],
+    patchServerIslands: true,
 };
 
 export default function dappfence(options = {}) {
@@ -73,7 +113,7 @@ export default function dappfence(options = {}) {
     return {
         name: '@dappfence/astro',
         hooks: {
-            'astro:config:setup'({ logger, config }) {
+            'astro:config:setup'({ logger, config, updateConfig }) {
                 if (!secretKey) {
                     logger.error(
                         'DappFence: secretKey is required. ' +
@@ -88,6 +128,12 @@ export default function dappfence(options = {}) {
                 // Normalize base: strip trailing slash; treat '/' as no prefix.
                 const rawBase = config.base ?? '/';
                 resolvedBase = rawBase === '/' ? '' : rawBase.replace(/\/$/, '');
+
+                if (opts.patchServerIslands) {
+                    updateConfig({
+                        vite: { plugins: [serverIslandPatchPlugin()] },
+                    });
+                }
             },
 
             // Fires after Astro resolves all routes (dev and build).
