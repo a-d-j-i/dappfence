@@ -137,9 +137,12 @@ framework-handled.
 | 19   | `/partials/dynamic/:id`           | Parameterized SSR _navigation_, no `getStaticPaths`                                      | Browser nav; page-specific inline scripts blocked.                                   |
 | 20   | `/inline-data`                    | SSR _page_ with `<script>window.__serverTime=…</script>` + JSON island                   | Browser nav; Pattern A runs at doc parse; Pattern B via `JSON.parse`.                |
 | 21   | `/news`                           | ISR page: build-time render + `revalidate=60s`; RSC push scripts change per regeneration | Browser nav; React hydrates. ISR angle is only about _when_ bytes were generated.    |
+| 22   | `<unmatched>` → 404               | Framework 404 body (Astro `404.astro`, Next `not-found.tsx`) with hydration scripts      | Browser nav; framework hydrates. Same shape as Case 1 (Astro) or Case 9 (Next).      |
+| 23   | `/throws` → 500                   | SSR error path (Astro `500.astro`, Next `error.tsx` React error boundary)                | Browser nav; framework hydrates the error UI. Same shape as Case 9.                  |
+| 24   | `/partials/inferred`              | Auto-inferred dynamic Next route — no `dynamic` export, `headers()` flips the flag       | fetch + innerHTML — same shape as Case 3.                                            |
 
 The case-by-case sections that follow describe the mechanism DappFence uses for each; the
-"Cross-case subtleties" section near the end draws comparisons that are clearer once all 21 cases
+"Cross-case subtleties" section near the end draws comparisons that are clearer once all 24 cases
 have been read.
 
 ---
@@ -1337,6 +1340,188 @@ Content-Security-Policy: script-src 'nonce-<SW-N>' ; script-src-attr 'none' ; �
 
 The layout bootstrapper (build-time-stable) and the RSC push scripts (verified against the RSC
 skeleton at runtime) all get the SW-generated nonce. Body pass-through.
+
+---
+
+## Case 22 — Not-found response body
+
+**Route:** `GET <unmatched>` **Frameworks:** Astro + Next.js **Render time:** Build (prerendered) or
+per-request (SSR fallback) **Destination:** `"document"` (full page navigation)
+
+The response body served by the framework when the request URL matches no route. Both frameworks
+have file-based conventions for this — Astro `src/pages/404.astro`, Next.js `src/app/not-found.tsx`
+— and both emit a full HTML page with hydration scripts, so the wire response is byte-shaped
+identically to any other navigation and must be verifiable.
+
+**Why the case exists:** the 404 response is a legitimate navigation outcome that ships executable
+`<script>` tags (theme bootstrap, framework hydration, DappFence bootstrap). Without a manifest
+entry the SW must either block the response (breaking the 404 UX) or pass it through unverified (a
+tampering vector — the origin could swap the 404 body for a phishing page). The case exists so each
+integration has an explicit policy for this path.
+
+**Astro (implemented):** `src/pages/404.astro` declares `export const prerender = true`. Astro
+writes `dist/client/404.html` at build. The `astro:build:done` disk walk hashes it into
+`manifest.pay.files["/404"]` and the bootstrap `<script>` is injected there via the same disk-walk
+`injectScriptTag` path used for every other prerendered page. The node adapter serves the file on
+any unmatched route; the SW verifies the byte-hash on every 404 response.
+
+**Next.js (unverified today):** `src/app/not-found.tsx` compiles to
+`.next/server/app/_not-found.html`. `@dappfence/next`'s `hashPrerenderedPages` in `src/ssr.js`
+explicitly skips files starting with `_` (to avoid hashing `_error`, `_document`, `_app` internals).
+`_not-found.html` gets caught by this filter as well, so the 404 body is not in the manifest and the
+SW has no entry to compare against. **Gap.** Fix options:
+
+1. Narrow the underscore filter to `_error` / `_document` / `_app` only, include `_not-found.html`
+   under the URL path `/404` (or a dedicated pathRule for the not-found body).
+2. Add a `not-found` pathRule (analogous to the last-resort rule already used for verifying 404
+   status codes in `@dappfence-core`) that names `_not-found.html` as the fallback body.
+
+Under either option the 404 response becomes byte-verified like Case 1.
+
+**Example response (Astro, verified):**
+
+```http
+GET /does-not-exist
+
+HTTP/1.1 404 Not Found
+Content-Type: text/html
+
+<!DOCTYPE html><html lang="en">
+<head>
+  <script src="/dappfence.js" ...></script>  ← injected at build via disk walk
+  ...
+</head>
+<body>...404 body...</body>
+</html>
+```
+
+SW looks up `/404` in `manifest.pay.files`, byte-hash matches, pass-through.
+
+---
+
+## Case 23 — Error boundary response body
+
+**Route:** any route that throws → 500 **Frameworks:** Astro + Next.js **Render time:** Request time
+(SSR error path) **Destination:** `"document"`
+
+The response body served when a route throws an uncaught error. Framework conventions: Astro
+`src/pages/500.astro` (in `output: 'server'` mode), Next.js `src/app/error.tsx` (a client component
+acting as a segment-level React error boundary). Same wire shape as any SSR navigation: full HTML
+with hydration scripts.
+
+**Why the case exists:** error responses are per-request (the error message, stack digest, and
+timestamp all vary) and cannot be byte-hashed. But they still ship executable inline scripts — theme
+bootstrap, hydration, RSC `__next_f` push — so CSP must apply to the error body the same way it
+applies to Case 9 (full SSR page). Without an integration path for this, a route that throws falls
+through to a browser default or origin-controlled body with unbounded inline execution.
+
+**Astro (implemented via middleware):** `src/pages/500.astro` declares `prerender = false`. In
+`output: 'server'` mode, Astro renders it per request whenever an SSR error propagates. The
+`@dappfence/astro` pre-order middleware runs on the error response (it's still `text/html`), injects
+the bootstrap `<script>` into `<head>`, and — once CSP injection lands — will emit the SW-nonced CSP
+header. Same mechanism as Case 9 applied to the error path.
+
+**Next.js (implemented via runtime instrumentation):** `src/app/error.tsx` MUST declare
+`'use client'` (Next requires client components at error boundaries). React renders it inside the
+closest enclosing layout when a segment throws. The response is full HTML: layout shell + error
+boundary markup + framework hydration (`__next_f` push) + DappFence bootstrap from
+`getDappfenceScriptAttrs()` in the root layout. Because it's rendered per request, no on-disk
+`.html` file exists and body-hash is not applicable. The `@dappfence/next/instrumentation` runtime
+hook rewrites the RSC `__next_f` push scripts to inert JSON + a static reader script (see Case 6);
+inline scripts in the error boundary body itself must be in `csp.pages` for the corresponding route
+(or the error route pattern) or CSP blocks them. Same mechanism as Case 9 applied to the error path.
+
+**Precondition:** the framework's error component must not embed per-request executable data
+(timestamps, stack traces) inline. Error boundaries that need per-request data must use the
+JSON-island pattern (Case 20 Pattern B) — an inert `<script type="application/json">` carrying the
+error digest, consumed by client code.
+
+**Example response (Next.js):**
+
+```http
+GET /throws
+
+HTTP/1.1 500 Internal Server Error
+Content-Type: text/html
+Content-Security-Policy: script-src 'nonce-<SW-N>' ...
+
+<!DOCTYPE html><html lang="en">
+<head>
+  <script src="/dappfence.js" ...></script>
+  <script nonce="<SW-N>">(function(){var s=localStorage.getItem('theme');...})();</script>
+  ← theme bootstrap; build-time-stable, hashed into csp.pages
+</head>
+<body>
+  <div class="error-boundary">...error UI, rendered by error.tsx...</div>
+  <script type="application/json" data-nfp>{...}</script>
+  ← RSC __next_f rewritten to inert JSON (via instrumentation.ts)
+  <script nonce="<SW-N>">(reader init — one hash, static, in csp.pages)</script>
+</body>
+</html>
+```
+
+The SW strips the origin CSP, applies its own SW-nonced CSP, and nonces the build-time-stable
+scripts whose hashes are in `csp.pages`. The error UI itself is a Case 9 body (CSP-only, no byte
+hash) rendered inside the enclosing layout.
+
+**Sharp edge:** neither framework's error path is naturally exercised by a green build. Add a
+purpose-built trigger route (Astro `src/pages/throws.astro` throwing in the frontmatter, Next.js
+`src/app/throws/page.tsx` throwing in render) so the case can be tested in CI.
+
+---
+
+## Case 24 — Auto-inferred dynamic
+
+**Route:** `GET /partials/inferred` **Frameworks:** Next.js only **Render time:** Request time
+(inference-driven) **Destination:** `""` (fetched by JS)
+
+A Next.js Route Handler with no `export const dynamic = ...` at the top. The handler calls a dynamic
+API — `headers()` in the fixture — which flips Next's per-render dynamic-inference flag at runtime.
+Observable render behaviour is identical to `dynamic = 'force-dynamic'`; this case exists to prove
+that DappFence's build-time route classification handles inferred dynamism the same way as declared
+dynamism.
+
+**Astro parallel:** none. Astro's `output: 'server'` renders every route dynamically by default;
+prerender opt-in is declarative (`export const prerender = true`). There is no runtime API that
+"promotes" a page from prerendered to SSR after the config is read. The Next-only asymmetry is that
+Next's `dynamic = 'auto'` is a soft policy that flips on API usage, while Astro's mode is locked at
+build.
+
+**Verification:** identical to Case 3. The `@dappfence/next` CLI reads `.next/routes-manifest.json`
+and `.next/server/app-paths-manifest.json` after `next build`; any App Router page or Route Handler
+that is not in the prerender manifest is classified as dynamic. That classifier does not inspect the
+source for `dynamic` exports — it only reads what Next itself produced. So a route that reached
+dynamic status via `headers()` (or `cookies()`, `searchParams`, uncached `fetch`, etc.) shows up in
+the classifier exactly like a route with `dynamic = 'force-dynamic'`: entry in `csp.pages` with
+empty `{ scripts: [], attrs: [] }`, `contentRules` gets an `action: 'csp'` for its prefix, no body
+hash.
+
+**Precondition:** the dynamic-inference trigger must actually fire during `next build`'s prerender
+pass. If the API is called inside a `try/catch` that swallows the `DynamicServerError`, or behind a
+runtime condition that skips the call at build time, Next may attempt to prerender the route and
+produce an on-disk HTML → the CLI hashes it and treats it as static. This is a Next-side gotcha, not
+a DappFence concern: match the framework's expectation.
+
+**Example manifest entry (identical to Case 3):**
+
+```json
+{
+    "csp": {
+        "pages": {
+            "/partials/inferred": { "scripts": [], "attrs": [] }
+        }
+    },
+    "contentRules": [
+        {
+            "condition": { "resourceTypes": ["document"], "urlFilter": "/partials/inferred" },
+            "action": { "type": "csp" }
+        }
+    ]
+}
+```
+
+No entry in `manifest.pay.files["/partials/inferred"]`. SW enforces CSP with empty script hashes; no
+per-request body verification.
 
 ---
 

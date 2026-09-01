@@ -99,7 +99,7 @@ Running `astro build` triggers three steps in order:
    (default `dist/dappfence.js`), so it is served as a first-party file and included in the manifest
    hash.
 
-2. **Script tag is injected** into every HTML file in the output directory:
+2. **Script tag is injected** on the way to the browser:
 
     ```html
     <script
@@ -109,6 +109,16 @@ Running `astro build` triggers three steps in order:
         data-manifest-signature-identity="0x..."
     ></script>
     ```
+
+    Two mechanisms cover both output modes:
+
+    - **Prerendered HTML** (any file Astro writes to the output directory): the tag is inserted
+      after `<head>` on disk during `astro:build:done`, then the file is hashed.
+    - **SSR-rendered HTML** (routes served by the built handler in `output: "server"` or hybrid
+      mode): a `pre`-order Astro middleware inserts the tag after `<head>` on every `text/html`
+      response. Because the middleware is baked into the compiled `entry.mjs`, both the build-time
+      hashing fetch and the runtime request go through it — the response bytes are identical, so the
+      manifest hash matches what the browser receives.
 
 3. **`integrity-manifest.json` is generated** — SHA-256 hashes for every tracked file, signed with
    your `secretKey`, written to the output directory.
@@ -169,6 +179,24 @@ export default defineConfig({
     // …
 });
 ```
+
+## Middleware invariants
+
+For SSR mode to work correctly, the response bytes produced by the compiled handler at build time
+must match the bytes served at runtime. The DappFence middleware only touches `text/html` responses
+(insert bootstrap tag after `<head>`, then step aside). This preserves determinism as long as:
+
+-   **User-installed middleware must not mutate non-HTML response bodies.** Rewriting a JS chunk,
+    CSS file, or JSON payload at request time will cause its runtime bytes to diverge from the
+    disk-hashed bytes in the manifest, and the SW will block that response. Non-HTML bodies pass
+    through the DappFence middleware unchanged for exactly this reason.
+-   **HTML responses must be deterministic.** If a middleware inserts a per-request nonce, request
+    ID, or timestamp into HTML, the build-time and runtime hashes for that route will differ. Move
+    such transformations to a client-side hydration step, or use CSP entries in the manifest to
+    permit the varying scripts explicitly.
+
+If either invariant is broken by another middleware in your chain, the failure mode is loud
+(response blocked with an integrity violation), not silent.
 
 ## Current Limitations
 

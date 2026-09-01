@@ -28,7 +28,7 @@ const keys = { publicKey, secretKey };
 
 const defaultManifest = {
     mode: MODE.PROTECTED,
-    pathRules: [{ type: 'directory-index' }, { type: 'not-found', fallback: '/404.html' }],
+    pathRules: [{ type: 'directory-index' }, { type: 'error-page', status: 404, url: '/404.html' }],
     contentRules: [
         // CSP rule BEFORE the transform so it fires first for /csp-test* paths.
         // The transform returns MATCH (terminal) on hash match and would prevent

@@ -12,6 +12,7 @@ import {
     buildContentRules,
     extractDynamicRoutes,
     extractProbedPatterns,
+    resolveErrorPageRules,
     routePatternToProbeUrl,
     routePatternToPrefixKey,
     generateManifest,
@@ -110,6 +111,123 @@ describe('buildPathRules', () => {
     it('returns html-extension rule for file format', () => {
         expect(buildPathRules('file')).toEqual([{ type: 'html-extension' }]);
     });
+
+    it('appends an error-page rule per entry', () => {
+        expect(
+            buildPathRules('directory', [
+                { status: 404, url: '/404.html' },
+                { status: 500, url: '/500' },
+            ])
+        ).toEqual([
+            { type: 'directory-index' },
+            { type: 'error-page', status: 404, url: '/404.html' },
+            { type: 'error-page', status: 500, url: '/500' },
+        ]);
+    });
+
+    it('appends the error-page rules under file format too', () => {
+        expect(buildPathRules('file', [{ status: 404, url: '/404.html' }])).toEqual([
+            { type: 'html-extension' },
+            { type: 'error-page', status: 404, url: '/404.html' },
+        ]);
+    });
+
+    it('omits error-page rules when the list is empty', () => {
+        expect(buildPathRules('directory', [])).toEqual([{ type: 'directory-index' }]);
+    });
+});
+
+// ── resolveErrorPageRules ─────────────────────────────────────────────────────
+
+describe('resolveErrorPageRules', () => {
+    it('returns an empty list when no error pages are in the build', () => {
+        expect(resolveErrorPageRules({ pages: [{ pathname: 'about/' }] })).toEqual([]);
+    });
+
+    it('returns an empty list when pages, extraHashes, and routes are all empty', () => {
+        expect(resolveErrorPageRules({})).toEqual([]);
+    });
+
+    it('resolves prerendered 404 to /404.html (directory build)', () => {
+        // Astro writes 404.astro to dist/client/404.html even when build.format is
+        // 'directory' (special case so static hosts can serve it at the root).
+        // The disk walk keys it under /404.html — the error-page rule must match.
+        expect(resolveErrorPageRules({ pages: [{ pathname: '404/' }] })).toEqual([
+            { status: 404, url: '/404.html' },
+        ]);
+    });
+
+    it('accepts /404/ pathname variant (leading slash)', () => {
+        expect(resolveErrorPageRules({ pages: [{ pathname: '/404/' }] })).toEqual([
+            { status: 404, url: '/404.html' },
+        ]);
+    });
+
+    it('prefixes url with base when a base is set', () => {
+        expect(resolveErrorPageRules({ base: '/app', pages: [{ pathname: '404/' }] })).toEqual([
+            { status: 404, url: '/app/404.html' },
+        ]);
+    });
+
+    it('prefers SSR-hashed /404/ over prerendered /404.html', () => {
+        const extraHashes = { '/404/': 'sha256-abc' };
+        const pages = [{ pathname: '404/' }];
+        expect(resolveErrorPageRules({ extraHashes, pages })).toEqual([
+            { status: 404, url: '/404/' },
+        ]);
+    });
+
+    it('falls back to SSR-hashed /404 when /404/ is not hashed', () => {
+        expect(resolveErrorPageRules({ extraHashes: { '/404': 'sha256-abc' } })).toEqual([
+            { status: 404, url: '/404' },
+        ]);
+    });
+
+    it('applies base to SSR-hashed extraHashes lookups', () => {
+        expect(
+            resolveErrorPageRules({ base: '/app', extraHashes: { '/app/404/': 'sha256-abc' } })
+        ).toEqual([{ status: 404, url: '/app/404/' }]);
+    });
+
+    it('detects SSR 500.astro from routes (no on-disk hash) — prefers trailing slash', () => {
+        // 500.astro with prerender=false shows up as an SSR route in Astro's
+        // routes array. hashSSRRoutes fetches it via the built server, which
+        // canonicalizes to /500/ when trailingSlash: 'always' is set. Default
+        // to the trailing-slash form so contentRules and csp.pages entries
+        // written under /500/ match at runtime.
+        const routes = [{ pattern: '/500', isPrerendered: false }];
+        expect(resolveErrorPageRules({ routes })).toEqual([{ status: 500, url: '/500/' }]);
+    });
+
+    it('prefers the cspPages-populated URL variant when both /500 and /500/ are declared', () => {
+        // extractDynamicRoutes emits an empty {scripts:[],attrs:[]} entry under
+        // the bare pattern /500. hashSSRRoutes populates the fetched URL /500/
+        // with the actual extracted script hashes. We must pick /500/ so the
+        // SW's csp.pages lookup finds the hashes.
+        const routes = [{ pattern: '/500', isPrerendered: false }];
+        const cspPages = {
+            '/500': { scripts: [], attrs: [] },
+            '/500/': { scripts: ['sha256-abc'], attrs: [] },
+        };
+        expect(resolveErrorPageRules({ routes, cspPages })).toEqual([
+            { status: 500, url: '/500/' },
+        ]);
+    });
+
+    it('returns both 404 and 500 when both are present', () => {
+        const pages = [{ pathname: '404/' }];
+        const routes = [{ pattern: '/500', isPrerendered: false }];
+        expect(resolveErrorPageRules({ pages, routes })).toEqual([
+            { status: 404, url: '/404.html' },
+            { status: 500, url: '/500/' },
+        ]);
+    });
+
+    it('ignores prerendered routes when looking for SSR error pages', () => {
+        // A prerendered /500 would need a corresponding pages entry to be detected.
+        const routes = [{ pattern: '/500', isPrerendered: true }];
+        expect(resolveErrorPageRules({ routes })).toEqual([]);
+    });
 });
 
 // ── buildContentRules ─────────────────────────────────────────────────────────
@@ -191,6 +309,17 @@ describe('buildPageSet', () => {
         const set = buildPageSet([{ pathname: '/blog' }]);
         expect(set.has('/blog/index.html')).toBe(true);
         expect(set.has('/blog.html')).toBe(true);
+    });
+
+    it('normalizes pathnames without a leading slash (Astro build:done form)', () => {
+        // Astro's astro:build:done emits pathname without a leading slash
+        // (e.g. 'about/', '404/') — verify we add leading slash so pageFilter's
+        // lookup (which uses webPath with a leading slash from the walk) matches.
+        const set = buildPageSet([{ pathname: 'about/' }, { pathname: '404/' }]);
+        expect(set.has('/about/index.html')).toBe(true);
+        expect(set.has('/about.html')).toBe(true);
+        expect(set.has('/404/index.html')).toBe(true);
+        expect(set.has('/404.html')).toBe(true);
     });
 
     it('handles multiple pages', () => {

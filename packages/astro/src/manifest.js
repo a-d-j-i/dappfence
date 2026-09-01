@@ -1,6 +1,4 @@
 import { createRequire } from 'node:module';
-import { promises as fs } from 'node:fs';
-import path from 'node:path';
 import { createServer } from 'node:http';
 import { createHash } from 'node:crypto';
 
@@ -102,37 +100,21 @@ export function extractFixedRoutes(routes) {
 }
 
 /**
- * Find the Vite-compiled server chunk for a given source component.
- * Vite normalizes special characters ([ ]) to underscores in chunk filenames.
- */
-async function findRouteChunk(serverDir, componentPath) {
-    const basename = path.basename(componentPath, path.extname(componentPath));
-    const normalized = basename.replace(/[[\]]/g, '_');
-    const chunksDir = path.join(serverDir, 'chunks');
-    let entries;
-    try {
-        entries = await fs.readdir(chunksDir);
-    } catch {
-        return null;
-    }
-    const match = entries.find(
-        (e) => e.endsWith('.mjs') && (e.startsWith(normalized + '_') || e === normalized + '.mjs')
-    );
-    return match ? path.join(chunksDir, match) : null;
-}
-
-/**
  * Extract enumerableRoute SSR routes — parameterized SSR routes that export getStaticPaths().
- * Imports each route's compiled chunk, calls getStaticPaths(), and uses route.generate()
- * to build the concrete web paths to hash.
+ * Imports each route's compiled chunk (looked up in the astro:build:ssr map),
+ * calls getStaticPaths(), and builds the concrete web paths to hash.
  *
- * @param {object[]} routes    - Astro resolved routes
- * @param {string}   serverDir - Absolute path to the compiled server directory
- * @param {object}   logger    - Astro integration logger
- * @returns {Promise<string[]>}
+ * @param {object[]}          routes    - Astro resolved routes
+ * @param {Map<string,string>} chunkMap  - route.pattern → absolute compiled chunk path
+ * @param {object}            logger    - Astro integration logger
+ * @returns {Promise<{ patterns: string[], paths: string[] }>}
+ *   patterns: route.pattern strings that were successfully enumerated
+ *   paths:    concrete web paths for the SSR builder to fetch and hash
  */
-export async function extractEnumerableRoutes(routes, serverDir, logger) {
-    if (!routes?.length) return [];
+export async function extractEnumerableRoutes(routes, chunkMap, logger) {
+    if (!routes?.length) {
+        return { patterns: [], paths: [] };
+    }
 
     const candidates = routes.filter(
         (r) =>
@@ -142,14 +124,17 @@ export async function extractEnumerableRoutes(routes, serverDir, logger) {
             typeof r.entrypoint === 'string'
     );
 
-    if (!candidates.length) return [];
+    if (!candidates.length) {
+        return { patterns: [], paths: [] };
+    }
 
-    const results = [];
+    const patterns = [];
+    const paths = [];
     for (const route of candidates) {
-        const chunkPath = await findRouteChunk(serverDir, route.entrypoint);
+        const chunkPath = chunkMap?.get(route.pattern);
         if (!chunkPath) {
             logger.warn(
-                `DappFence: no compiled chunk found for ${route.entrypoint}; skipping enumerableRoute hashing`
+                `DappFence: no compiled chunk found for ${route.pattern}; skipping enumerableRoute hashing`
             );
             continue;
         }
@@ -161,35 +146,46 @@ export async function extractEnumerableRoutes(routes, serverDir, logger) {
             pageModule = typeof mod.page === 'function' ? mod.page() : mod;
         } catch (err) {
             logger.warn(
-                `DappFence: could not import chunk for ${route.entrypoint} — ${err.message}; skipping`
+                `DappFence: could not import chunk for ${route.pattern} — ${err.message}; skipping`
             );
             continue;
         }
 
-        if (typeof pageModule?.getStaticPaths !== 'function') continue;
+        if (typeof pageModule?.getStaticPaths !== 'function') {
+            continue;
+        }
 
         let staticPaths;
         try {
             staticPaths = await pageModule.getStaticPaths();
         } catch (err) {
             logger.warn(
-                `DappFence: getStaticPaths() failed for ${route.entrypoint} — ${err.message}; skipping`
+                `DappFence: getStaticPaths() failed for ${route.pattern} — ${err.message}; skipping`
             );
             continue;
         }
 
-        if (!Array.isArray(staticPaths)) continue;
+        if (!Array.isArray(staticPaths)) {
+            continue;
+        }
 
+        let addedForThisRoute = false;
         for (const { params } of staticPaths) {
             let webPath = route.pattern;
             for (const [key, value] of Object.entries(params)) {
                 webPath = webPath.replace(`[...${key}]`, value).replace(`[${key}]`, value);
             }
-            if (webPath && !webPath.includes('[')) results.push(webPath);
+            if (webPath && !webPath.includes('[')) {
+                paths.push(webPath);
+                addedForThisRoute = true;
+            }
+        }
+        if (addedForThisRoute) {
+            patterns.push(route.pattern);
         }
     }
 
-    return results;
+    return { patterns, paths };
 }
 
 export function sriHash(buf) {
@@ -201,12 +197,26 @@ export function sriHash(buf) {
  * and return a { webPath → sriHash } map. The server is closed after all routes
  * are fetched.
  *
- * @param {string}   entryMjsPath - Absolute path to the compiled entry.mjs
- * @param {string[]} routes       - Web paths to fetch and hash (e.g. ['/api/version.json'])
- * @param {object}   logger       - Astro integration logger
- * @returns {Promise<Record<string,string>>}
+ * @param {string}      entryMjsPath - Absolute path to the compiled entry.mjs
+ * @param {string[]}    routes       - Web paths to fetch (fixed + enumerable)
+ * @param {object}      logger       - Astro integration logger
+ * @param {string[]}    [probedPatterns] - Route patterns to probe once with a sentinel URL
+ * @param {Set<string>} [byteHashPaths]  - Subset of `routes` for which the body hash
+ *                                         should be recorded in bodyHashes. Routes not in
+ *                                         this set still have CSP hashes extracted but no
+ *                                         byte-hash — appropriate for fixed SSR routes
+ *                                         whose response varies per request (the runtime
+ *                                         SW skips verify for them via the csp contentRule,
+ *                                         so a recorded byte-hash is dead weight).
+ * @returns {Promise<{ bodyHashes: Record<string,string>, cspPages: Record<string,object> }>}
  */
-export async function hashSSRRoutes(entryMjsPath, routes, logger, probedPatterns = []) {
+export async function hashSSRRoutes(
+    entryMjsPath,
+    routes,
+    logger,
+    probedPatterns = [],
+    byteHashPaths = null
+) {
     if (!routes.length && !probedPatterns.length) return { bodyHashes: {}, cspPages: {} };
 
     process.env.ASTRO_NODE_AUTOSTART = 'disabled';
@@ -246,10 +256,14 @@ export async function hashSSRRoutes(entryMjsPath, routes, logger, probedPatterns
                     continue;
                 }
                 const finalPath = new URL(res.url).pathname;
-                bodyHashes[finalPath] = sriHash(buf);
+                const shouldRecordBodyHash = byteHashPaths === null || byteHashPaths.has(webPath);
+                if (shouldRecordBodyHash) {
+                    bodyHashes[finalPath] = sriHash(buf);
+                }
                 const statusNote = res.ok ? '' : ` (HTTP ${res.status})`;
+                const action = shouldRecordBodyHash ? 'hashed' : 'probed';
                 logger.info(
-                    `DappFence: hashed SSR route ${webPath}${finalPath !== webPath ? ` → ${finalPath}` : ''}${statusNote}`
+                    `DappFence: ${action} SSR route ${webPath}${finalPath !== webPath ? ` → ${finalPath}` : ''}${statusNote}`
                 );
                 const contentType = res.headers.get('content-type') ?? '';
                 if (contentType.includes('text/html')) {
@@ -335,7 +349,11 @@ export async function hashSSRRoutes(entryMjsPath, routes, logger, probedPatterns
 export function buildPageSet(pages) {
     const set = new Set();
     for (const { pathname } of pages) {
-        const base = pathname.replace(/\/$/, '');
+        // Normalize: ensure a single leading slash and strip the trailing slash.
+        // Astro emits pathname with a trailing slash and inconsistently with or
+        // without a leading slash depending on version — this normalizes both
+        // shapes to the leading-slash form the walk uses when it emits webPath.
+        const base = ('/' + pathname).replace(/\/+/g, '/').replace(/\/$/, '');
         set.add(base ? `${base}/index.html` : '/index.html');
         if (base) set.add(`${base}.html`);
     }
@@ -343,18 +361,94 @@ export function buildPageSet(pages) {
 }
 
 /**
+ * Resolve the manifest URL to map a given HTTP error status to, from build output.
+ * Preference order per status:
+ *   1. SSR-hashed route in extraHashes (from hashSSRRoutes) — trailing slash first
+ *   2. Prerendered static page in pages array — Astro convention `/{status}.html`
+ *   3. SSR route registered in routes but not fetched (e.g. 500.astro typical case)
+ *
+ * Astro emits `404.astro` (and `500.astro` if prerendered) to `dist/client/{status}.html`
+ * regardless of `build.format` — special case so static hosts can pick them up at the
+ * root. The disk walk always keys those under `/{status}.html`, not `/{status}/index.html`.
+ * Returns null when no page for `status` is in the build output.
+ */
+function resolveErrorPageUrl(
+    status,
+    { base = '', extraHashes = null, pages = null, routes = null, cspPages = null }
+) {
+    const s = String(status);
+    // Byte-hashed SSR route (from hashSSRRoutes bodyHashes) — trailing slash first.
+    if (extraHashes?.[base + '/' + s + '/']) {
+        return base + '/' + s + '/';
+    }
+    if (extraHashes?.[base + '/' + s]) {
+        return base + '/' + s;
+    }
+    // Prerendered — Astro emits {status}.html at the root regardless of build.format.
+    if (pages?.some((p) => p.pathname === s + '/' || p.pathname === '/' + s + '/')) {
+        return base + '/' + s + '.html';
+    }
+    // SSR route with an inline-script CSP entry — prefer the trailing-slash form
+    // (Astro's `trailingSlash: 'always'` canonicalizes fetches to /X/). This matches
+    // where hashSSRRoutes actually stored the extracted script hashes.
+    if (
+        cspPages?.[base + '/' + s + '/']?.scripts?.length ||
+        cspPages?.[base + '/' + s + '/']?.attrs?.length
+    ) {
+        return base + '/' + s + '/';
+    }
+    if (cspPages?.[base + '/' + s]?.scripts?.length || cspPages?.[base + '/' + s]?.attrs?.length) {
+        return base + '/' + s;
+    }
+    // SSR route registered but not fetched (typical for 500.astro before this
+    // integration fetches it): default to the trailing-slash form because Astro
+    // canonicalizes to that when `trailingSlash: 'always'` is set. When the site
+    // uses a different trailingSlash policy, csp.pages entries above will match
+    // first and pick the correct variant.
+    if (
+        routes?.some(
+            (r) => !r.isPrerendered && (r.pattern === '/' + s || r.pattern === '/' + s + '/')
+        )
+    ) {
+        return base + '/' + s + '/';
+    }
+    return null;
+}
+
+/**
+ * Resolve `error-page` pathRule entries for every HTTP status that has a
+ * matching page in the build output. Currently detects 404 and 500.
+ *
+ * @returns {Array<{ status: number, url: string }>}
+ */
+export function resolveErrorPageRules(ctx = {}) {
+    const rules = [];
+    for (const status of [404, 500]) {
+        const url = resolveErrorPageUrl(status, ctx);
+        if (url) {
+            rules.push({ status, url });
+        }
+    }
+    return rules;
+}
+
+/**
  * Build pathRules based on Astro's output format.
  * 'directory' (default) → directory-index; 'file' → html-extension.
+ *
+ * `errorPageRules` is an array of { status, url } entries emitted verbatim as
+ * `{ type: 'error-page', status, url }` after the base rule. Empty means no
+ * error page was detected in the build.
  */
-export function buildPathRules(buildFormat, notFoundKey = null) {
+export function buildPathRules(buildFormat, errorPageRules = []) {
     const rules = [];
     if (buildFormat === 'file') {
         rules.push({ type: 'html-extension' });
     } else {
         rules.push({ type: 'directory-index' });
     }
-    if (notFoundKey) {
-        rules.push({ type: 'not-found', fallback: notFoundKey });
+    for (const { status, url } of errorPageRules) {
+        rules.push({ type: 'error-page', status, url });
     }
     return rules;
 }
@@ -377,22 +471,14 @@ export async function generateManifest({
     base = '',
     netlify = false,
     logger,
+    enumerablePatterns = [],
     ...rest
 }) {
     const prefixRoute = base ? (r) => base + r : (r) => r;
     const pageSet = pages?.length ? buildPageSet(pages) : null;
     const isNetlify = Boolean(process.env.NETLIFY) || Boolean(netlify);
 
-    // Determine the not-found fallback key for the `not-found` pathRule.
-    // Prefer the SSR-hashed 404 page; fall back to the prerendered static 404.
-    // extraHashes keys are already prefixed with base (from hashSSRRoutes response URLs).
-    const notFoundKey = extraHashes?.[base + '/404/']
-        ? base + '/404/'
-        : extraHashes?.[base + '/404']
-          ? base + '/404'
-          : pages?.some((p) => p.pathname === '404/' || p.pathname === '/404/')
-            ? base + (buildFormat === 'file' ? '/404.html' : '/404/index.html')
-            : null;
+    const errorPageRules = resolveErrorPageRules({ base, extraHashes, pages, routes, cspPages });
 
     const cdpHashes = isNetlify ? await resolveNetlifyCdpHashes(logger) : null;
     const mergedExtraHashes = {
@@ -409,6 +495,15 @@ export async function generateManifest({
     // the SW skips hash-verify for those routes (their content varies per request)
     // while still applying CSP. Static prerendered pages have no matching rule
     // and fall through to the SW's default `verify`.
+    //
+    // Enumerable routes (getStaticPaths + prerender=false) are the exception:
+    // hashSSRRoutes has recorded byte-hashes for each concrete URL, so we want
+    // the SW to enforce `verify` on those URLs rather than skip to CSP. Excluding
+    // their prefix from cspRules lets the byte-hash win at runtime (and prevents
+    // the prefix from shadowing a prerendered sibling like /partials/prerendered/).
+    const enumerablePrefixSet = new Set(
+        enumerablePatterns.map((p) => prefixRoute(routePatternToPrefixKey(p)))
+    );
     const completeCspPages = { ...(cspPages ?? {}) };
     const cspRules = [];
     const seenPrefixes = new Set();
@@ -417,7 +512,7 @@ export async function generateManifest({
         if (!(key in completeCspPages)) {
             completeCspPages[key] = { scripts: [], attrs: [] };
         }
-        if (!seenPrefixes.has(key)) {
+        if (!seenPrefixes.has(key) && !enumerablePrefixSet.has(key)) {
             seenPrefixes.add(key);
             cspRules.push({
                 condition: { resourceTypes: ['document'], urlFilter: key },
@@ -429,7 +524,7 @@ export async function generateManifest({
     return _generateManifest({
         ...rest,
         logger,
-        pathRules: buildPathRules(buildFormat, notFoundKey),
+        pathRules: buildPathRules(buildFormat, errorPageRules),
         contentRules: [...cspRules, ...buildContentRules({ isNetlify })],
         // walk() generates keys as base + '/...' when pathPrefix is set; strip the
         // prefix before comparing against pageSet (which is built from page pathnames

@@ -180,6 +180,9 @@ export const createVerifier = ({ swContext, appStore, config }, manifestLoader) 
         }
         const token = await appStore.apiTokenStore.getApiToken();
         const nonce = crypto.randomUUID();
+        logger.log(
+            `Adding CSP headers to ${fileKey} destination=${req.destination} status=${decision.status.description} nonce=${nonce.slice(0, 8)}…`
+        );
         return {
             ...decision,
             fileKey,

@@ -30,9 +30,13 @@ import {
     hashSSRRoutes,
     sriHash,
 } from './manifest.js';
+import { dappfenceAttrsPlugin } from './inject/attrs-virtual-plugin.js';
 
 const _require = createRequire(import.meta.url);
 const { deriveIdentity } = _require('@dappfence/manifest-tools');
+const { buildScriptTag } = _require('@dappfence/manifest-tools/manifest');
+
+const MIDDLEWARE_URL = new URL('./inject/middleware.js', import.meta.url);
 
 const SERVER_ISLANDS_TARGET_SUFFIX = '/astro/dist/runtime/server/render/server-islands.js';
 const SUBCLASS_SOURCE_URL = new URL('./inject/server-island-subclass.js', import.meta.url);
@@ -109,11 +113,13 @@ export default function dappfence(options = {}) {
     let resolvedServerDir = null;
     // Normalized base path (e.g. '/my-app'); empty string when site is at root.
     let resolvedBase = '';
+    // Populated by astro:build:ssr — route.pattern → absolute compiled chunk path.
+    const ssrRouteToChunk = new Map();
 
     return {
         name: '@dappfence/astro',
         hooks: {
-            'astro:config:setup'({ logger, config, updateConfig }) {
+            'astro:config:setup'({ logger, config, updateConfig, addMiddleware }) {
                 if (!secretKey) {
                     logger.error(
                         'DappFence: secretKey is required. ' +
@@ -129,11 +135,17 @@ export default function dappfence(options = {}) {
                 const rawBase = config.base ?? '/';
                 resolvedBase = rawBase === '/' ? '' : rawBase.replace(/\/$/, '');
 
+                const scriptTag = buildScriptTag(opts);
+                const vitePlugins = [dappfenceAttrsPlugin(scriptTag)];
                 if (opts.patchServerIslands) {
-                    updateConfig({
-                        vite: { plugins: [serverIslandPatchPlugin()] },
-                    });
+                    vitePlugins.push(serverIslandPatchPlugin());
                 }
+                updateConfig({ vite: { plugins: vitePlugins } });
+
+                addMiddleware({
+                    entrypoint: MIDDLEWARE_URL,
+                    order: 'pre',
+                });
             },
 
             // Fires after Astro resolves all routes (dev and build).
@@ -141,6 +153,34 @@ export default function dappfence(options = {}) {
             // (non-pre-rendered) routes in the manifest metadata.
             'astro:routes:resolved'({ routes }) {
                 resolvedRoutes = routes;
+            },
+
+            // Astro populates entryModules (from Vite's generateBundle) with
+            // virtual:astro:page:<component>@_@<ext> → chunks/<file>.mjs. This
+            // gives us an authoritative source-component → compiled-chunk map,
+            // avoiding basename ambiguity when multiple routes share a filename
+            // (e.g. /partials/[id], /partials/dynamic/[id], /api/item/[id] all
+            // compile to _id__*.mjs). route.file is documented but is always ""
+            // at this point in the pipeline — do not rely on it.
+            'astro:build:ssr'({ manifest }) {
+                const buildServerDir = manifest.buildServerDir;
+                for (const route of manifest.routes || []) {
+                    const component = route.routeData?.component;
+                    const pattern = route.routeData?.route;
+                    if (!component || !pattern) {
+                        continue;
+                    }
+                    // Vite's virtual-module convention prefixes every key with a
+                    // literal null byte. Astro's normalizeEntryId only strips
+                    // '\0astro-entry:', so 'virtual:astro:page:...' keeps its \0.
+                    const virtualKey = `\0virtual:astro:page:${component.replace(/\.([^.]+)$/, '@_@$1')}`;
+                    const chunkFile = manifest.entryModules?.[virtualKey];
+                    if (!chunkFile) {
+                        continue;
+                    }
+                    const abs = fileURLToPath(new URL(chunkFile, buildServerDir));
+                    ssrRouteToChunk.set(pattern, abs);
+                }
             },
 
             // Production build only. After Astro has written all HTML files to
@@ -180,9 +220,9 @@ export default function dappfence(options = {}) {
                     .catch(() => false);
 
                 const fixedRoutes = extractFixedRoutes(resolvedRoutes);
-                const enumerableRoutes = entryExists
-                    ? await extractEnumerableRoutes(resolvedRoutes, serverDir, logger)
-                    : [];
+                const { patterns: enumerablePatterns, paths: enumerableRoutes } = entryExists
+                    ? await extractEnumerableRoutes(resolvedRoutes, ssrRouteToChunk, logger)
+                    : { patterns: [], paths: [] };
                 const prefixRoute = resolvedBase ? (r) => resolvedBase + r : (r) => r;
                 const allSSRRoutes = [...fixedRoutes, ...enumerableRoutes].map(prefixRoute);
                 const probedPatterns = extractProbedPatterns(resolvedRoutes).map(prefixRoute);
@@ -192,11 +232,19 @@ export default function dappfence(options = {}) {
                         logger.info(
                             `DappFence: hashing ${fixedRoutes.length} fixed, ${enumerableRoutes.length} enumerable SSR route(s)${probedPatterns.length ? `, probing ${probedPatterns.length} probed pattern(s)` : ''} via ${path.relative(path.dirname(outDir), entryMjsPath)}`
                         );
+                        // Only enumerable routes get byte-hashes recorded — their
+                        // getStaticPaths() contract implies deterministic content
+                        // per param, so byte-hash is enforceable at runtime. Fixed
+                        // SSR routes are declared dynamic by prerender=false and
+                        // the runtime SW skips verify for them via the csp rule,
+                        // so their byte-hash would be dead weight.
+                        const byteHashPaths = new Set(enumerableRoutes.map(prefixRoute));
                         const result = await hashSSRRoutes(
                             entryMjsPath,
                             allSSRRoutes,
                             logger,
-                            probedPatterns
+                            probedPatterns,
+                            byteHashPaths
                         );
                         extraHashes = result.bodyHashes;
                         cspPages = result.cspPages;
@@ -222,6 +270,7 @@ export default function dappfence(options = {}) {
                     scriptAttrs: opts,
                     logger,
                     extraHashes: { ...scriptHash, ...(extraHashes || {}) },
+                    enumerablePatterns,
                     ...(cspPages && Object.keys(cspPages).length > 0 && { cspPages }),
                 });
             },
