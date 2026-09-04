@@ -504,14 +504,17 @@ describe('hashPrerenderedPages', () => {
         expect(bodyHashes['/blog/getting-started']).toMatch(/^sha256-/);
     });
 
-    it('skips internal Next.js pages (_not-found, _error, etc.)', async () => {
+    it('remaps _not-found.html to /404 and skips _error/_document/_app', async () => {
         const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'df-pp-'));
         tmpDirs.push(dir);
         await writeHtml(dir, '.next/server/app/_not-found.html');
         await writeHtml(dir, '.next/server/pages/_error.html');
         await writeHtml(dir, '.next/server/app/about.html');
         const { bodyHashes } = await hashPrerenderedPages(dir, '', LOGGER);
-        expect(Object.keys(bodyHashes)).toEqual(['/about']);
+        expect(bodyHashes['/404']).toMatch(/^sha256-/);
+        expect(bodyHashes['/about']).toMatch(/^sha256-/);
+        expect(bodyHashes['/_not-found']).toBeUndefined();
+        expect(bodyHashes['/_error']).toBeUndefined();
     });
 
     it('covers Pages Router html files', async () => {

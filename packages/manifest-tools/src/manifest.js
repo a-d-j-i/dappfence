@@ -219,7 +219,10 @@ async function generateManifest({
                     logger.warn(`DappFence: ${webPath}: ${w}`);
                 }
                 if (scripts.length || attrs.length) {
-                    cspBuiltPages[webPath] = { scripts, attrs };
+                    cspBuiltPages[webPath] = {
+                        ...(scripts.length && { scripts }),
+                        ...(attrs.length && { attrs }),
+                    };
                 }
             } catch (err) {
                 logger.warn(`DappFence: CSP hash extraction failed for ${webPath}: ${err.message}`);

@@ -611,7 +611,7 @@ describe('generateManifest', () => {
         expect(manifest.pay).toBeDefined();
     });
 
-    it('puts dynamic routes into csp.pages with prefix keys', async () => {
+    it('emits a csp contentRule per dynamic-route prefix and no csp.pages entry when hashes are empty', async () => {
         const outDir = await setup();
         const routes = [
             { pattern: '/', isPrerendered: true },
@@ -633,9 +633,14 @@ describe('generateManifest', () => {
         const raw = await fs.readFile(path.join(outDir, 'integrity-manifest.json'), 'utf8');
         const manifest = JSON.parse(raw);
         expect(manifest.pay.metadata.dynamicRoutes).toBeUndefined();
-        expect(manifest.pay.csp.pages['/api/']).toEqual({ scripts: [], attrs: [] });
-        expect(manifest.pay.csp.pages['/live']).toEqual({ scripts: [], attrs: [] });
+        expect(manifest.pay.csp.pages['/api/']).toBeUndefined();
+        expect(manifest.pay.csp.pages['/live']).toBeUndefined();
         expect(manifest.pay.csp.pages['/']).toBeUndefined();
+        const urlFilters = manifest.pay.contentRules
+            .filter((r) => r.action?.type === 'csp')
+            .map((r) => r.condition?.urlFilter);
+        expect(urlFilters).toContain('/api/');
+        expect(urlFilters).toContain('/live');
     });
 
     it('emits directory-index pathRules by default', async () => {

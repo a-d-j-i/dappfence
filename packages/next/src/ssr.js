@@ -46,9 +46,12 @@ async function walkHtmlFiles(dir, baseDir, hashes, cspPages, logger) {
         } else if (entry.isFile() && entry.name.endsWith('.html')) {
             const rel = path.relative(baseDir, abs);
             const base = path.basename(rel);
-            // Skip Next.js internal pages (_not-found, _error, _document, _app)
-            if (base.startsWith('_')) continue;
-            const urlPath = htmlFileToUrlPath(rel);
+            if (base === '_error.html' || base === '_document.html' || base === '_app.html') {
+                continue;
+            }
+            // Root not-found.tsx compiles to _not-found.html and is served for any
+            // unmatched route; remap to /404 so the SW's error-page rule can verify.
+            const urlPath = rel === '_not-found.html' ? '/404' : htmlFileToUrlPath(rel);
             const buf = await fs.readFile(abs);
             hashes[urlPath] = sriHash(buf);
             logger.info(`DappFence: hashed pre-rendered page ${urlPath}`);
@@ -60,7 +63,10 @@ async function walkHtmlFiles(dir, baseDir, hashes, cspPages, logger) {
                 const scripts = scriptResult.hashes;
                 const attrs = attrResult.attrs.map((a) => a.hash);
                 if (scripts.length || attrs.length) {
-                    cspPages[urlPath] = { scripts, attrs };
+                    cspPages[urlPath] = {
+                        ...(scripts.length && { scripts }),
+                        ...(attrs.length && { attrs }),
+                    };
                 }
             } catch (err) {
                 logger.warn(`DappFence: CSP hash extraction failed for ${urlPath}: ${err.message}`);
@@ -185,7 +191,10 @@ export async function hashSSRRoutes(projectRoot, fixedRoutes, probedPatterns, lo
                             logger.warn(`DappFence: ${finalPath}: ${w}`);
                         }
                         if (scripts.length || attrs.length) {
-                            cspPages[finalPath] = { scripts, attrs };
+                            cspPages[finalPath] = {
+                                ...(scripts.length && { scripts }),
+                                ...(attrs.length && { attrs }),
+                            };
                         }
                     } catch (err) {
                         logger.warn(
@@ -232,7 +241,10 @@ export async function hashSSRRoutes(projectRoot, fixedRoutes, probedPatterns, lo
                         logger.warn(`DappFence: ${pattern} (probe): ${w}`);
                     }
                     if (scripts.length || attrs.length) {
-                        cspPages[prefixKey] = { scripts, attrs };
+                        cspPages[prefixKey] = {
+                            ...(scripts.length && { scripts }),
+                            ...(attrs.length && { attrs }),
+                        };
                         logger.info(
                             `DappFence: probed ${pattern} → CSP prefix ${prefixKey} (${scripts.length} script, ${attrs.length} attr hash(es))`
                         );

@@ -275,7 +275,10 @@ export async function hashSSRRoutes(
                             logger.warn(`DappFence: ${finalPath}: ${w}`);
                         }
                         if (scripts.length || attrs.length) {
-                            cspPages[finalPath] = { scripts, attrs };
+                            cspPages[finalPath] = {
+                                ...(scripts.length && { scripts }),
+                                ...(attrs.length && { attrs }),
+                            };
                         }
                     } catch (err) {
                         logger.warn(
@@ -323,7 +326,10 @@ export async function hashSSRRoutes(
                         logger.warn(`DappFence: ${pattern} (probe): ${w}`);
                     }
                     if (scripts.length || attrs.length) {
-                        cspPages[prefixKey] = { scripts, attrs };
+                        cspPages[prefixKey] = {
+                            ...(scripts.length && { scripts }),
+                            ...(attrs.length && { attrs }),
+                        };
                         logger.info(
                             `DappFence: probed ${pattern} → CSP prefix ${prefixKey} (${scripts.length} script, ${attrs.length} attr hash(es))`
                         );
@@ -486,32 +492,27 @@ export async function generateManifest({
         ...(extraHashes || {}),
     };
 
-    // All dynamic (SSR) routes must appear in csp.pages so the SW knows to inject
-    // CSP headers for them. Routes with inline scripts already have entries from
-    // hashSSRRoutes; add empty entries for the rest. Parameterised routes use a
-    // prefix key (e.g. '/partials/[id]' → '/partials/') for startsWith matching.
-    //
-    // Each dynamic-route prefix also becomes a contentRule with action `csp` so
-    // the SW skips hash-verify for those routes (their content varies per request)
-    // while still applying CSP. Static prerendered pages have no matching rule
-    // and fall through to the SW's default `verify`.
+    // Each dynamic-route prefix becomes a contentRule with action `csp` so the SW
+    // skips hash-verify for those routes (their content varies per request) while
+    // still applying CSP. Static prerendered pages have no matching rule and fall
+    // through to the SW's default `verify`.
     //
     // Enumerable routes (getStaticPaths + prerender=false) are the exception:
     // hashSSRRoutes has recorded byte-hashes for each concrete URL, so we want
     // the SW to enforce `verify` on those URLs rather than skip to CSP. Excluding
     // their prefix from cspRules lets the byte-hash win at runtime (and prevents
     // the prefix from shadowing a prerendered sibling like /partials/prerendered/).
+    //
+    // csp.pages entries are added only where hashSSRRoutes produced real inline
+    // hashes; routes without any inline scripts contribute nothing (the SW
+    // defaults missing entries to empty).
     const enumerablePrefixSet = new Set(
         enumerablePatterns.map((p) => prefixRoute(routePatternToPrefixKey(p)))
     );
-    const completeCspPages = { ...(cspPages ?? {}) };
     const cspRules = [];
     const seenPrefixes = new Set();
     for (const route of extractDynamicRoutes(routes)) {
         const key = prefixRoute(routePatternToPrefixKey(route));
-        if (!(key in completeCspPages)) {
-            completeCspPages[key] = { scripts: [], attrs: [] };
-        }
         if (!seenPrefixes.has(key) && !enumerablePrefixSet.has(key)) {
             seenPrefixes.add(key);
             cspRules.push({
@@ -534,6 +535,6 @@ export async function generateManifest({
             : undefined,
         pathPrefix: base,
         ...(Object.keys(mergedExtraHashes).length > 0 && { extraHashes: mergedExtraHashes }),
-        ...(Object.keys(completeCspPages).length > 0 && { csp: { pages: completeCspPages } }),
+        ...(cspPages && Object.keys(cspPages).length > 0 && { csp: { pages: cspPages } }),
     });
 }

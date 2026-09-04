@@ -53,9 +53,10 @@ function parseScriptTag(html, attrStart) {
     let i = attrStart;
     let hasSrc = false;
     let hasNonce = false;
+    let type = null;
     while (i < html.length) {
         while (i < html.length && /\s/.test(html[i])) i++;
-        if (html[i] === '>') return { hasSrc, hasNonce, contentStart: i + 1 };
+        if (html[i] === '>') return { hasSrc, hasNonce, type, contentStart: i + 1 };
         if (html[i] === '/') {
             i++;
             continue;
@@ -71,22 +72,32 @@ function parseScriptTag(html, attrStart) {
             if (html[i] === '"' || html[i] === "'") {
                 const q = html[i++];
                 const end = html.indexOf(q, i);
-                if (end === -1) return { hasSrc, hasNonce, contentStart: html.length };
+                if (end === -1) return { hasSrc, hasNonce, type, contentStart: html.length };
                 if (attrName === 'src') hasSrc = true;
                 if (attrName === 'nonce') hasNonce = true;
+                if (attrName === 'type') type = html.slice(i, end).trim().toLowerCase();
                 i = end + 1;
             } else {
+                const valStart = i;
                 while (i < html.length && !/[\s>]/.test(html[i])) i++;
                 if (attrName === 'src') hasSrc = true;
                 if (attrName === 'nonce') hasNonce = true;
+                if (attrName === 'type') type = html.slice(valStart, i).trim().toLowerCase();
             }
         } else {
             // Boolean attribute (no value) — nonce requires a value, so only src matters here.
             if (attrName === 'src') hasSrc = true;
         }
     }
-    return { hasSrc, hasNonce, contentStart: html.length };
+    return { hasSrc, hasNonce, type, contentStart: html.length };
 }
+
+// Script `type` values the browser NEVER executes — treated as data blocks per HTML spec.
+// CSP script-src does not gate these either, so hashing them just puffs the header AND
+// (for ISR / dynamic pages) produces stale hashes on every render. Conservative whitelist:
+// only the two well-established inert MIMEs. Unknown types keep getting hashed (safe default —
+// a future executable type would still be gated).
+const NON_EXECUTABLE_SCRIPT_TYPES = new Set(['application/json', 'application/ld+json']);
 
 // HTML5 script data state machine to find the closing `</script>`.
 // States: NORMAL (script data), ESCAPED (after <!--), DOUBLE_ESCAPED (after <!--<script).
@@ -200,7 +211,7 @@ function _hashScripts(html) {
         const tagStart = indexOfOpenScript(html, pos);
         if (tagStart === -1) break;
 
-        const { hasSrc, hasNonce, contentStart } = parseScriptTag(html, tagStart + 7);
+        const { hasSrc, hasNonce, type, contentStart } = parseScriptTag(html, tagStart + 7);
         if (hasSrc) {
             pos = contentStart;
             continue;
@@ -210,6 +221,11 @@ function _hashScripts(html) {
         if (contentEnd === -1) {
             warnings.push(`Unterminated <script> at offset ${tagStart}`);
             break;
+        }
+
+        if (type && NON_EXECUTABLE_SCRIPT_TYPES.has(type)) {
+            pos = findTagClose(html, contentEnd + 8) + 1;
+            continue;
         }
 
         if (hasNonce) {

@@ -28,6 +28,7 @@ import { createRequire } from 'node:module';
 import { promises as fs } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { readDynamicRoutes } from '../src/routes.js';
 import {
     hashPrerenderedPages,
@@ -106,13 +107,12 @@ async function runSSR(opts, projectRoot) {
         ),
         ...publicHashes,
     };
-    // All dynamic routes must appear in csp.pages so the SW knows to inject CSP
-    // headers for them. Parameterised routes use a prefix key for startsWith matching.
-    //
-    // Each dynamic-route prefix also becomes a contentRule with action `csp` so
-    // the SW skips hash-verify for those routes (their content varies per request)
-    // while still applying CSP. Prerendered pages have no matching rule and fall
-    // through to the SW's default `verify`.
+    // Each dynamic-route prefix becomes a contentRule with action `csp` so the SW
+    // skips hash-verify for those routes (their content varies per request) while
+    // still applying CSP. Prerendered pages have no matching rule and fall through
+    // to the SW's default `verify`. csp.pages carries only the routes that produced
+    // real inline hashes; empty entries would be indistinguishable from missing
+    // and the SW defaults missing to empty.
     const completeCspPages = { ...pageResult.cspPages, ...ssrResult.cspPages };
     const cspRules = [];
     const seenPrefixes = new Set();
@@ -120,9 +120,21 @@ async function runSSR(opts, projectRoot) {
         const key = basePath
             ? basePath + routePatternToPrefixKey(route)
             : routePatternToPrefixKey(route);
-        if (!(key in completeCspPages)) {
-            completeCspPages[key] = { scripts: [], attrs: [] };
+        if (!seenPrefixes.has(key)) {
+            seenPrefixes.add(key);
+            cspRules.push({
+                condition: { resourceTypes: ['document'], urlFilter: key },
+                action: { type: 'csp' },
+            });
         }
+    }
+
+    // ISR routes are prerendered at build but regenerated per revalidate window.
+    // Body hashes were dropped above (isrPathSet filter) because they'd go stale on
+    // the first revalidation. Emit a contentRule so the SW serves the response
+    // CSP-only instead of falling through to `verify` and hitting NOT_FOUND.
+    for (const route of isrRoutes) {
+        const key = basePath ? basePath + route : route;
         if (!seenPrefixes.has(key)) {
             seenPrefixes.add(key);
             cspRules.push({
@@ -133,13 +145,13 @@ async function runSSR(opts, projectRoot) {
     }
 
     const ssrPathRules = [{ type: 'directory-index' }];
-    const notFoundKey = extraHashes[basePath + '/404']
+    const notFoundUrl = extraHashes[basePath + '/404']
         ? basePath + '/404'
         : extraHashes['/404']
           ? '/404'
           : null;
-    if (notFoundKey) {
-        ssrPathRules.push({ type: 'not-found', fallback: notFoundKey });
+    if (notFoundUrl) {
+        ssrPathRules.push({ type: 'error-page', status: 404, url: notFoundUrl });
     }
 
     await generateManifest({
@@ -186,14 +198,12 @@ async function runStaticExport(opts, projectRoot) {
     ]);
 
     // Static export usually has no dynamic routes, but readDynamicRoutes may
-    // include rewrites or API routes. Emit `csp` rules + csp.pages entries for
-    // whatever it returns — matches the SSR pipeline's treatment.
-    const completeCspPages = {};
+    // include rewrites or API routes. Emit `csp` rules for whatever it returns —
+    // matches the SSR pipeline's treatment.
     const cspRules = [];
     const seenPrefixes = new Set();
     for (const route of dynamicRoutes) {
         const key = routePatternToPrefixKey(route);
-        completeCspPages[key] = { scripts: [], attrs: [] };
         if (!seenPrefixes.has(key)) {
             seenPrefixes.add(key);
             cspRules.push({
@@ -214,7 +224,6 @@ async function runStaticExport(opts, projectRoot) {
         scriptAttrs: opts,
         logger,
         ...(cdpHashes && { extraHashes: { '/.netlify/scripts/cdp': cdpHashes } }),
-        ...(Object.keys(completeCspPages).length > 0 && { csp: { pages: completeCspPages } }),
     });
 }
 
@@ -247,9 +256,15 @@ async function main() {
         // Wrapper mode: spawn next build as a child process, then generate the
         // manifest. next build calls process.exit(0) internally which would kill
         // a parent process only if we were using fork() — spawnSync is safe.
+        // --import the preload so the RSC compile hook installs in every worker
+        // Next forks during prerender. Env vars survive fork boundaries.
+        const preloadUrl = pathToFileURL(_require.resolve('@dappfence/next/preload')).href;
+        const priorNodeOptions = process.env.NODE_OPTIONS || '';
+        const nodeOptions = `${priorNodeOptions} --import=${preloadUrl}`.trim();
         const result = spawnSync('next', ['build', ...args.slice(1)], {
             stdio: 'inherit',
             shell: process.platform === 'win32',
+            env: { ...process.env, NODE_OPTIONS: nodeOptions },
         });
         if (result.status !== 0) {
             process.exit(result.status ?? 1);
