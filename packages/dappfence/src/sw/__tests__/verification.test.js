@@ -251,6 +251,23 @@ describe('toPathname', () => {
     it('returns absolute URL as-is on parse failure', () => {
         expect(toPathname('https://cdn.com/lib.js', 'bad-base')).toBe('https://cdn.com/lib.js');
     });
+
+    it('percent-decodes same-origin pathnames so lookup matches manifest keys', () => {
+        // Next parameterized route chunks live at literal `[id]` on disk /
+        // in the manifest; the browser encodes them to `%5Bid%5D` on the wire.
+        expect(
+            toPathname(
+                'https://example.com/_next/static/chunks/app/partials/dynamic/%5Bid%5D/page-abc.js',
+                baseUrl
+            )
+        ).toBe('/_next/static/chunks/app/partials/dynamic/[id]/page-abc.js');
+    });
+
+    it('falls back to raw pathname on malformed percent-encoding', () => {
+        // A stray `%` sequence would throw in decodeURIComponent; fall through
+        // to the raw pathname (manifest lookup will miss — correct outcome).
+        expect(toPathname('https://example.com/bad%2', baseUrl)).toBe('/bad%2');
+    });
 });
 
 // ── resolveManifestKey ────────────────────────────────────────────────────────
@@ -281,6 +298,17 @@ describe('resolveManifestKey', () => {
 
         it('returns pathname for relative path', () => {
             expect(resolveManifestKey(req('/style.css'), base)).toBe('/style.css');
+        });
+
+        it('percent-decodes same-origin pathname so lookup matches manifest keys', () => {
+            expect(
+                resolveManifestKey(
+                    req(
+                        'https://example.com/_next/static/chunks/app/partials/dynamic/%5Bid%5D/page.js'
+                    ),
+                    base
+                )
+            ).toBe('/_next/static/chunks/app/partials/dynamic/[id]/page.js');
         });
     });
 

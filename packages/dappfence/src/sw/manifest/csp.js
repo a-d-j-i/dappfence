@@ -1,5 +1,22 @@
 import { API } from '../../core/constants.js';
 
+// csp.pages keys are exact paths (e.g. `/dashboard`) or trailing-slash prefixes
+// (e.g. `/posts/`) — see docs/csp-collection.md. Exact match wins; otherwise the
+// longest prefix that fileKey starts with.
+const matchCspPageEntry = (pages, fileKey) => {
+    if (!pages) return undefined;
+    if (fileKey in pages) return pages[fileKey];
+    let match,
+        matchLen = -1;
+    for (const key of Object.keys(pages)) {
+        if (key.length > matchLen && fileKey.startsWith(key)) {
+            match = pages[key];
+            matchLen = key.length;
+        }
+    }
+    return match;
+};
+
 /**
  * Builds the response headers for a CSP-protected navigation.
  *
@@ -89,8 +106,7 @@ export function buildCspHeader(fileKey, response, manifest, apiToken, nonce) {
     const upgradeInsecureRequests = csp.upgradeInsecureRequests === true;
     const sampleParts = csp.reportSample === true ? ["'report-sample'"] : [];
 
-    // pages[fileKey] can be an array (legacy: scripts only) or {scripts, attrs}
-    const pageEntry = csp.pages?.[fileKey];
+    const pageEntry = matchCspPageEntry(csp.pages, fileKey);
     const scriptHashes = Array.isArray(pageEntry) ? pageEntry : pageEntry?.scripts ?? [];
     const attrHashes = Array.isArray(pageEntry) ? [] : pageEntry?.attrs ?? [];
 

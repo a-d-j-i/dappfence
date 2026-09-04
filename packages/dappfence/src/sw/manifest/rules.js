@@ -5,6 +5,8 @@
 
 // ── contentRules ─────────────────────────────────────────────────────────────
 
+import { decodePathname } from './verification.js';
+
 /**
  * @param {object|undefined} condition
  * @param {string} fileKey
@@ -120,9 +122,7 @@ export const resolveManifestKey = (req, base, manifest = {}, response = null) =>
     if (fileUrl.origin !== originUrl.origin) {
         return fileUrl.href;
     }
-
-    const { pathname } = fileUrl;
-
+    const pathname = decodePathname(fileUrl.pathname);
     const fileKey = pathRules
         .filter(isApplicableRule(pathname))
         .map((r) => applyPathRule(r, pathname, files))
