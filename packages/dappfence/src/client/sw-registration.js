@@ -273,21 +273,25 @@ export async function initializeClient(clientScriptUrl) {
         return;
     }
 
-    // If the SW injected __df_csp_hashes, it is already active and controlling this page.
-    // Skip initialization
-    if (document.getElementById('__df_csp_hashes')) {
-        // const workerUrl = navigator.serviceWorker.controller?.scriptURL;
-
-        logger.log('CSP-protected page detected, skipping full init');
-        return;
-    }
-
     // Store the original register function BEFORE monkey patching
     originalRegister = navigator.serviceWorker.register.bind(navigator.serviceWorker);
 
+    // Patch register() unconditionally: on a CSP-protected page the DappFence SW is
+    // already the controller, but the page may still invoke navigator.serviceWorker
+    // .register(appSw) — leaving that unpatched lets the app SW take over the scope
+    // and unregister DappFence.
     await installClientHooks(config);
     setupSecurityMessageListener();
     setupCspViolationListener();
+
+    // If the SW injected __df_csp_hashes, it is already active and controlling this page.
+    // Mark as claimed so subsequent register() calls (e.g. sw_register.js) are dispatched
+    // straight to registerCombinedSW rather than queued indefinitely.
+    if (document.getElementById('__df_csp_hashes')) {
+        controllerClaimed = true;
+        logger.log('CSP-protected page detected, hooks installed; skipping SW registration');
+        return;
+    }
 
     // PHASE 0: Check for existing SW and claim control immediately if found
     await attemptEarlyControlClaim();

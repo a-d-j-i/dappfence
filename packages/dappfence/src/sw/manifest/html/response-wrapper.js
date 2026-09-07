@@ -18,6 +18,7 @@ export const makeResponseWrapper = (response) => {
     if (!response || !response.body) {
         return {
             ok: response?.ok ?? false,
+            status: response?.status ?? 0,
             type: response?.type ?? 'error',
             getBodyBytes: () => Promise.resolve({ status: VERIFICATION_STATUS.ERROR }),
             scanPreamble: () => Promise.resolve({ status: VERIFICATION_STATUS.PREAMBLE_VIOLATION }),
@@ -68,6 +69,7 @@ export const makeResponseWrapper = (response) => {
 
     return {
         ok: response.ok,
+        status: response.status,
         type: response.type,
         async getBodyBytes() {
             try {

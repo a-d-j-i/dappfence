@@ -63,42 +63,60 @@ export const normalizeManifestData = (manifestData) => {
             }
         }
     }
-    const rawCsp =
-        manifestData?.csp && typeof manifestData.csp === 'object' ? manifestData.csp : {};
     const arr = (v) => (Array.isArray(v) ? v : []);
-    const csp = {
-        scriptOrigins: arr(rawCsp.scriptOrigins),
-        connectOrigins: arr(rawCsp.connectOrigins),
-        formActionOrigins: arr(rawCsp.formActionOrigins),
-        frameOrigins: arr(rawCsp.frameOrigins),
-        mediaOrigins: arr(rawCsp.mediaOrigins),
-        manifestSrcOrigins: arr(rawCsp.manifestSrcOrigins),
-        imgOrigins: arr(rawCsp.imgOrigins),
-        fontOrigins: arr(rawCsp.fontOrigins),
-        styleOrigins: arr(rawCsp.styleOrigins),
-        frameAncestors: arr(rawCsp.frameAncestors),
-        upgradeInsecureRequests:
-            typeof rawCsp.upgradeInsecureRequests === 'boolean'
-                ? rawCsp.upgradeInsecureRequests
-                : flagOrDefault('csp_upgrade_insecure_requests', true),
-        reportSample:
-            typeof rawCsp.reportSample === 'boolean'
-                ? rawCsp.reportSample
-                : flagOrDefault('csp_report_sample', false),
-        pages:
-            rawCsp.pages && typeof rawCsp.pages === 'object' && !Array.isArray(rawCsp.pages)
-                ? rawCsp.pages
-                : {},
+    const normalizePageEntry = (entry) => {
+        if (Array.isArray(entry)) {
+            return { scripts: entry, attrs: [] };
+        }
+        if (entry && typeof entry === 'object') {
+            return { scripts: arr(entry.scripts), attrs: arr(entry.attrs) };
+        }
+        return { scripts: [], attrs: [] };
     };
+    const hasCsp = manifestData?.csp && typeof manifestData.csp === 'object';
+    const rawCsp = hasCsp ? manifestData.csp : null;
+    const csp = hasCsp
+        ? {
+              scriptOrigins: arr(rawCsp.scriptOrigins),
+              connectOrigins: arr(rawCsp.connectOrigins),
+              formActionOrigins: arr(rawCsp.formActionOrigins),
+              frameOrigins: arr(rawCsp.frameOrigins),
+              mediaOrigins: arr(rawCsp.mediaOrigins),
+              manifestSrcOrigins: arr(rawCsp.manifestSrcOrigins),
+              imgOrigins: arr(rawCsp.imgOrigins),
+              fontOrigins: arr(rawCsp.fontOrigins),
+              styleOrigins: arr(rawCsp.styleOrigins),
+              frameAncestors: arr(rawCsp.frameAncestors),
+              upgradeInsecureRequests:
+                  typeof rawCsp.upgradeInsecureRequests === 'boolean'
+                      ? rawCsp.upgradeInsecureRequests
+                      : flagOrDefault('csp_upgrade_insecure_requests', true),
+              reportSample:
+                  typeof rawCsp.reportSample === 'boolean'
+                      ? rawCsp.reportSample
+                      : flagOrDefault('csp_report_sample', false),
+              pages:
+                  rawCsp.pages && typeof rawCsp.pages === 'object' && !Array.isArray(rawCsp.pages)
+                      ? Object.fromEntries(
+                            Object.entries(rawCsp.pages).map(([k, v]) => [k, normalizePageEntry(v)])
+                        )
+                      : {},
+          }
+        : undefined;
 
-    return {
+    const result = {
         ...manifestData,
         files: normalizedFiles,
         pathRules: Array.isArray(manifestData?.pathRules) ? manifestData.pathRules : [],
         contentRules: Array.isArray(manifestData?.contentRules) ? manifestData.contentRules : [],
         mode: manifestData?.mode ?? MODE.REPORTING,
-        csp,
     };
+    if (csp) {
+        result.csp = csp;
+    } else {
+        delete result.csp;
+    }
+    return result;
 };
 
 // Trusted Manifest System constants
